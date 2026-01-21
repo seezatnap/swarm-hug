@@ -99,8 +99,26 @@ your-repo/
 │       ├── tasks.md
 │       ├── chat.md
 │       └── ...
+├── prompts/                      # Customizable prompt templates
+│   ├── agent.md                  # Agent task execution prompt
+│   ├── scrum_master.md           # Sprint planning prompt
+│   └── review.md                 # Post-sprint review prompt
 └── swarm.toml                    # Global configuration
 ```
+
+## Customizing Prompts
+
+All prompts used by swarm-hug can be customized by editing files in the `prompts/` directory. The prompt templates use `{{variable}}` syntax for substitution.
+
+### Available Prompts
+
+| File | Purpose | Variables |
+|------|---------|-----------|
+| `agent.md` | Sent to each agent when executing a task | `agent_name`, `task_description`, `agent_name_lower`, `task_short` |
+| `scrum_master.md` | Used for LLM-assisted sprint planning | `to_assign`, `num_agents`, `tasks_per_agent`, `num_unassigned`, `agent_list`, `task_list` |
+| `review.md` | Post-sprint review to identify follow-up tasks | `git_log`, `tasks_content` |
+
+If a prompt file is missing, the built-in default is used. You can also override the prompts directory via the `SWARM_PROMPTS_DIR` environment variable.
 
 ## CLI Usage
 

@@ -5,12 +5,15 @@
 //! - `codex`: Codex CLI
 //! - `stub`: Deterministic stub for tests (no network)
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
 
 use crate::config::EngineType;
+use crate::prompt;
 
 /// Result of engine execution.
 #[derive(Debug)]
@@ -155,6 +158,39 @@ impl Default for ClaudeEngine {
     }
 }
 
+/// Default agent prompt (fallback if prompts/agent.md not found).
+const DEFAULT_AGENT_PROMPT: &str = r#"You are agent {{agent_name}}. Complete the following task:
+
+{{task_description}}
+
+## Git workflow (CRITICAL)
+You are working in a dedicated git worktree on branch `agent/{{agent_name_lower}}`.
+After completing your task:
+1. Stage and commit your changes with a descriptive message
+2. Merge your branch back to the main branch:
+   - `git checkout main` (or master)
+   - `git merge --no-ff agent/{{agent_name_lower}} -m "Merge {{agent_name}}: {{task_short}}"`
+   - Return to your branch: `git checkout agent/{{agent_name_lower}}`
+
+This merge step is REQUIRED so your work is integrated immediately."#;
+
+/// Build the agent prompt with variable substitution.
+fn build_agent_prompt(agent_name: &str, task_description: &str) -> String {
+    let task_short = if task_description.len() > 50 {
+        format!("{}...", &task_description[..47])
+    } else {
+        task_description.to_string()
+    };
+
+    let mut vars = HashMap::new();
+    vars.insert("agent_name", agent_name.to_string());
+    vars.insert("task_description", task_description.to_string());
+    vars.insert("agent_name_lower", agent_name.to_lowercase());
+    vars.insert("task_short", task_short);
+
+    prompt::load_and_render("agent", &vars, DEFAULT_AGENT_PROMPT)
+}
+
 impl Engine for ClaudeEngine {
     fn execute(
         &self,
@@ -163,10 +199,7 @@ impl Engine for ClaudeEngine {
         working_dir: &Path,
         _turn_number: usize,
     ) -> EngineResult {
-        let prompt = format!(
-            "You are agent {}. Complete the following task:\n\n{}",
-            agent_name, task_description
-        );
+        let prompt = build_agent_prompt(agent_name, task_description);
 
         let result = Command::new(&self.cli_path)
             .arg("--print")
@@ -221,10 +254,7 @@ impl Engine for CodexEngine {
         working_dir: &Path,
         _turn_number: usize,
     ) -> EngineResult {
-        let prompt = format!(
-            "You are agent {}. Complete the following task:\n\n{}",
-            agent_name, task_description
-        );
+        let prompt = build_agent_prompt(agent_name, task_description);
 
         let result = Command::new(&self.cli_path)
             .arg("--prompt")
@@ -257,11 +287,12 @@ fn output_to_result(output: Output) -> EngineResult {
 }
 
 /// Create an engine from config.
-pub fn create_engine(engine_type: EngineType, output_dir: &str) -> Box<dyn Engine> {
+/// Returns Arc for thread-safe sharing across parallel agent execution.
+pub fn create_engine(engine_type: EngineType, output_dir: &str) -> Arc<dyn Engine> {
     match engine_type {
-        EngineType::Claude => Box::new(ClaudeEngine::new()),
-        EngineType::Codex => Box::new(CodexEngine::new()),
-        EngineType::Stub => Box::new(StubEngine::new(output_dir)),
+        EngineType::Claude => Arc::new(ClaudeEngine::new()),
+        EngineType::Codex => Arc::new(CodexEngine::new()),
+        EngineType::Stub => Arc::new(StubEngine::new(output_dir)),
     }
 }
 

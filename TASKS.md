@@ -24,6 +24,12 @@
 - [x] `.swarm-hug/assignments.toml` exists and can list agent assignments.
 - [x] `swarm teams` lists teams and available agents.
 
+## P1 - Critical Sprint Execution Bugs
+- [x] Execute agents in parallel using threads instead of serial for-loop (currently agents run sequentially)
+- [x] Merge each agent's branch to master after completing their task (added to agent prompt directives)
+- [x] Unassign incomplete tasks (`- [A] ...`) at sprint start before fresh assignment (currently they stay stuck)
+- [x] Externalize prompts to `prompts/` directory (agent.md, scrum_master.md, review.md)
+
 ## P2 - Sprint planning/execution
 - [x] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
 - [x] Ensure sprint planning writes a concise sprint plan summary to CHAT.md.

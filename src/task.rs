@@ -56,6 +56,14 @@ impl Task {
         }
     }
 
+    /// Unassign this task (revert from Assigned to Unassigned).
+    /// Only affects tasks that are currently Assigned, not Completed.
+    pub fn unassign(&mut self) {
+        if matches!(self.status, TaskStatus::Assigned(_)) {
+            self.status = TaskStatus::Unassigned;
+        }
+    }
+
     /// Mark this task as completed.
     pub fn complete(&mut self, initial: char) {
         self.status = TaskStatus::Completed(initial.to_ascii_uppercase());
@@ -155,6 +163,20 @@ impl TaskList {
     /// Get count of assigned tasks.
     pub fn assigned_count(&self) -> usize {
         self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Assigned(_))).count()
+    }
+
+    /// Unassign all currently assigned tasks.
+    /// This is used at sprint start to reset incomplete tasks from previous sprints.
+    /// Returns the number of tasks that were unassigned.
+    pub fn unassign_all(&mut self) -> usize {
+        let mut count = 0;
+        for task in &mut self.tasks {
+            if matches!(task.status, TaskStatus::Assigned(_)) {
+                task.unassign();
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Get count of completed tasks.
@@ -449,5 +471,41 @@ mod tests {
         assert_eq!(list2.tasks[0].description, "Task 1");
         assert_eq!(list2.tasks[1].description, "Task 2");
         assert_eq!(list2.tasks[2].description, "Task 3");
+    }
+
+    #[test]
+    fn test_task_unassign() {
+        let mut task = Task::new("Write tests");
+        task.assign('A');
+        assert_eq!(task.status, TaskStatus::Assigned('A'));
+
+        task.unassign();
+        assert_eq!(task.status, TaskStatus::Unassigned);
+        assert!(task.is_assignable());
+    }
+
+    #[test]
+    fn test_task_unassign_completed_no_effect() {
+        let mut task = Task::new("Write tests");
+        task.assign('A');
+        task.complete('A');
+        assert_eq!(task.status, TaskStatus::Completed('A'));
+
+        task.unassign(); // Should have no effect on completed tasks
+        assert_eq!(task.status, TaskStatus::Completed('A'));
+    }
+
+    #[test]
+    fn test_tasklist_unassign_all() {
+        let content = "- [ ] Task 1\n- [A] Task 2\n- [B] Task 3\n- [x] Task 4 (C)\n";
+        let mut list = TaskList::parse(content);
+
+        assert_eq!(list.assigned_count(), 2);
+
+        let unassigned = list.unassign_all();
+        assert_eq!(unassigned, 2);
+        assert_eq!(list.assigned_count(), 0);
+        assert_eq!(list.unassigned_count(), 3); // Task 1, 2, 3 now unassigned
+        assert_eq!(list.completed_count(), 1); // Task 4 still completed
     }
 }

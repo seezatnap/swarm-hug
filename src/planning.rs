@@ -3,12 +3,14 @@
 //! Provides intelligent task assignment and post-sprint review capabilities
 //! using the engine abstraction. Can use any engine (claude, codex, stub).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use crate::agent;
 use crate::config::EngineType;
 use crate::engine::Engine;
+use crate::prompt;
 use crate::task::TaskList;
 
 /// Result of LLM planning operations.
@@ -45,6 +47,37 @@ impl PlanningResult {
         }
     }
 }
+
+/// Default scrum master prompt (fallback if prompts/scrum_master.md not found).
+const DEFAULT_SCRUM_MASTER_PROMPT: &str = r#"You are the scrum master for a team of AI coding agents. Your job is to assign tasks for the next sprint.
+
+## CRITICAL REQUIREMENT
+You MUST assign exactly {{to_assign}} tasks total across {{num_agents}} agents.
+- Each agent should get approximately {{tasks_per_agent}} tasks
+- You have {{num_unassigned}} unassigned tasks available
+- DO NOT assign fewer than {{to_assign}} tasks unless there's a critical blocking dependency
+
+## Available Agents ({{num_agents}} agents)
+{{agent_list}}
+## Unassigned Tasks ({{num_unassigned}} available)
+{{task_list}}
+## Assignment Strategy
+
+1. **ASSIGN {{to_assign}} TASKS** - This is mandatory. Distribute across all agents.
+2. **Group related tasks** - Give each agent tasks in the same area of the codebase
+3. **Respect dependencies** - If Task B depends on Task A:
+   - BEST: Assign both to the SAME agent (A runs first, then B)
+   - OK: Only assign Task A this sprint, leave B for next sprint
+   - NEVER: Assign A to one agent and B to a different agent
+4. **Avoid file conflicts** - Don't give different agents tasks that edit the same files
+5. **Priority = line order** - Lower line numbers are higher priority
+
+## Output Format
+
+Output ONLY valid JSON (no markdown code blocks, no explanation before or after):
+{"assignments":[{"agent":"A","line":5,"reason":"..."},{"agent":"A","line":6,"reason":"..."},{"agent":"B","line":8,"reason":"..."}]}
+
+You must include exactly {{to_assign}} assignment objects. Assign now:"#;
 
 /// Generate the scrum master prompt for task assignment.
 ///
@@ -91,50 +124,16 @@ pub fn generate_scrum_master_prompt(
         .map(|(line_num, desc)| format!("  Line {}: {}\n", line_num, desc))
         .collect();
 
-    let prompt = format!(
-        r#"You are the scrum master for a team of AI coding agents. Your job is to assign tasks for the next sprint.
+    let mut vars = HashMap::new();
+    vars.insert("to_assign", to_assign.to_string());
+    vars.insert("num_agents", num_agents.to_string());
+    vars.insert("tasks_per_agent", tasks_per_agent.to_string());
+    vars.insert("num_unassigned", unassigned.len().to_string());
+    vars.insert("agent_list", agent_list);
+    vars.insert("task_list", task_list_str);
 
-## CRITICAL REQUIREMENT
-You MUST assign exactly {} tasks total across {} agents.
-- Each agent should get approximately {} tasks
-- You have {} unassigned tasks available
-- DO NOT assign fewer than {} tasks unless there's a critical blocking dependency
-
-## Available Agents ({} agents)
-{}
-## Unassigned Tasks ({} available)
-{}
-## Assignment Strategy
-
-1. **ASSIGN {} TASKS** - This is mandatory. Distribute across all agents.
-2. **Group related tasks** - Give each agent tasks in the same area of the codebase
-3. **Respect dependencies** - If Task B depends on Task A:
-   - BEST: Assign both to the SAME agent (A runs first, then B)
-   - OK: Only assign Task A this sprint, leave B for next sprint
-   - NEVER: Assign A to one agent and B to a different agent
-4. **Avoid file conflicts** - Don't give different agents tasks that edit the same files
-5. **Priority = line order** - Lower line numbers are higher priority
-
-## Output Format
-
-Output ONLY valid JSON (no markdown code blocks, no explanation before or after):
-{{"assignments":[{{"agent":"A","line":5,"reason":"..."}},{{"agent":"A","line":6,"reason":"..."}},{{"agent":"B","line":8,"reason":"..."}}]}}
-
-You must include exactly {} assignment objects. Assign now:"#,
-        to_assign,
-        num_agents,
-        tasks_per_agent,
-        unassigned.len(),
-        to_assign,
-        num_agents,
-        agent_list,
-        unassigned.len(),
-        task_list_str,
-        to_assign,
-        to_assign,
-    );
-
-    Some(prompt)
+    let rendered = prompt::load_and_render("scrum_master", &vars, DEFAULT_SCRUM_MASTER_PROMPT);
+    Some(rendered)
 }
 
 /// Parse LLM response to extract task assignments.
@@ -361,13 +360,8 @@ fn stub_assignment(
     PlanningResult::success(assignments, response)
 }
 
-/// Generate the post-sprint review prompt.
-pub fn generate_review_prompt(
-    tasks_content: &str,
-    git_log: &str,
-) -> String {
-    format!(
-        r#"You are the scrum master reviewing the work completed during a sprint. Your job is to identify any follow-up tasks needed.
+/// Default review prompt (fallback if prompts/review.md not found).
+const DEFAULT_REVIEW_PROMPT: &str = r#"You are the scrum master reviewing the work completed during a sprint. Your job is to identify any follow-up tasks needed.
 
 ## Your Responsibilities
 
@@ -388,13 +382,13 @@ pub fn generate_review_prompt(
 ## Git Log (commits and changes from this sprint)
 
 ```
-{}
+{{git_log}}
 ```
 
 ## Current TASKS.md
 
 ```
-{}
+{{tasks_content}}
 ```
 
 ## Output Format
@@ -402,10 +396,18 @@ pub fn generate_review_prompt(
 If follow-up tasks are needed, output ONLY the new tasks to add (one per line, with `- [ ]` prefix).
 If no follow-ups needed, output exactly: NO_FOLLOWUPS_NEEDED
 
-Output now:"#,
-        git_log,
-        tasks_content,
-    )
+Output now:"#;
+
+/// Generate the post-sprint review prompt.
+pub fn generate_review_prompt(
+    tasks_content: &str,
+    git_log: &str,
+) -> String {
+    let mut vars = HashMap::new();
+    vars.insert("git_log", git_log.to_string());
+    vars.insert("tasks_content", tasks_content.to_string());
+
+    prompt::load_and_render("review", &vars, DEFAULT_REVIEW_PROMPT)
 }
 
 /// Parse review response to extract follow-up tasks.
