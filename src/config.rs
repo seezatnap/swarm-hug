@@ -53,6 +53,8 @@ pub struct Config {
     pub files_chat: String,
     /// Path to log directory.
     pub files_log_dir: String,
+    /// Path to worktrees directory.
+    pub files_worktrees_dir: String,
     /// Engine type for agent execution.
     pub engine_type: EngineType,
     /// Enable stub mode for testing (overrides engine_type to Stub).
@@ -61,6 +63,8 @@ pub struct Config {
     pub sprints_max: usize,
     /// Disable tailing CHAT.md during run.
     pub no_tail: bool,
+    /// Team name for multi-team mode.
+    pub team: Option<String>,
 }
 
 impl Default for Config {
@@ -71,10 +75,12 @@ impl Default for Config {
             files_tasks: "TASKS.md".to_string(),
             files_chat: "CHAT.md".to_string(),
             files_log_dir: "loop".to_string(),
+            files_worktrees_dir: "worktrees".to_string(),
             engine_type: EngineType::Claude,
             engine_stub_mode: false,
             sprints_max: 0,
             no_tail: false,
+            team: None,
         }
     }
 }
@@ -83,6 +89,9 @@ impl Config {
     /// Load configuration from all sources with proper precedence.
     ///
     /// Precedence: CLI args > env vars > config file > defaults.
+    ///
+    /// When a team is specified via `--team`, paths are resolved relative to
+    /// `.swarm-hug/<team>/` unless explicitly overridden.
     pub fn load(cli_args: &CliArgs) -> Self {
         let mut config = Self::default();
 
@@ -108,7 +117,32 @@ impl Config {
             config.engine_type = EngineType::Stub;
         }
 
+        // Apply team-based path resolution if team is set and paths weren't explicitly overridden
+        if config.team.is_some() {
+            let team_name = config.team.clone().unwrap();
+            config.apply_team_paths(&team_name, cli_args);
+        }
+
         config
+    }
+
+    /// Apply team-based path defaults.
+    /// Only applies if the path wasn't explicitly set via CLI.
+    fn apply_team_paths(&mut self, team_name: &str, cli_args: &CliArgs) {
+        let team_root = format!(".swarm-hug/{}", team_name);
+
+        // Only override if not explicitly set
+        if cli_args.tasks_file.is_none() {
+            self.files_tasks = format!("{}/tasks.md", team_root);
+        }
+        if cli_args.chat_file.is_none() {
+            self.files_chat = format!("{}/chat.md", team_root);
+        }
+        if cli_args.log_dir.is_none() {
+            self.files_log_dir = format!("{}/loop", team_root);
+        }
+        // Worktrees always use team path when team is set
+        self.files_worktrees_dir = format!("{}/worktrees", team_root);
     }
 
     /// Load configuration from a TOML file.
@@ -248,6 +282,9 @@ impl Config {
         if args.no_tail {
             self.no_tail = true;
         }
+        if let Some(ref team) = args.team {
+            self.team = Some(team.clone());
+        }
     }
 
     /// Merge values from another config (for file-based config).
@@ -323,6 +360,10 @@ pub struct CliArgs {
     pub help: bool,
     /// Show version.
     pub version: bool,
+    /// Team name for multi-team mode.
+    pub team: Option<String>,
+    /// Team name for team-specific subcommands (positional arg).
+    pub team_arg: Option<String>,
 }
 
 /// Swarm subcommands.
@@ -350,6 +391,10 @@ pub enum Command {
     Merge,
     /// Tail CHAT.md.
     Tail,
+    /// List all teams and their assigned agents.
+    Teams,
+    /// Initialize a new team (use with team name argument).
+    TeamInit,
 }
 
 impl Command {
@@ -367,6 +412,8 @@ impl Command {
             "cleanup" => Some(Self::Cleanup),
             "merge" => Some(Self::Merge),
             "tail" => Some(Self::Tail),
+            "teams" => Some(Self::Teams),
+            "team" => Some(Self::TeamInit),
             _ => None,
         }
     }
@@ -418,6 +465,7 @@ where
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
             "-c" | "--config" => cli.config = args.next(),
+            "-t" | "--team" => cli.team = args.next(),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--tasks-file" => cli.tasks_file = args.next(),
@@ -429,6 +477,19 @@ where
             "--no-tail" => cli.no_tail = true,
             _ if !arg.starts_with('-') && cli.command.is_none() => {
                 cli.command = Command::from_str(&arg);
+                // For "team init <name>", capture the next arg as team_arg
+                if cli.command == Some(Command::TeamInit) {
+                    // Check if next arg is "init" (team init <name> format)
+                    if let Some(next) = args.peek() {
+                        if next == "init" {
+                            args.next(); // consume "init"
+                            cli.team_arg = args.next(); // team name
+                        } else if !next.starts_with('-') {
+                            // Just "team <name>" - treat as team init
+                            cli.team_arg = args.next();
+                        }
+                    }
+                }
             }
             _ => {} // Ignore unknown flags
         }
@@ -574,7 +635,47 @@ max = 5
         assert_eq!(Command::from_str("cleanup"), Some(Command::Cleanup));
         assert_eq!(Command::from_str("merge"), Some(Command::Merge));
         assert_eq!(Command::from_str("tail"), Some(Command::Tail));
+        assert_eq!(Command::from_str("teams"), Some(Command::Teams));
+        assert_eq!(Command::from_str("team"), Some(Command::TeamInit));
         assert_eq!(Command::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_parse_args_team() {
+        let args = vec![
+            "swarm".to_string(),
+            "--team".to_string(),
+            "authentication".to_string(),
+            "run".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::Run));
+        assert_eq!(cli.team, Some("authentication".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_team_init() {
+        let args = vec![
+            "swarm".to_string(),
+            "team".to_string(),
+            "init".to_string(),
+            "payments".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::TeamInit));
+        assert_eq!(cli.team_arg, Some("payments".to_string()));
+    }
+
+    #[test]
+    fn test_team_path_resolution() {
+        let mut cli = CliArgs::default();
+        cli.team = Some("authentication".to_string());
+        let config = Config::load(&cli);
+        assert_eq!(config.team, Some("authentication".to_string()));
+        assert_eq!(config.files_tasks, ".swarm-hug/authentication/tasks.md");
+        assert_eq!(config.files_chat, ".swarm-hug/authentication/chat.md");
+        assert_eq!(config.files_log_dir, ".swarm-hug/authentication/loop");
+        assert_eq!(config.files_worktrees_dir, ".swarm-hug/authentication/worktrees");
     }
 
     #[test]

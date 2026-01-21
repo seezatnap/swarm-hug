@@ -11,6 +11,7 @@ use swarm::chat;
 use swarm::config::{self, Command, Config};
 use swarm::engine;
 use swarm::task::TaskList;
+use swarm::team::{self, Assignments, Team};
 use swarm::worktree;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -46,6 +47,8 @@ fn main() {
         Command::Cleanup => cmd_cleanup(&config),
         Command::Merge => cmd_merge(&config),
         Command::Tail => cmd_tail(&config),
+        Command::Teams => cmd_teams(&config),
+        Command::TeamInit => cmd_team_init(&config, &cli),
     };
 
     if let Err(e) = result {
@@ -62,39 +65,50 @@ USAGE:
     swarm [OPTIONS] [COMMAND]
 
 COMMANDS:
-    init              Initialize a new swarm project (config, TASKS.md, CHAT.md)
+    init              Initialize a new swarm project (creates .swarm-hug/)
     run               Run sprints until done or max-sprints reached (default)
     sprint            Run exactly one sprint
     plan              Run sprint planning only (assign tasks)
     status            Show task counts and recent chat lines
     agents            List agent names and initials
+    teams             List all teams and their assigned agents
+    team init <name>  Initialize a new team
     worktrees         List active git worktrees
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
     merge             Merge agent branches to main
-    tail              Tail CHAT.md (stream output)
+    tail              Tail chat.md (stream output)
 
 OPTIONS:
     -h, --help              Show this help message
     -V, --version           Show version
     -c, --config <PATH>     Path to config file (default: swarm.toml)
+    -t, --team <NAME>       Team to operate on (uses .swarm-hug/<team>/)
     --max-agents <N>        Maximum number of agents to spawn
     --tasks-per-agent <N>   Tasks to assign per agent per sprint
-    --tasks-file <PATH>     Path to tasks file (default: TASKS.md)
-    --chat-file <PATH>      Path to chat file (default: CHAT.md)
-    --log-dir <PATH>        Path to log directory (default: loop)
+    --tasks-file <PATH>     Path to tasks file (default: tasks.md in team dir)
+    --chat-file <PATH>      Path to chat file (default: chat.md in team dir)
+    --log-dir <PATH>        Path to log directory (default: loop/ in team dir)
     --engine <TYPE>         Engine type: claude, codex, stub
     --stub                  Enable stub mode for testing
     --max-sprints <N>       Maximum sprints to run (0 = unlimited)
-    --no-tail               Don't tail CHAT.md during run
+    --no-tail               Don't tail chat.md during run
+
+MULTI-TEAM MODE:
+    All config and artifacts live in .swarm-hug/:
+      .swarm-hug/assignments.toml     Agent-to-team assignments
+      .swarm-hug/<team>/tasks.md      Team's task list
+      .swarm-hug/<team>/chat.md       Team's chat log
+      .swarm-hug/<team>/loop/         Team's agent logs
+      .swarm-hug/<team>/worktrees/    Team's git worktrees
 
 EXAMPLES:
-    swarm init              Create default config and files
-    swarm run               Run sprints with default config
-    swarm --stub --max-sprints 1 run
-                            Run one sprint with stub engine (for testing)
-    swarm status            Show current task status
-    swarm agents            List available agents
+    swarm init                        Initialize .swarm-hug/ structure
+    swarm team init authentication    Create a new team
+    swarm team init payments          Create another team
+    swarm teams                       List all teams
+    swarm --team authentication run   Run sprints for authentication team
+    swarm -t payments status          Show status for payments team
 "#
     );
 }
@@ -102,6 +116,11 @@ EXAMPLES:
 /// Initialize a new swarm project.
 fn cmd_init(config: &Config) -> Result<(), String> {
     println!("Initializing swarm project...");
+
+    // Create .swarm-hug root directory and assignments file
+    team::init_root()?;
+    println!("  Created .swarm-hug/");
+    println!("  Created .swarm-hug/assignments.toml");
 
     // Create config file if it doesn't exist
     if !Path::new("swarm.toml").exists() {
@@ -112,35 +131,20 @@ fn cmd_init(config: &Config) -> Result<(), String> {
         println!("  swarm.toml already exists");
     }
 
-    // Create TASKS.md if it doesn't exist
-    if !Path::new(&config.files_tasks).exists() {
-        let default_tasks = "# Tasks\n\n- [ ] Add your tasks here\n";
-        fs::write(&config.files_tasks, default_tasks)
-            .map_err(|e| format!("failed to create {}: {}", config.files_tasks, e))?;
-        println!("  Created {}", config.files_tasks);
-    } else {
-        println!("  {} already exists", config.files_tasks);
+    // If a team is specified, initialize that team's directory
+    if let Some(ref team_name) = config.team {
+        let team = Team::new(team_name);
+        team.init()?;
+        println!("  Created team: {}", team_name);
+        println!("    - {}", team.tasks_path().display());
+        println!("    - {}", team.chat_path().display());
+        println!("    - {}", team.loop_dir().display());
+        println!("    - {}", team.worktrees_dir().display());
     }
 
-    // Create CHAT.md if it doesn't exist
-    if !Path::new(&config.files_chat).exists() {
-        fs::write(&config.files_chat, "")
-            .map_err(|e| format!("failed to create {}: {}", config.files_chat, e))?;
-        println!("  Created {}", config.files_chat);
-    } else {
-        println!("  {} already exists", config.files_chat);
-    }
-
-    // Create log directory
-    if !Path::new(&config.files_log_dir).exists() {
-        fs::create_dir_all(&config.files_log_dir)
-            .map_err(|e| format!("failed to create {}: {}", config.files_log_dir, e))?;
-        println!("  Created {}/", config.files_log_dir);
-    } else {
-        println!("  {}/ already exists", config.files_log_dir);
-    }
-
-    println!("\nSwarm project initialized. Edit {} to add tasks.", config.files_tasks);
+    println!("\nSwarm project initialized.");
+    println!("  Use 'swarm team init <name>' to create teams.");
+    println!("  Use 'swarm --team <name> run' to run sprints for a team.");
     Ok(())
 }
 
@@ -283,10 +287,17 @@ fn cmd_agents(_config: &Config) -> Result<(), String> {
 }
 
 /// List active worktrees.
-fn cmd_worktrees(_config: &Config) -> Result<(), String> {
-    println!("Git Worktrees:");
-    // TODO: Implement worktree listing
-    println!("  (not yet implemented)");
+fn cmd_worktrees(config: &Config) -> Result<(), String> {
+    println!("Git Worktrees ({}):", config.files_worktrees_dir);
+    let worktrees = worktree::list_worktrees(Path::new(&config.files_worktrees_dir))?;
+
+    if worktrees.is_empty() {
+        println!("  (no worktrees)");
+    } else {
+        for wt in &worktrees {
+            println!("  {} ({}) - {}", wt.name, wt.initial, wt.path.display());
+        }
+    }
     Ok(())
 }
 
@@ -299,11 +310,11 @@ fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
 }
 
 /// Clean up worktrees and branches.
-fn cmd_cleanup(_config: &Config) -> Result<(), String> {
+fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
-    worktree::cleanup_worktrees(Path::new("."))
+    worktree::cleanup_worktrees_in(Path::new(&config.files_worktrees_dir))
         .map_err(|e| format!("cleanup failed: {}", e))?;
-    println!("  Worktrees removed");
+    println!("  Worktrees removed from {}", config.files_worktrees_dir);
     Ok(())
 }
 
@@ -312,6 +323,85 @@ fn cmd_merge(_config: &Config) -> Result<(), String> {
     println!("Merging agent branches...");
     // TODO: Implement merge
     println!("  (not yet implemented)");
+    Ok(())
+}
+
+/// List all teams and their assigned agents.
+fn cmd_teams(_config: &Config) -> Result<(), String> {
+    if !team::root_exists() {
+        println!("No .swarm-hug/ directory found. Run 'swarm init' first.");
+        return Ok(());
+    }
+
+    let teams = team::list_teams()?;
+    let assignments = Assignments::load()?;
+
+    if teams.is_empty() {
+        println!("No teams found. Use 'swarm team init <name>' to create one.");
+        return Ok(());
+    }
+
+    println!("Teams:");
+    for t in &teams {
+        let agents = assignments.team_agents(&t.name);
+        let agent_str = if agents.is_empty() {
+            "(no agents assigned)".to_string()
+        } else {
+            agents
+                .iter()
+                .map(|&i| {
+                    let name = agent::name_from_initial(i).unwrap_or("?");
+                    format!("{} ({})", name, i)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!("  {} - {}", t.name, agent_str);
+    }
+
+    // Show available agents
+    let available = assignments.next_available(5);
+    if !available.is_empty() {
+        println!("\nNext available agents:");
+        for i in available {
+            let name = agent::name_from_initial(i).unwrap_or("?");
+            println!("  {} - {}", i, name);
+        }
+    }
+
+    Ok(())
+}
+
+/// Initialize a new team.
+fn cmd_team_init(_config: &Config, cli: &config::CliArgs) -> Result<(), String> {
+    let team_name = cli.team_arg.as_ref()
+        .ok_or("Usage: swarm team init <name>")?;
+
+    // Validate team name (alphanumeric and hyphens only)
+    if !team_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err("Team name must contain only letters, numbers, hyphens, and underscores".to_string());
+    }
+
+    // Initialize root if needed
+    team::init_root()?;
+
+    let team = Team::new(team_name);
+    if team.exists() {
+        println!("Team '{}' already exists.", team_name);
+        return Ok(());
+    }
+
+    team.init()?;
+    println!("Created team: {}", team_name);
+    println!("  Directory: {}", team.root.display());
+    println!("  Tasks:     {}", team.tasks_path().display());
+    println!("  Chat:      {}", team.chat_path().display());
+    println!("  Logs:      {}", team.loop_dir().display());
+    println!("  Worktrees: {}", team.worktrees_dir().display());
+    println!("\nTo work on this team, use:");
+    println!("  swarm --team {} run", team_name);
+    println!("  swarm -t {} status", team_name);
+
     Ok(())
 }
 
@@ -395,7 +485,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
              sprint_number, assigned, agent_count);
 
     // Create worktrees for assigned agents (placeholder dirs for now).
-    worktree::create_worktrees(Path::new("."), &assignments)
+    worktree::create_worktrees_in(Path::new(&config.files_worktrees_dir), &assignments)
         .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Create engine

@@ -5,10 +5,11 @@ Rust rewrite of ../ralph-bash-v2: a multi-agent, sprint-based orchestration syst
 ## Goals
 - Rebuild the bash-based agent orchestration in Rust for correctness and maintainability.
 - Start with a comprehensive test suite that validates end-to-end behavior, using stubbed engines by default.
-- Preserve the core behavior of the current system (multi-agent sprints, TASKS.md, CHAT.md, git worktrees, merge flow) while removing GridTUI.
-- Provide a simple, tail-based UI that streams CHAT.md to the operator.
+- Preserve the core behavior of the current system (multi-agent sprints, tasks.md, chat.md, git worktrees, merge flow) while removing GridTUI.
+- Provide a simple, tail-based UI that streams chat.md to the operator.
 - Support limiting the number of sprints for deterministic tests and short runs.
 - Provide a VM bootstrap script (init.sh) similar to ralph-bash-v2 that provisions a Lima VM and exposes the `swarm` command inside it.
+- **Multi-team support**: Multiple teams can work on the same repo simultaneously with isolated artifacts.
 
 ## Non-goals
 - GridTUI or any terminal UI beyond tailing CHAT.md.
@@ -39,12 +40,30 @@ Rust rewrite of ../ralph-bash-v2: a multi-agent, sprint-based orchestration syst
 - Required config values:
   - `agents.max_count` (cap on agents that may be spawned)
   - `agents.tasks_per_agent` (N)
-  - `files.tasks` (TASKS.md path)
-  - `files.chat` (CHAT.md path)
-  - `files.log_dir` (loop/)
+  - `files.tasks` (tasks.md path; auto-resolved per team in multi-team mode)
+  - `files.chat` (chat.md path; auto-resolved per team in multi-team mode)
+  - `files.log_dir` (loop/; auto-resolved per team in multi-team mode)
   - `engine.type` (`claude`, `codex`, or `stub`)
   - `engine.stub_mode` (enables stubbed engine for tests)
   - `sprints.max` (max sprints to run; 0 or absent means unlimited)
+
+### Multi-team architecture
+- All swarm-hug configuration and artifacts live in `.swarm-hug/`.
+- Each team has its own directory: `.swarm-hug/<team-name>/`.
+- Team directory structure:
+  - `.swarm-hug/<team>/tasks.md` - Team's task list
+  - `.swarm-hug/<team>/chat.md` - Team's chat log
+  - `.swarm-hug/<team>/specs.md` - Team's specifications
+  - `.swarm-hug/<team>/prompt.md` - Team's prompt
+  - `.swarm-hug/<team>/loop/` - Agent logs
+  - `.swarm-hug/<team>/worktrees/` - Git worktrees for agents
+- Agent assignments tracked in `.swarm-hug/assignments.toml`.
+- Agents use canonical alphabetical names (Aaron, Betty, Carlos, ..., Zane).
+- **Exclusive assignment**: An agent can only be assigned to one team at a time.
+- CLI flag `--team <name>` (or `-t <name>`) specifies which team context to use.
+- New commands:
+  - `swarm teams` - List all teams and their assigned agents
+  - `swarm team init <name>` - Initialize a new team
 
 ### Task file format (TASKS.md)
 - Preserve checklist format:

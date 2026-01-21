@@ -1,27 +1,13 @@
 # swarm-hug
 
-A Rust rewrite of the bash-based multi-agent sprint orchestration system.
+A Rust rewrite of the bash-based multi-agent sprint orchestration system, now with multi-team support.
 
-## Status
+## What's New: Multi-Team Architecture
 
-The CLI and core functionality are implemented. The following are working:
-
-- **Configuration**: Load from `swarm.toml`, environment variables, and CLI flags
-- **CLI**: Full command-line interface with help, version, and all subcommands
-- **Task Management**: Parse and write TASKS.md with assignment states
-- **Agent Naming**: A-Z mapping (Aaron through Zane)
-- **Chat**: CHAT.md formatting and read/write
-- **Engine Abstraction**: Swappable backends (claude, codex, stub)
-- **Stub Engine**: Deterministic output for testing (no network calls)
-- **Sprint Execution**: Plan, run, and limit sprints
-- **Integration Tests**: Stubbed end-to-end run in a temp git repo
-- **Worktree Prep**: Placeholder worktree directories per assigned agent
-
-**Not yet implemented:**
-- Full git worktree management (current worktrees are placeholder directories)
-- Worktree listing/branch listing
-- Agent branch merging
-- Per-agent logging
+Multiple teams can work on the same repository simultaneously without conflicts. Each team gets:
+- Its own isolated directory under `.swarm-hug/<team>/`
+- Separate task lists, chat logs, and worktrees
+- Dedicated agents that can't be double-booked
 
 ## Quick Start
 
@@ -29,17 +15,42 @@ The CLI and core functionality are implemented. The following are working:
 # Build
 cargo build
 
-# Initialize a new project
+# Initialize the swarm-hug structure
 ./target/debug/swarm init
 
-# Show available agents
-./target/debug/swarm agents
+# Create teams
+./target/debug/swarm team init authentication
+./target/debug/swarm team init payments
 
-# Check task status
-./target/debug/swarm status
+# List teams and their agents
+./target/debug/swarm teams
 
-# Run with stub engine (for testing)
-./target/debug/swarm --stub --max-sprints 1 run
+# Run sprints for a specific team
+./target/debug/swarm --team authentication run
+./target/debug/swarm -t payments --stub --max-sprints 1 run
+
+# Check team status
+./target/debug/swarm -t authentication status
+```
+
+## Directory Structure
+
+```
+your-repo/
+├── .swarm-hug/
+│   ├── assignments.toml          # Agent-to-team assignments
+│   ├── authentication/           # Team directory
+│   │   ├── tasks.md              # Team's task list
+│   │   ├── chat.md               # Team's chat log
+│   │   ├── specs.md              # Team's specifications
+│   │   ├── prompt.md             # Team's prompt
+│   │   ├── loop/                 # Agent logs
+│   │   └── worktrees/            # Git worktrees
+│   └── payments/                 # Another team
+│       ├── tasks.md
+│       ├── chat.md
+│       └── ...
+└── swarm.toml                    # Global configuration
 ```
 
 ## CLI Usage
@@ -51,33 +62,53 @@ USAGE:
     swarm [OPTIONS] [COMMAND]
 
 COMMANDS:
-    init              Initialize a new swarm project
+    init              Initialize .swarm-hug/ structure
     run               Run sprints until done or max-sprints reached (default)
     sprint            Run exactly one sprint
-    plan              Run sprint planning only
+    plan              Run sprint planning only (assign tasks)
     status            Show task counts and recent chat lines
     agents            List agent names and initials
+    teams             List all teams and their assigned agents
+    team init <name>  Initialize a new team
     worktrees         List active git worktrees
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
     merge             Merge agent branches to main
-    tail              Tail CHAT.md
+    tail              Tail chat.md (stream output)
 
 OPTIONS:
-    -h, --help              Show help
+    -h, --help              Show this help message
     -V, --version           Show version
-    -c, --config <PATH>     Config file (default: swarm.toml)
-    --max-agents <N>        Max agents to spawn
-    --tasks-per-agent <N>   Tasks per agent per sprint
-    --engine <TYPE>         Engine: claude, codex, stub
+    -c, --config <PATH>     Path to config file (default: swarm.toml)
+    -t, --team <NAME>       Team to operate on (uses .swarm-hug/<team>/)
+    --max-agents <N>        Maximum number of agents to spawn
+    --tasks-per-agent <N>   Tasks to assign per agent per sprint
+    --engine <TYPE>         Engine type: claude, codex, stub
     --stub                  Enable stub mode for testing
-    --max-sprints <N>       Max sprints (0 = unlimited)
-    --no-tail               Don't tail CHAT.md during run
+    --max-sprints <N>       Maximum sprints to run (0 = unlimited)
+    --no-tail               Don't tail chat.md during run
 ```
+
+## Agent Assignments
+
+Agents are assigned alphabetically (Aaron, Betty, Carlos, etc.) and tracked in `.swarm-hug/assignments.toml`:
+
+```toml
+# Agent Assignments
+# An agent can only be assigned to one team at a time.
+
+[agents]
+A = "authentication"
+B = "authentication"
+C = "payments"
+D = "payments"
+```
+
+An agent working on one team cannot be assigned to another until released.
 
 ## Configuration
 
-Create `swarm.toml`:
+Create `swarm.toml` for global settings:
 
 ```toml
 [agents]
@@ -85,16 +116,16 @@ max_count = 4
 tasks_per_agent = 2
 
 [files]
-tasks = "TASKS.md"
-chat = "CHAT.md"
-log_dir = "loop"
+tasks = "TASKS.md"      # Default; overridden by --team
+chat = "CHAT.md"        # Default; overridden by --team
+log_dir = "loop"        # Default; overridden by --team
 
 [engine]
-type = "claude"
+type = "claude"         # claude, codex, or stub
 stub_mode = false
 
 [sprints]
-max = 0
+max = 0                 # 0 = unlimited
 ```
 
 Environment variables (override config file):
@@ -114,39 +145,26 @@ cargo test --lib --tests
 cargo build --release
 ```
 
-Note: doctests may fail in noexec temp environments; use `cargo test --lib --tests` when that occurs.
+## Status
 
-## Goals (from SPECS.md)
+The core multi-team architecture is complete:
+- Team isolation with separate directories
+- Agent assignment tracking (exclusive per team)
+- CLI commands for team management (`teams`, `team init`)
+- Path resolution based on `--team` flag
+- Worktree listing and cleanup per team
 
-- Multi-agent sprint planning with git worktrees
-- File-based coordination via TASKS.md and CHAT.md
-- Stubbed engine for deterministic tests
-- Tail-based UI (no GridTUI)
+**Still in progress:**
+- Full git worktree management (current worktrees are placeholder directories)
+- Agent branch merging
+- Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
 
 ## Development Workflow
 
-- Track work in TASKS.md (one task per session, one commit per task)
+- Track work in TASKS.md
 - Keep README.md accurate after each session
 - Use ../ralph-bash-v2 as a reference only (it is older and fragile)
-
-## Repository Layout
-
-```
-src/
-  lib.rs          - Library exports
-  main.rs         - CLI entry point
-  agent.rs        - Agent naming (A-Z)
-  chat.rs         - CHAT.md read/write
-  config.rs       - Configuration loading
-  engine.rs       - Engine abstraction (claude, codex, stub)
-  task.rs         - TASKS.md parsing
-  worktree.rs     - Placeholder worktree directory management
-tests/            - Integration tests
-loop/             - Log/output directory
-TASKS.md          - Active task backlog
-SPECS.md          - Product requirements
-```
 
 ## Reference Implementation
 
