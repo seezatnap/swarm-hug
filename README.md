@@ -15,13 +15,13 @@ Multiple teams can work on the same repository simultaneously without conflicts.
 # Build
 cargo build
 
-# Initialize the swarm-hug structure
+# Initialize the swarm-hug structure (creates swarm.toml, TASKS.md, CHAT.md, loop/)
 ./target/debug/swarm init
 
 # Ensure there is at least one git commit (required for worktrees)
 git commit --allow-empty -m "init"
 
-# Create teams
+# Create teams (each team gets its own tasks/chat/loop/worktrees under .swarm-hug/)
 ./target/debug/swarm team init authentication
 ./target/debug/swarm team init payments
 

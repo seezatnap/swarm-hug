@@ -145,11 +145,56 @@ fn cmd_init(config: &Config) -> Result<(), String> {
         println!("    - {}", team.chat_path().display());
         println!("    - {}", team.loop_dir().display());
         println!("    - {}", team.worktrees_dir().display());
+    } else {
+        init_default_files(config)?;
     }
 
     println!("\nSwarm project initialized.");
     println!("  Use 'swarm team init <name>' to create teams.");
     println!("  Use 'swarm --team <name> run' to run sprints for a team.");
+    Ok(())
+}
+
+fn init_default_files(config: &Config) -> Result<(), String> {
+    let tasks_path = Path::new(&config.files_tasks);
+    if !tasks_path.exists() {
+        ensure_parent_dir(tasks_path)?;
+        let default_tasks = "# Tasks\n\n- [ ] Add your tasks here\n";
+        fs::write(tasks_path, default_tasks)
+            .map_err(|e| format!("failed to create {}: {}", config.files_tasks, e))?;
+        println!("  Created {}", config.files_tasks);
+    } else {
+        println!("  Task file already exists: {}", config.files_tasks);
+    }
+
+    let chat_path = Path::new(&config.files_chat);
+    if !chat_path.exists() {
+        ensure_parent_dir(chat_path)?;
+        fs::write(chat_path, "")
+            .map_err(|e| format!("failed to create {}: {}", config.files_chat, e))?;
+        println!("  Created {}", config.files_chat);
+    } else {
+        println!("  Chat file already exists: {}", config.files_chat);
+    }
+
+    if config.files_log_dir.is_empty() {
+        return Err("log dir path is empty".to_string());
+    }
+
+    fs::create_dir_all(&config.files_log_dir)
+        .map_err(|e| format!("failed to create log dir {}: {}", config.files_log_dir, e))?;
+    println!("  Created log directory: {}", config.files_log_dir);
+
+    Ok(())
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create directory {}: {}", parent.display(), e))?;
+        }
+    }
     Ok(())
 }
 
