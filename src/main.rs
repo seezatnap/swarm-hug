@@ -1059,12 +1059,16 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         eprintln!("warning: failed to rotate logs: {}", e);
     }
 
-    // Execute tasks for each agent in parallel using threads
-    let mut handles: Vec<thread::JoinHandle<Result<(char, String, bool, Option<String>), String>>> = Vec::new();
-
+    // Group assignments by agent (each agent processes their tasks sequentially)
+    let mut agent_tasks: std::collections::HashMap<char, Vec<String>> = std::collections::HashMap::new();
     for (initial, description) in &assignments {
-        let initial = *initial;
-        let description = description.clone();
+        agent_tasks.entry(*initial).or_default().push(description.clone());
+    }
+
+    // Execute agents in parallel, each agent processes their tasks sequentially
+    let mut handles: Vec<thread::JoinHandle<Vec<(char, String, bool, Option<String>)>>> = Vec::new();
+
+    for (initial, tasks) in agent_tasks {
         let working_dir = worktree_map
             .get(&initial)
             .cloned()
@@ -1077,6 +1081,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
+            let mut task_results: Vec<(char, String, bool, Option<String>)> = Vec::new();
 
             // Create agent logger
             let logger = AgentLogger::new(Path::new(&log_dir), initial, agent_name);
@@ -1085,100 +1090,105 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
             if let Err(e) = logger.log_session_start() {
                 eprintln!("warning: failed to write log: {}", e);
             }
-
-            // Log assignment
-            if let Err(e) = logger.log(&format!("Assigned task: {}", description)) {
-                eprintln!("warning: failed to write log: {}", e);
-            }
             if let Err(e) = logger.log(&format!("Working directory: {}", working_dir.display())) {
                 eprintln!("warning: failed to write log: {}", e);
             }
 
-            // Transition: Assigned -> Working
-            {
-                let mut t = tracker.lock().unwrap();
-                t.start(initial);
-            }
-            if let Err(e) = logger.log("State: ASSIGNED -> WORKING") {
-                eprintln!("warning: failed to write log: {}", e);
-            }
+            // Process each task sequentially for this agent
+            for description in tasks {
+                // Log assignment
+                if let Err(e) = logger.log(&format!("Assigned task: {}", description)) {
+                    eprintln!("warning: failed to write log: {}", e);
+                }
 
-            // Write agent start to chat
-            if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Starting: {}", description)) {
-                eprintln!("warning: failed to write chat: {}", e);
-            }
-
-            // Execute via engine in the agent's worktree
-            if let Err(e) = logger.log(&format!("Executing with engine: {}", engine_type_str)) {
-                eprintln!("warning: failed to write log: {}", e);
-            }
-
-            let result = engine.execute(
-                agent_name,
-                &description,
-                &working_dir,
-                sprint_number,
-            );
-
-            let (success, error) = if result.success {
-                // Transition: Working -> Done (success)
+                // Transition: Assigned -> Working
                 {
                     let mut t = tracker.lock().unwrap();
-                    t.complete(initial);
+                    t.start(initial);
                 }
-                if let Err(e) = logger.log("State: WORKING -> DONE (success)") {
+                if let Err(e) = logger.log("State: ASSIGNED -> WORKING") {
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                if let Err(e) = logger.log(&format!("Task completed: {}", description)) {
-                    eprintln!("warning: failed to write log: {}", e);
-                }
-
-                if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Completed: {}", description)) {
+                // Write agent start to chat
+                if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Starting: {}", description)) {
                     eprintln!("warning: failed to write chat: {}", e);
                 }
 
-                // Commit the agent's work in their worktree (one commit per task)
-                if let Err(e) = logger.log("Committing changes...") {
-                    eprintln!("warning: failed to write log: {}", e);
-                }
-                if let Err(e) = commit_agent_work(&working_dir, agent_name, &description) {
-                    eprintln!("warning: failed to commit: {}", e);
-                }
-                if let Err(e) = logger.log("Commit successful") {
+                // Execute via engine in the agent's worktree
+                if let Err(e) = logger.log(&format!("Executing with engine: {}", engine_type_str)) {
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                (true, None)
-            } else {
-                let err = result.error.unwrap_or_else(|| "unknown error".to_string());
+                let result = engine.execute(
+                    agent_name,
+                    &description,
+                    &working_dir,
+                    sprint_number,
+                );
 
-                // Transition: Working -> Done (failure)
+                let (success, error) = if result.success {
+                    // Transition: Working -> Done (success)
+                    {
+                        let mut t = tracker.lock().unwrap();
+                        t.complete(initial);
+                    }
+                    if let Err(e) = logger.log("State: WORKING -> DONE (success)") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+
+                    if let Err(e) = logger.log(&format!("Task completed: {}", description)) {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+
+                    if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Completed: {}", description)) {
+                        eprintln!("warning: failed to write chat: {}", e);
+                    }
+
+                    // Commit the agent's work in their worktree (one commit per task)
+                    if let Err(e) = logger.log("Committing changes...") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                    if let Err(e) = commit_agent_work(&working_dir, agent_name, &description) {
+                        eprintln!("warning: failed to commit: {}", e);
+                    }
+                    if let Err(e) = logger.log("Commit successful") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+
+                    (true, None)
+                } else {
+                    let err = result.error.unwrap_or_else(|| "unknown error".to_string());
+
+                    // Transition: Working -> Done (failure)
+                    {
+                        let mut t = tracker.lock().unwrap();
+                        t.fail(initial, &err);
+                    }
+                    if let Err(e) = logger.log(&format!("State: WORKING -> DONE (failed: {})", err)) {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+
+                    if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Failed: {} - {}", description, err)) {
+                        eprintln!("warning: failed to write chat: {}", e);
+                    }
+
+                    (false, Some(err))
+                };
+
+                // Transition: Done -> Terminated
                 {
                     let mut t = tracker.lock().unwrap();
-                    t.fail(initial, &err);
+                    t.terminate(initial);
                 }
-                if let Err(e) = logger.log(&format!("State: WORKING -> DONE (failed: {})", err)) {
+                if let Err(e) = logger.log("State: DONE -> TERMINATED") {
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Failed: {} - {}", description, err)) {
-                    eprintln!("warning: failed to write chat: {}", e);
-                }
-
-                (false, Some(err))
-            };
-
-            // Transition: Done -> Terminated
-            {
-                let mut t = tracker.lock().unwrap();
-                t.terminate(initial);
-            }
-            if let Err(e) = logger.log("State: DONE -> TERMINATED") {
-                eprintln!("warning: failed to write log: {}", e);
+                task_results.push((initial, description, success, error));
             }
 
-            Ok((initial, description, success, error))
+            task_results
         });
 
         handles.push(handle);
@@ -1188,8 +1198,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     let mut results: Vec<(char, String, bool, Option<String>)> = Vec::new();
     for handle in handles {
         match handle.join() {
-            Ok(Ok(result)) => results.push(result),
-            Ok(Err(e)) => eprintln!("warning: agent thread error: {}", e),
+            Ok(agent_results) => results.extend(agent_results),
             Err(_) => eprintln!("warning: agent thread panicked"),
         }
     }
