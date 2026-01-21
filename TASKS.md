@@ -1,42 +1,47 @@
 # Tasks
 
-## Team Init Changes
-- [ ] Add `prd.md` creation to `swarm team init` (in `.swarm-hug/<team>/prd.md`)
-  - Default content: `# PRD: <team-name>\n\nAdd product requirements here.`
-- [ ] Add `operator_feedback.md` creation to `swarm team init` (in `.swarm-hug/<team>/operator_feedback.md`)
-  - Default content: `# Operator Feedback: <team-name>\n\nLive feedback and instructions go here.`
-- [ ] Update scrum master logic to read `prd.md` and ensure `tasks.md` stays in sync with PRD requirements
+## P0 - Test strategy (must be first)
+- [x] Update the integration test to use `.swarm-hug/<team>/` layout with the stub engine (verify TASKS completion, CHAT plan + completion lines, stub outputs under team loop/, worktrees created + cleaned, and max-sprints behavior).
+- [x] Unit tests cover task parsing/blocking/assignment.
+- [x] Unit tests cover agent name/initial mapping.
+- [x] Unit tests cover chat formatting/parsing.
+- [x] Unit tests cover lifecycle transitions.
+- [x] Unit tests cover engine stub determinism/selection.
+- [x] Unit tests cover config/env/CLI parsing.
 
-## File Location Changes
-- [ ] Move CHAT.md from project root to `.swarm-hug/CHAT.md`
-  - Update `Config::default()` to use `.swarm-hug/CHAT.md` as default
-  - Update team mode to use `.swarm-hug/<team>/chat.md` (already does this)
-  - Update `swarm init` to create CHAT.md in `.swarm-hug/` not project root
-- [ ] Remove root TASKS.md creation from `swarm init`
-  - Tasks should only exist per-team in `.swarm-hug/<team>/tasks.md`
-  - Remove the default `files_tasks: "TASKS.md"` or point it to team location
+## P1 - Core CLI/config behavior
+- [ ] Move default (non-team) files under `.swarm-hug/` (no root TASKS.md/CHAT.md) and update config defaults, `swarm init`, docs, and tests accordingly.
+- [ ] Ensure `swarm cleanup` removes agent branches as well as worktrees.
+- [ ] Enforce exclusive agent assignment per team using `.swarm-hug/assignments.toml` during planning/spawn and release on cleanup/merge.
+- [x] CLI supports init/run/sprint/plan/status/agents/worktrees/worktrees-branch/cleanup/merge/tail/teams/team init.
+- [x] Default command is `run` and tails chat unless `--no-tail` is set.
 
-## Configuration Simplification
-- [ ] Remove `swarm.toml` support entirely
-  - Delete `Config::load_from_file()` and related TOML parsing
-  - Remove `swarm.toml` creation from `swarm init`
-  - Remove `-c, --config` CLI flag
-  - Remove `Config::default_toml()` method
-  - All configuration via CLI flags only (e.g., `--max-agents`, `--engine`)
-- [ ] Make `--llm-planning` always on (remove the flag)
-  - Remove `--llm-planning` CLI flag from argument parsing
-  - Set `planning_llm_enabled = true` unconditionally in Config
-  - Remove `llm_planning` field from `CliArgs` struct
-  - Update help text to remove the option
+## P1 - Multi-team layout
+- [x] Team init scaffolds required files under `.swarm-hug/<team>/` (tasks/chat/specs/prompt/loop/worktrees).
+- [x] `--team/-t` resolves files to `.swarm-hug/<team>/`.
+- [x] `.swarm-hug/assignments.toml` exists and can list agent assignments.
+- [x] `swarm teams` lists teams and available agents.
 
-## Tests & Documentation
-- [ ] Update tests that reference swarm.toml or root TASKS.md/CHAT.md
-- [ ] Update README.md to reflect new file locations and removed config file
-- [ ] Update any integration tests that depend on old file structure
+## P2 - Sprint planning/execution
+- [ ] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
+- [x] Task format supports unassigned/assigned/completed with blocked detection.
+- [x] Adaptive agent spawning is based on assignable tasks.
+- [x] Sprint planning commits task assignment changes to git.
 
-## Completed (Previous Work)
-- [x] Add `rebuild-swarm` alias in init.sh for rebuilding swarm binary inside the VM
-- [x] Ensure /opt/swarm-hug is mounted RW (not RO) so cargo build works
-- [x] Update README.md with rebuild-swarm documentation
-- [x] Fix CARGO_HOME to use writable volume in VM
-- [x] Fix rebuild-swarm to preserve working directory (subshell)
+## P2 - Worktrees/merge/logging
+- [x] Worktrees are created under `.swarm-hug/<team>/worktrees` with `agent/<name>` branches.
+- [x] Merge cleans up worktrees/branches after success and reports conflicts to CHAT.md.
+- [x] Per-agent logs with rotation live under the team loop dir.
+
+## P2 - Engine abstraction
+- [x] Engines support claude/codex/stub and stub is deterministic/offline.
+
+## P2 - init.sh
+- [x] Lima bootstrap script installs deps, mounts repo RW, and exposes `swarm`.
+
+## P3 - Docs/process
+- [ ] Keep README accurate, accessible, and friendly after each change (update paths/flags/test gates as behavior evolves).
+- [x] README notes ralph-bash-v2 is a legacy reference only.
+
+## Maintenance
+- [ ] Split `src/main.rs` (1038 LOC) into smaller modules.

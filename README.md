@@ -191,6 +191,10 @@ cargo test --lib --tests
 cargo build --release
 ```
 
+Notes:
+- Integration tests run the `swarm` binary in a temp git repo, using a stub engine and a team directory under `.swarm-hug/`.
+- No network access is required for tests.
+
 ## Git Workflow
 
 swarm-hug manages git worktrees and branches for parallel agent work:
