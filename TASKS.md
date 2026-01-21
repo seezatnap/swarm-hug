@@ -2,22 +2,11 @@
 
 ## Current Priorities
 
-### Per-Agent Logging with Rotation
-- [x] Create `src/log.rs` module for per-agent logging
-- [x] Implement log rotation (line-based, max 1000 lines per file)
-- [x] Write agent logs to `loop/agent-<initial>.log`
-- [x] Add tests for log module (12 tests)
-- [x] Integrate logging into agent execution in main.rs
-
 ### Lima VM Bootstrap
 - [ ] Create `init.sh` script for Lima VM provisioning
 - [ ] Include Docker, git, bash, Rust toolchain in image
 - [ ] Mount repo and expose `swarm` command inside container
 - [ ] Document Lima setup in README.md
-
-### Worktree Cleanup After Merge
-- [x] Add automatic worktree cleanup after successful merges
-- [x] Update `cmd_merge` to clean up worktrees and branches on success
 
 ### LLM-Assisted Planning (Optional)
 - [ ] Add engine method for LLM-assisted task planning
@@ -26,6 +15,17 @@
 ---
 
 ## Completed
+
+### Per-Agent Logging with Rotation
+- [x] Create `src/log.rs` module for per-agent logging
+- [x] Implement log rotation (line-based, max 1000 lines per file)
+- [x] Write agent logs to `loop/agent-<initial>.log`
+- [x] Add tests for log module (12 tests)
+- [x] Integrate logging into agent execution in main.rs
+
+### Worktree Cleanup After Merge
+- [x] Add automatic worktree cleanup after successful merges
+- [x] Update `cmd_merge` to clean up worktrees and branches on success
 
 ### Goals
 - [x] Rebuild bash orchestration in Rust with multi-agent sprints and file-based workflow
@@ -98,9 +98,11 @@
 
 ### Logs
 - [x] Stub engine writes outputs to `loop/`
+- [x] Per-agent log files under `loop/agent-<initial>.log`
+- [x] Log rotation when files exceed 1000 lines
 
 ### Tests
-- [x] Unit tests for tasks, agents, chat formatting, lifecycle
+- [x] Unit tests for tasks, agents, chat formatting, lifecycle, logging
 - [x] Integration test harness for stubbed engine runs
 - [x] Tests run without network access
 
