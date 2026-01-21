@@ -155,8 +155,8 @@ swarm-hug manages git worktrees and branches for parallel agent work:
 ### Agent Branches
 
 Each agent gets a dedicated branch named `agent/<lowercase_name>`:
-- Agent A (Aaron) → `agent/aaron`
-- Agent B (Betty) → `agent/betty`
+- Agent A (Aaron) -> `agent/aaron`
+- Agent B (Betty) -> `agent/betty`
 
 Worktrees are real git worktrees created with `git worktree add` under the
 team's worktree directory (for example, `.swarm-hug/<team>/worktrees`).
@@ -166,6 +166,28 @@ List agent branches:
 ```bash
 ./target/debug/swarm worktrees-branch
 ```
+
+### Agent Execution in Worktrees
+
+Agents execute their tasks inside their own worktrees, ensuring isolation:
+- Each agent works in `.swarm-hug/<team>/worktrees/agent-<INITIAL>-<Name>/`
+- The engine receives the worktree path as the working directory
+- This prevents agents from stepping on each other's changes
+
+### Lifecycle Tracking
+
+Each agent goes through these states during a sprint:
+1. **Assigned** - Task has been assigned, agent ready to start
+2. **Working** - Agent is actively executing the task
+3. **Done** - Agent completed (success or failure)
+4. **Terminated** - Agent has been cleaned up
+
+### One Task = One Commit
+
+Each agent creates exactly one commit per task:
+- Commits are made in the agent's worktree/branch
+- Commit author is the agent (e.g., "Agent Aaron <agent-A@swarm.local>")
+- Commit message includes the task description
 
 ### Merging
 
@@ -187,7 +209,7 @@ When tasks are assigned during sprint planning, the changes are automatically co
 
 ## Status
 
-The core multi-team architecture is complete:
+The core architecture is complete:
 - Team isolation with separate directories
 - Agent assignment tracking (exclusive per team)
 - CLI commands for team management (`teams`, `team init`)
@@ -196,11 +218,14 @@ The core multi-team architecture is complete:
 - Agent branch listing (`worktrees-branch`)
 - Agent branch merging (`merge`)
 - Automatic git commits for task assignments
+- Agent execution inside worktrees (engine uses worktree path)
+- Per-agent lifecycle tracking (assigned -> working -> done -> terminated)
+- One task = one commit rule enforced
 
 **Still in progress:**
-- Run agents inside their worktrees (engine still executes in the main repo)
 - Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
+- Tailing chat.md during `swarm run`
 
 ## Development Workflow
 

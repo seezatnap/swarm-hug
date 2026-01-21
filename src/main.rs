@@ -10,9 +10,10 @@ use swarm::agent;
 use swarm::chat;
 use swarm::config::{self, Command, Config};
 use swarm::engine;
+use swarm::lifecycle::LifecycleTracker;
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments, Team};
-use swarm::worktree;
+use swarm::worktree::{self, Worktree};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -656,30 +657,61 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     println!("Sprint {}: assigned {} task(s) to {} agent(s)",
              sprint_number, assigned, agent_count);
 
-    // Create worktrees for assigned agents (placeholder dirs for now).
-    worktree::create_worktrees_in(Path::new(&config.files_worktrees_dir), &assignments)
-        .map_err(|e| format!("failed to create worktrees: {}", e))?;
+    // Create worktrees for assigned agents
+    let worktrees: Vec<Worktree> = worktree::create_worktrees_in(
+        Path::new(&config.files_worktrees_dir),
+        &assignments,
+    ).map_err(|e| format!("failed to create worktrees: {}", e))?;
+
+    // Build a map from initial to worktree path
+    let worktree_map: std::collections::HashMap<char, &Worktree> = worktrees
+        .iter()
+        .map(|wt| (wt.initial, wt))
+        .collect();
+
+    // Initialize lifecycle tracker
+    let mut tracker = LifecycleTracker::new();
+    for (initial, description) in &assignments {
+        let agent_name = agent::name_from_initial(*initial).unwrap_or("Unknown");
+        let wt_path = worktree_map
+            .get(initial)
+            .map(|wt| wt.path.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string());
+        tracker.register(*initial, agent_name, description, &wt_path);
+    }
 
     // Create engine
     let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
 
-    // Execute tasks for each agent
+    // Execute tasks for each agent using lifecycle tracking
     for (initial, description) in &assignments {
         let agent_name = agent::name_from_initial(*initial).unwrap_or("Unknown");
+
+        // Get worktree path for this agent
+        let working_dir = worktree_map
+            .get(initial)
+            .map(|wt| wt.path.clone())
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+
+        // Transition: Assigned -> Working
+        tracker.start(*initial);
 
         // Write agent start to chat
         chat::write_message(&config.files_chat, agent_name, &format!("Starting: {}", description))
             .map_err(|e| format!("failed to write chat: {}", e))?;
 
-        // Execute via engine
+        // Execute via engine in the agent's worktree
         let result = engine.execute(
             agent_name,
             description,
-            Path::new("."),
+            &working_dir,
             sprint_number,
         );
 
         if result.success {
+            // Transition: Working -> Done (success)
+            tracker.complete(*initial);
+
             // Mark task as completed
             for task in &mut task_list.tasks {
                 if let swarm::task::TaskStatus::Assigned(i) = task.status {
@@ -692,16 +724,100 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
 
             chat::write_message(&config.files_chat, agent_name, &format!("Completed: {}", description))
                 .map_err(|e| format!("failed to write chat: {}", e))?;
+
+            // Commit the agent's work in their worktree (one commit per task)
+            commit_agent_work(&working_dir, agent_name, description)?;
         } else {
             let error = result.error.unwrap_or_else(|| "unknown error".to_string());
+
+            // Transition: Working -> Done (failure)
+            tracker.fail(*initial, &error);
+
             chat::write_message(&config.files_chat, agent_name, &format!("Failed: {} - {}", description, error))
                 .map_err(|e| format!("failed to write chat: {}", e))?;
         }
+
+        // Transition: Done -> Terminated
+        tracker.terminate(*initial);
     }
+
+    // Log lifecycle summary
+    let (_, _, _, terminated) = tracker.counts();
+    println!("  Lifecycle: {} agents terminated ({} success, {} failed)",
+             terminated, tracker.success_count(), tracker.failure_count());
 
     // Write final task state
     fs::write(&config.files_tasks, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
 
     Ok(assigned)
+}
+
+/// Commit an agent's work in their worktree.
+/// Each agent makes one commit per task (enforces one task = one commit rule).
+fn commit_agent_work(worktree_path: &Path, agent_name: &str, task_description: &str) -> Result<(), String> {
+    // Stage all changes in the worktree
+    let add_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["add", "-A"])
+        .output();
+
+    match add_result {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // If nothing to add, that's okay
+            if !stderr.contains("Nothing specified") {
+                return Err(format!("git add failed in worktree: {}", stderr));
+            }
+        }
+        Err(e) => return Err(format!("git add failed: {}", e)),
+    }
+
+    // Check if there are staged changes
+    let diff_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["diff", "--cached", "--quiet"])
+        .output();
+
+    let has_changes = match diff_result {
+        Ok(output) => !output.status.success(), // exit code 1 means changes exist
+        Err(_) => false,
+    };
+
+    if !has_changes {
+        return Ok(()); // No changes to commit
+    }
+
+    // Commit with agent attribution
+    let commit_msg = format!("{}: {}", agent_name, task_description);
+    let initial = agent::initial_from_name(agent_name).unwrap_or('?');
+    let commit_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["commit", "-m", &commit_msg])
+        .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
+        .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
+        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .output();
+
+    match commit_result {
+        Ok(output) if output.status.success() => {
+            println!("  {} committed: {}", agent_name, task_description);
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Don't fail if there's nothing to commit
+            if stderr.contains("nothing to commit") {
+                Ok(())
+            } else {
+                Err(format!("git commit failed: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("git commit failed: {}", e)),
+    }
 }

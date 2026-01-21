@@ -1,12 +1,7 @@
 # Tasks
 
-## Current Priorities (one per session)
-- [x] Implement real git worktree add/remove for agent workspaces (replace placeholder dirs; update integration test for initial git commit)
-- [ ] Run agent execution inside each agent worktree (use per-agent branch checkout)
+## Current Priorities
 - [ ] Integrate tailing into `swarm run` by default unless `--no-tail` is set
-- [ ] Enforce per-agent lifecycle tracking (assigned -> working -> done -> terminated)
-- [ ] Enforce one task = one commit rule per agent
-- [ ] Ensure agents only work on assigned tasks
 - [ ] Add per-agent log files under loop/agent-<initial>.log with rotation
 - [ ] Create Lima VM bootstrap script init.sh (Docker, git, bash, Rust, claude/codex; no GridTUI)
 - [ ] Add optional LLM-assisted planning via engine layer
@@ -14,7 +9,15 @@
 
 ---
 
-## Multi-Team Architecture (done)
+## Completed
+
+### Agent Execution (just completed)
+- [x] Run agent execution inside each agent worktree (pass worktree path to engine)
+- [x] Add per-agent lifecycle tracking (assigned -> working -> done -> terminated)
+- [x] Enforce one task = one commit rule per agent (commits in worktree with agent attribution)
+- [x] Ensure agents only work on assigned tasks
+
+### Multi-Team Architecture
 - [x] Create `.swarm-hug/` as root for all team config and artifacts
 - [x] Add `--team <name>` CLI flag to specify which team context to use
 - [x] Update config to resolve paths relative to `.swarm-hug/<team>/`
@@ -32,9 +35,7 @@
 - [x] Update `swarm status` to show team-specific status
 - [x] Update `swarm cleanup` to clean team-specific artifacts
 
----
-
-## Core CLI + Engine (done)
+### Core CLI + Engine
 - [x] Implement CLI interface and dispatch
 - [x] Implement default `swarm` behavior (defaults to `run`)
 - [x] Implement `swarm init`
@@ -56,9 +57,7 @@
 - [x] Support claude/codex/stub engines
 - [x] Stub engine writes deterministic output files
 
----
-
-## Planning + Tasks (done)
+### Planning + Tasks
 - [x] Implement task file parser/writer (TASKS.md format)
 - [x] Implement blocked-task detection
 - [x] Implement algorithmic sprint assignment
@@ -67,22 +66,17 @@
 - [x] Implement adaptive agent spawning
 - [x] Support hard sprint cap
 
----
-
-## Git Workflow + Merge (done)
+### Git Workflow + Merge
 - [x] Implement per-agent branch naming (agent/<name>)
+- [x] Implement real git worktree management (not placeholder dirs)
 - [x] Implement merge workflow (agents merge branch back to main)
 - [x] Surface merge conflicts in CHAT.md and report sprint failure without crashing
 
----
-
-## Tests (done)
+### Tests
 - [x] Write unit tests for core modules
 - [x] Write integration test harness for stubbed engine runs
 
----
-
-## Workflow Requirements (done / ongoing)
+### Workflow Requirements (ongoing)
 - [x] Maintain TASKS.md coverage for all PROMPT/SPECS requirements
 - [x] Keep README.md accurate, accessible, and friendly after each session
 - [x] Use ../ralph-bash-v2 only as a behavior reference (legacy)
