@@ -19,25 +19,25 @@
 - [ ] Support required config keys: agents.max_count, agents.tasks_per_agent, files.tasks, files.chat, files.log_dir, engine.type, engine.stub_mode, sprints.max
 
 ## Task File Format (TASKS.md)
-- [ ] Implement task file parser for checklist format (unassigned `- [ ]`, assigned `- [A]`, completed `- [x] ... (A)`)
-- [ ] Implement task file writer preserving format and backlog order (top to bottom priority)
+- [x] Implement task file parser for checklist format (unassigned `- [ ]`, assigned `- [A]`, completed `- [x] ... (A)`)
+- [x] Implement task file writer preserving format and backlog order (top to bottom priority)
 
 ## Agent Names and Initials
-- [ ] Implement A-Z agent name/initial mapping matching ralph-bash-v2 (Aaron, Betty, Carlos, ... Zane)
+- [x] Implement A-Z agent name/initial mapping matching ralph-bash-v2 (Aaron, Betty, Carlos, ... Zane)
 
 ## CHAT.md and UI
-- [ ] Implement CHAT.md writer with required format: `YYYY-MM-DD HH:MM:SS | <AgentName> | AGENT_THINK: <message>`
+- [x] Implement CHAT.md writer with required format: `YYYY-MM-DD HH:MM:SS | <AgentName> | AGENT_THINK: <message>`
 - [ ] Integrate CHAT.md tailing into `swarm run` with `--no-tail` flag to disable
 
 ## Sprint Planning and Assignment
-- [ ] Implement sprint planning (algorithmic) to assign up to N tasks per agent respecting backlog order
+- [x] Implement sprint planning (algorithmic) to assign up to N tasks per agent respecting backlog order
 - [ ] Implement optional LLM-assisted planning via engine layer
 - [ ] Commit assignment changes to git so worktrees see the changes
-- [ ] Post sprint plan summary to CHAT.md from scrum master
+- [x] Post sprint plan summary to CHAT.md from scrum master
 
 ## Adaptive Agent Spawning
 - [ ] Implement adaptive agent spawning (agents.max_count is a cap, not fixed spawn count)
-- [ ] Implement blocked-task detection (recognize BLOCKED, blocked, "Blocked by:")
+- [x] Implement blocked-task detection (recognize BLOCKED, blocked, "Blocked by:")
 - [ ] Spawn agents only for the number of tasks that can be assigned this sprint
 
 ## Sprint Limits
@@ -74,9 +74,9 @@
 - [ ] Ensure no GridTUI in init.sh
 
 ## Tests
-- [ ] Write unit tests for task parsing and state transitions
-- [ ] Write unit tests for agent naming (A-Z mapping)
-- [ ] Write unit tests for chat formatting
+- [x] Write unit tests for task parsing and state transitions
+- [x] Write unit tests for agent naming (A-Z mapping)
+- [x] Write unit tests for chat formatting
 - [ ] Write integration test: create temp git repo, write TASKS.md/CHAT.md, run stubbed sprint(s)
 - [ ] Integration test verifies: TASKS.md transitions to completed, CHAT.md has plan/completion entries
 - [ ] Integration test verifies: worktrees created and cleaned up, stub output files exist
@@ -86,4 +86,4 @@
 ## Constraints
 - [ ] Ensure ASCII-only output in files (unless file already uses Unicode)
 - [ ] Ensure no GridTUI integration or dependencies
-- [ ] Keep dependencies minimal (prefer standard library)
+- [x] Keep dependencies minimal (prefer standard library)

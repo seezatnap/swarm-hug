@@ -1,0 +1,10 @@
+[package]
+name = "swarm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+tempfile = "3"
