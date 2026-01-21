@@ -262,6 +262,7 @@ The merge command:
 - Skips branches with no changes
 - Posts merge status to chat.md
 - Automatically cleans up worktrees and branches after successful merges
+- Exits non-zero when any conflicts are detected (conflicts are still logged to chat.md)
 
 ### Task Assignment Commits
 

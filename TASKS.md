@@ -25,7 +25,7 @@
 - [x] `swarm teams` lists teams and available agents.
 
 ## P2 - Sprint planning/execution
-- [ ] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
+- [x] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
 - [ ] Ensure sprint planning writes a concise sprint plan summary to CHAT.md.
 - [ ] Confirm LLM-assisted planning (when enabled) falls back to algorithmic assignment on failure.
 - [ ] Ensure task assignment respects top-to-bottom TASKS.md order (backlog priority).
