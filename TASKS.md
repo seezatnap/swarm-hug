@@ -1,29 +1,42 @@
 # Tasks
 
-## Current Priority
+## Team Init Changes
+- [ ] Add `prd.md` creation to `swarm team init` (in `.swarm-hug/<team>/prd.md`)
+  - Default content: `# PRD: <team-name>\n\nAdd product requirements here.`
+- [ ] Add `operator_feedback.md` creation to `swarm team init` (in `.swarm-hug/<team>/operator_feedback.md`)
+  - Default content: `# Operator Feedback: <team-name>\n\nLive feedback and instructions go here.`
+- [ ] Update scrum master logic to read `prd.md` and ensure `tasks.md` stays in sync with PRD requirements
+
+## File Location Changes
+- [ ] Move CHAT.md from project root to `.swarm-hug/CHAT.md`
+  - Update `Config::default()` to use `.swarm-hug/CHAT.md` as default
+  - Update team mode to use `.swarm-hug/<team>/chat.md` (already does this)
+  - Update `swarm init` to create CHAT.md in `.swarm-hug/` not project root
+- [ ] Remove root TASKS.md creation from `swarm init`
+  - Tasks should only exist per-team in `.swarm-hug/<team>/tasks.md`
+  - Remove the default `files_tasks: "TASKS.md"` or point it to team location
+
+## Configuration Simplification
+- [ ] Remove `swarm.toml` support entirely
+  - Delete `Config::load_from_file()` and related TOML parsing
+  - Remove `swarm.toml` creation from `swarm init`
+  - Remove `-c, --config` CLI flag
+  - Remove `Config::default_toml()` method
+  - All configuration via CLI flags only (e.g., `--max-agents`, `--engine`)
+- [ ] Make `--llm-planning` always on (remove the flag)
+  - Remove `--llm-planning` CLI flag from argument parsing
+  - Set `planning_llm_enabled = true` unconditionally in Config
+  - Remove `llm_planning` field from `CliArgs` struct
+  - Update help text to remove the option
+
+## Tests & Documentation
+- [ ] Update tests that reference swarm.toml or root TASKS.md/CHAT.md
+- [ ] Update README.md to reflect new file locations and removed config file
+- [ ] Update any integration tests that depend on old file structure
+
+## Completed (Previous Work)
 - [x] Add `rebuild-swarm` alias in init.sh for rebuilding swarm binary inside the VM
 - [x] Ensure /opt/swarm-hug is mounted RW (not RO) so cargo build works
 - [x] Update README.md with rebuild-swarm documentation
-
-## Spec Coverage (Done)
-- [x] Make `swarm init` create default TASKS.md, CHAT.md, and log dir when no team is specified (match ralph-bash-v2 init behavior).
-- [x] Rust rewrite with multi-agent sprints, file-based workflow, and no GridTUI.
-- [x] CLI command suite: init, run (default), sprint, plan, status, agents, teams, team init, worktrees, worktrees-branch, cleanup, merge, tail.
-- [x] Default command is `run` and tails chat unless `--no-tail` is set.
-- [x] Config file + CLI flags + env var overrides (agents/files/engine/sprints/planning).
-- [x] Multi-team architecture under `.swarm-hug/<team>/` with isolated tasks/chat/specs/prompt/loop/worktrees.
-- [x] Assignments tracked in `.swarm-hug/assignments.toml` with exclusive agent assignment.
-- [x] Task file format: unassigned/assigned/completed checkboxes with initials.
-- [x] Fixed agent name/initial mapping A-Z.
-- [x] Sprint planning and assignment (algorithmic + optional LLM) with sprint plan summary in chat.
-- [x] Adaptive agent spawning based on assignable tasks and max agents cap.
-- [x] Sprint limits via config/flags for deterministic runs.
-- [x] Agent lifecycle enforcement: one task per commit in per-agent worktrees.
-- [x] Tail-based UI that streams chat.md (`swarm tail`).
-- [x] Engine abstraction (claude/codex/stub) with deterministic stub outputs.
-- [x] Git worktree workflow: create/list/cleanup/merge with conflict reporting.
-- [x] Per-agent logging with rotation under loop/.
-- [x] Lima VM bootstrap script (`init.sh`) that provisions Docker+Rust and exposes `swarm`.
-- [x] Test suite: unit tests + integration test with stub engine and no network.
-- [x] Constraints honored: ASCII-only edits, minimal deps, deterministic stub behavior.
-- [x] Workflow requirements tracked: README kept accurate, tests run each session, work committed; ralph-bash-v2 used as legacy reference; >1000 LOC files flagged (none found).
+- [x] Fix CARGO_HOME to use writable volume in VM
+- [x] Fix rebuild-swarm to preserve working directory (subshell)
