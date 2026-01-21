@@ -180,6 +180,8 @@ RUN set -eux; \
 ENV HOME=/home/agent
 ENV PATH=/home/agent/.local/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin
 ENV TERM=xterm-256color
+# Redirect Cargo registry/cache to writable home (toolchain binaries stay at /usr/local/cargo/bin)
+ENV CARGO_HOME=/home/agent/.cargo
 WORKDIR /work
 
 # swarm wrapper for convenience
@@ -242,13 +244,13 @@ docker --context "$CTX" run --rm --user 0:0 \
   -v "${VOL}:/home/agent" \
   "$IMAGE" bash -lc "
     set -e
-    mkdir -p /home/agent/.local/bin /home/agent/.config /home/agent/.cache
+    mkdir -p /home/agent/.local/bin /home/agent/.config /home/agent/.cache /home/agent/.cargo
     chown -R ${AGENT_UID}:${AGENT_GID} /home/agent
     touch /home/agent/.bashrc
     grep -qE '^[[:space:]]*alias[[:space:]]+swarm=' /home/agent/.bashrc || \
       echo 'alias swarm=/usr/local/bin/swarm' >> /home/agent/.bashrc
     grep -qE '^[[:space:]]*alias[[:space:]]+rebuild-swarm=' /home/agent/.bashrc || \
-      echo 'alias rebuild-swarm=\"cd /opt/swarm-hug && cargo build && echo \\\"[rebuild-swarm] Build complete. Binary at /opt/swarm-hug/target/debug/swarm\\\"\"' >> /home/agent/.bashrc
+      echo 'alias rebuild-swarm=\"(cd /opt/swarm-hug && cargo build && echo \\\"[rebuild-swarm] Build complete. Binary at /opt/swarm-hug/target/debug/swarm\\\")\"' >> /home/agent/.bashrc
   " >/dev/null
 
 # --- Start container -----------------------------------------------------------

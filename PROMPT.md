@@ -11,9 +11,6 @@ If you encounter files larger than 1000 LOC, make tasks to break them apart.
 Assure that tests are run after every iteration, and that we fix any issues.
 
 
-ASK:
-
-- [ ] Add a rebuild function for `swarm` that works in the vm set up in init.sh. `swarm --rebuild-binary`. Make certain that permissions in init.sh are appropriate for this to work.
 
 
 
