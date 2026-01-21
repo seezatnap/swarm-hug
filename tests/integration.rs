@@ -21,6 +21,28 @@ fn init_git_repo(path: &Path) {
     let mut cmd = Command::new("git");
     cmd.arg("init").current_dir(path);
     run_success(&mut cmd);
+
+    let mut name_cmd = Command::new("git");
+    name_cmd
+        .args(["config", "user.name", "Swarm Test"])
+        .current_dir(path);
+    run_success(&mut name_cmd);
+
+    let mut email_cmd = Command::new("git");
+    email_cmd
+        .args(["config", "user.email", "swarm-test@example.com"])
+        .current_dir(path);
+    run_success(&mut email_cmd);
+}
+
+fn commit_all(path: &Path, message: &str) {
+    let mut add_cmd = Command::new("git");
+    add_cmd.args(["add", "."]).current_dir(path);
+    run_success(&mut add_cmd);
+
+    let mut commit_cmd = Command::new("git");
+    commit_cmd.args(["commit", "-m", message]).current_dir(path);
+    run_success(&mut commit_cmd);
 }
 
 fn write_config(path: &Path) {
@@ -67,6 +89,7 @@ fn test_swarm_run_stub_integration() {
     write_config(repo_path);
     let tasks_path = write_tasks(repo_path);
     let chat_path = write_chat(repo_path);
+    commit_all(repo_path, "init");
 
     let swarm_bin = env!("CARGO_BIN_EXE_swarm");
     let mut run_cmd = Command::new(swarm_bin);

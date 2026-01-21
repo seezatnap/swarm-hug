@@ -18,6 +18,93 @@ pub struct Worktree {
     pub name: String,
 }
 
+fn git_repo_root() -> Result<PathBuf, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|e| format!("failed to run git rev-parse: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git rev-parse failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let root = stdout.trim();
+    if root.is_empty() {
+        return Err("git rev-parse returned empty repo root".to_string());
+    }
+    Ok(PathBuf::from(root))
+}
+
+fn ensure_head(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .map_err(|e| format!("failed to run git rev-parse HEAD: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("git repo has no commits; create an initial commit before creating worktrees"
+            .to_string())
+    }
+}
+
+fn worktrees_dir_abs(worktrees_dir: &Path, repo_root: &Path) -> PathBuf {
+    if worktrees_dir.is_absolute() {
+        worktrees_dir.to_path_buf()
+    } else {
+        repo_root.join(worktrees_dir)
+    }
+}
+
+fn registered_worktrees(repo_root: &Path) -> Result<HashSet<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut registered = HashSet::new();
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            registered.insert(path.trim().to_string());
+        }
+    }
+    Ok(registered)
+}
+
+fn is_registered_path(registered: &HashSet<String>, path: &Path) -> bool {
+    let display = path.to_string_lossy().to_string();
+    if registered.contains(&display) {
+        return true;
+    }
+    if let Ok(canonical) = path.canonicalize() {
+        return registered.contains(&canonical.to_string_lossy().to_string());
+    }
+    false
+}
+
+fn worktree_is_registered(repo_root: &Path, path: &Path) -> Result<bool, String> {
+    let registered = registered_worktrees(repo_root)?;
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo_root.join(path)
+    };
+    Ok(is_registered_path(&registered, &abs))
+}
+
 fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
     root.join(format!("agent-{}-{}", initial, name))
 }
@@ -36,8 +123,14 @@ pub fn create_worktrees_in(
         return Ok(created);
     }
 
-    fs::create_dir_all(worktrees_dir)
+    let repo_root = git_repo_root()?;
+    ensure_head(&repo_root)?;
+    let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
+
+    fs::create_dir_all(&worktrees_dir)
         .map_err(|e| format!("failed to create worktrees dir: {}", e))?;
+
+    let mut registered = registered_worktrees(&repo_root)?;
 
     for (initial, _task) in assignments {
         let upper = initial.to_ascii_uppercase();
@@ -45,9 +138,44 @@ pub fn create_worktrees_in(
             continue;
         }
         let name = crate::agent::name_from_initial(upper).unwrap_or("Unknown");
-        let path = worktree_path(worktrees_dir, upper, name);
-        fs::create_dir_all(&path)
-            .map_err(|e| format!("failed to create worktree {}: {}", path.display(), e))?;
+        let path = worktree_path(&worktrees_dir, upper, name);
+        let path_str = path.to_string_lossy().to_string();
+        if is_registered_path(&registered, &path) {
+            created.push(Worktree {
+                path,
+                initial: upper,
+                name: name.to_string(),
+            });
+            continue;
+        }
+
+        if path.exists() {
+            return Err(format!(
+                "worktree path exists but is not registered: {}",
+                path.display()
+            ));
+        }
+
+        let branch = agent_branch_name(upper)
+            .ok_or_else(|| format!("invalid agent initial: {}", upper))?;
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["worktree", "add", "-B", &branch, &path_str])
+            .output()
+            .map_err(|e| format!("failed to run git worktree add: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "git worktree add failed for {}: {}",
+                path.display(),
+                stderr.trim()
+            ));
+        }
+
+        registered.insert(path_str);
         created.push(Worktree {
             path,
             initial: upper,
@@ -69,11 +197,84 @@ pub fn create_worktrees(
 
 /// Clean up worktrees in the specified directory.
 pub fn cleanup_worktrees_in(worktrees_dir: &Path) -> Result<(), String> {
-    if worktrees_dir.exists() {
-        fs::remove_dir_all(worktrees_dir)
-            .map_err(|e| format!("failed to remove worktrees: {}", e))?;
+    if !worktrees_dir.exists() {
+        return Ok(());
     }
-    Ok(())
+
+    let repo_root = match git_repo_root() {
+        Ok(root) => root,
+        Err(_) => {
+            fs::remove_dir_all(worktrees_dir)
+                .map_err(|e| format!("failed to remove worktrees: {}", e))?;
+            return Ok(());
+        }
+    };
+
+    let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
+    if !worktrees_dir.exists() {
+        return Ok(());
+    }
+
+    let worktrees = list_worktrees(&worktrees_dir)?;
+    let mut errors = Vec::new();
+
+    for wt in worktrees {
+        let path = if wt.path.is_absolute() {
+            wt.path
+        } else {
+            repo_root.join(wt.path)
+        };
+        match worktree_is_registered(&repo_root, &path) {
+            Ok(true) => {
+                let path_str = path.to_string_lossy().to_string();
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&repo_root)
+                    .args(["worktree", "remove", "--force", &path_str])
+                    .output();
+                match output {
+                    Ok(o) if o.status.success() => {}
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        errors.push(format!(
+                            "git worktree remove failed for {}: {}",
+                            path.display(),
+                            stderr.trim()
+                        ));
+                    }
+                    Err(e) => errors.push(format!(
+                        "failed to run git worktree remove for {}: {}",
+                        path.display(),
+                        e
+                    )),
+                }
+            }
+            Ok(false) => {
+                if path.exists() {
+                    if let Err(e) = fs::remove_dir_all(&path) {
+                        errors.push(format!(
+                            "failed to remove worktree {}: {}",
+                            path.display(),
+                            e
+                        ));
+                    }
+                }
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+
+    if worktrees_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&worktrees_dir) {
+            errors.push(format!("failed to remove worktrees dir: {}", e));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Legacy function for backwards compatibility.

@@ -18,6 +18,9 @@ cargo build
 # Initialize the swarm-hug structure
 ./target/debug/swarm init
 
+# Ensure there is at least one git commit (required for worktrees)
+git commit --allow-empty -m "init"
+
 # Create teams
 ./target/debug/swarm team init authentication
 ./target/debug/swarm team init payments
@@ -155,6 +158,10 @@ Each agent gets a dedicated branch named `agent/<lowercase_name>`:
 - Agent A (Aaron) → `agent/aaron`
 - Agent B (Betty) → `agent/betty`
 
+Worktrees are real git worktrees created with `git worktree add` under the
+team's worktree directory (for example, `.swarm-hug/<team>/worktrees`).
+The repository must have at least one commit before worktrees can be created.
+
 List agent branches:
 ```bash
 ./target/debug/swarm worktrees-branch
@@ -191,7 +198,7 @@ The core multi-team architecture is complete:
 - Automatic git commits for task assignments
 
 **Still in progress:**
-- Full git worktree creation with branch setup (current worktrees are placeholder directories)
+- Run agents inside their worktrees (engine still executes in the main repo)
 - Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
 
