@@ -3,14 +3,10 @@
 ## Current Priorities
 
 ### Lima VM Bootstrap
-- [ ] Create `init.sh` script for Lima VM provisioning
-- [ ] Include Docker, git, bash, Rust toolchain in image
-- [ ] Mount repo and expose `swarm` command inside container
-- [ ] Document Lima setup in README.md
+- [x] Create `init.sh` for Lima VM bootstrap: install Docker, git, bash, Rust toolchain, claude/codex CLIs; mount repo; expose `swarm`; document usage in README
 
 ### LLM-Assisted Planning (Optional)
-- [ ] Add engine method for LLM-assisted task planning
-- [ ] Create scrum master prompts for sprint planning
+- [ ] Add LLM-assisted sprint planning support (engine hook + scrum master prompts)
 
 ---
 
@@ -38,6 +34,7 @@
 - [x] Implement `swarm` binary with default command = `run`
 - [x] Implement commands: init, run, sprint, plan, status, agents, teams, team init, worktrees, worktrees-branch, cleanup, merge, tail
 - [x] Implement `swarm init` to create `.swarm-hug/` root, assignments, and default config
+- [x] Ensure `swarm init` creates default tasks/chat files and log directories
 - [x] Implement `swarm status` to show task counts and recent chat lines
 - [x] Implement `swarm worktrees` and `swarm worktrees-branch`
 - [x] Implement `swarm cleanup` to remove worktrees

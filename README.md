@@ -37,6 +37,42 @@ git commit --allow-empty -m "init"
 ./target/debug/swarm -t authentication status
 ```
 
+## Lima VM Bootstrap (init.sh)
+
+If you want an isolated, repeatable environment, use the Lima bootstrap script:
+
+```bash
+# From the repo root
+./init.sh ~/code/swarm-hug
+```
+
+What it does:
+- Creates/starts a Lima VM with Docker
+- Builds a container image with git, bash, Rust, and the codex/claude CLIs
+- Mounts your repo at `/opt/swarm-hug` and exposes `swarm` in PATH
+
+To enter the container later:
+```bash
+docker --context "lima-swarmbox" exec -it "swarmbox-agent" bash -l
+```
+
+Inside the container, the `swarm` wrapper will auto-build if needed. You can also build manually:
+```bash
+cd /opt/swarm-hug
+cargo build
+```
+
+## Requirements for init.sh
+
+- Lima (`limactl`) and Docker installed on the host
+- Python 3 (used for path normalization)
+
+## init.sh Options
+
+```bash
+./init.sh [--name VM] [--container NAME] [--ports 3000,5173] [--no-auth] <folder1> <folder2> ...
+```
+
 ## Directory Structure
 
 ```
@@ -243,8 +279,8 @@ The core architecture is complete:
 - One task = one commit rule enforced
 - Per-agent logging with rotation
 
-**Still in progress:**
-- Lima VM bootstrap script (init.sh)
+**Also available:**
+- Lima VM bootstrap script (`init.sh`) for a reproducible Docker+Lima environment
 
 ## Development Workflow
 
