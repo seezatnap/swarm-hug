@@ -139,6 +139,8 @@ OPTIONS:
     --llm-planning          Enable LLM-assisted sprint planning (experimental)
 ```
 
+Note: `swarm cleanup` removes team worktrees and any local `agent/*` branches.
+
 ## Agent Assignments
 
 Agents are assigned alphabetically (Aaron, Betty, Carlos, etc.) and tracked in `.swarm-hug/assignments.toml`:

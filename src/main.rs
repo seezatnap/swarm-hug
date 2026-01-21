@@ -473,10 +473,58 @@ fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
 /// Clean up worktrees and branches.
 fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
-    worktree::cleanup_worktrees_in(Path::new(&config.files_worktrees_dir))
-        .map_err(|e| format!("cleanup failed: {}", e))?;
-    println!("  Worktrees removed from {}", config.files_worktrees_dir);
-    Ok(())
+    let worktrees_dir = Path::new(&config.files_worktrees_dir);
+    let worktrees = worktree::list_worktrees(worktrees_dir).unwrap_or_default();
+    let mut initials: Vec<char> = worktrees.iter().map(|wt| wt.initial).collect();
+    let mut errors: Vec<String> = Vec::new();
+
+    if let Err(e) = worktree::cleanup_worktrees_in(worktrees_dir) {
+        errors.push(format!("worktree cleanup failed: {}", e));
+    } else {
+        println!("  Worktrees removed from {}", config.files_worktrees_dir);
+    }
+
+    let branches = match worktree::list_agent_branches() {
+        Ok(list) => list,
+        Err(e) => {
+            errors.push(format!("branch listing failed: {}", e));
+            Vec::new()
+        }
+    };
+
+    if initials.is_empty() {
+        initials = branches.iter().map(|b| b.initial).collect();
+    } else {
+        for branch in &branches {
+            if !initials.contains(&branch.initial) {
+                initials.push(branch.initial);
+            }
+        }
+    }
+
+    if !initials.is_empty() {
+        let mut deleted = 0usize;
+        for initial in initials {
+            match worktree::delete_agent_branch(initial) {
+                Ok(true) => deleted += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    let name = agent::name_from_initial(initial).unwrap_or("?");
+                    errors.push(format!("failed to delete branch for {} ({}): {}", name, initial, e));
+                }
+            }
+        }
+
+        if deleted > 0 {
+            println!("  Deleted {} agent branch(es)", deleted);
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Merge agent branches.

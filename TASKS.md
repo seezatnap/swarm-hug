@@ -11,7 +11,8 @@
 
 ## P1 - Core CLI/config behavior
 - [x] Move default (non-team) files under `.swarm-hug/` (no root TASKS.md/CHAT.md) and update config defaults, `swarm init`, docs, and tests accordingly.
-- [ ] Ensure `swarm cleanup` removes agent branches as well as worktrees.
+- [x] Ensure `swarm cleanup` removes agent branches as well as worktrees.
+- [ ] Confirm `swarm status` reports task counts and recent chat lines.
 - [ ] Enforce exclusive agent assignment per team using `.swarm-hug/assignments.toml` during planning/spawn and release on cleanup/merge.
 - [x] CLI supports init/run/sprint/plan/status/agents/worktrees/worktrees-branch/cleanup/merge/tail/teams/team init.
 - [x] Default command is `run` and tails chat unless `--no-tail` is set.
@@ -24,6 +25,8 @@
 
 ## P2 - Sprint planning/execution
 - [ ] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
+- [ ] Ensure task assignment respects top-to-bottom TASKS.md order (backlog priority).
+- [ ] Ensure agent prompts/rules enforce assigned-tasks-only and one-task-per-commit behavior.
 - [x] Task format supports unassigned/assigned/completed with blocked detection.
 - [x] Adaptive agent spawning is based on assignable tasks.
 - [x] Sprint planning commits task assignment changes to git.

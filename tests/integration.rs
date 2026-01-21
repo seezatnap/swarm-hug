@@ -117,10 +117,27 @@ fn test_swarm_run_stub_integration() {
     assert!(worktrees_dir.join("agent-A-Aaron").exists());
     assert!(worktrees_dir.join("agent-B-Betty").exists());
 
+    let mut branches_cmd = Command::new("git");
+    branches_cmd
+        .args(["branch", "--list", "agent/*"])
+        .current_dir(repo_path);
+    let branches_output = run_success(&mut branches_cmd);
+    let branches_stdout = String::from_utf8_lossy(&branches_output.stdout);
+    assert!(branches_stdout.contains("agent/aaron"));
+    assert!(branches_stdout.contains("agent/betty"));
+
     let mut cleanup_cmd = Command::new(swarm_bin);
     cleanup_cmd
         .args(["--team", team_name, "cleanup"])
         .current_dir(repo_path);
     run_success(&mut cleanup_cmd);
     assert!(!worktrees_dir.exists());
+
+    let mut branches_after_cmd = Command::new("git");
+    branches_after_cmd
+        .args(["branch", "--list", "agent/*"])
+        .current_dir(repo_path);
+    let branches_after = run_success(&mut branches_after_cmd);
+    let branches_after_stdout = String::from_utf8_lossy(&branches_after.stdout);
+    assert!(branches_after_stdout.trim().is_empty());
 }
