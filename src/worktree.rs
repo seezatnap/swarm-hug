@@ -543,6 +543,110 @@ pub fn merge_all_agent_branches(initials: &[char], target_branch: &str) -> Merge
     summary
 }
 
+/// Delete an agent's branch.
+/// Returns Ok(true) if deleted, Ok(false) if branch didn't exist.
+pub fn delete_agent_branch(initial: char) -> Result<bool, String> {
+    let branch = agent_branch_name(initial)
+        .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
+
+    if !agent_branch_exists(initial) {
+        return Ok(false);
+    }
+
+    let output = Command::new("git")
+        .args(["branch", "-D", &branch])
+        .output()
+        .map_err(|e| format!("failed to run git branch -D: {}", e))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git branch -D failed: {}", stderr.trim()))
+    }
+}
+
+/// Clean up a specific agent's worktree in the given directory.
+/// Removes the worktree and optionally deletes the branch.
+pub fn cleanup_agent_worktree(
+    worktrees_dir: &Path,
+    initial: char,
+    delete_branch: bool,
+) -> Result<(), String> {
+    let repo_root = git_repo_root()?;
+    let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
+
+    let name = crate::agent::name_from_initial(initial)
+        .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
+    let path = worktree_path(&worktrees_dir, initial, name);
+
+    // Remove the worktree if it exists
+    if path.exists() {
+        let is_registered = worktree_is_registered(&repo_root, &path)?;
+        if is_registered {
+            let path_str = path.to_string_lossy().to_string();
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args(["worktree", "remove", "--force", &path_str])
+                .output()
+                .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("git worktree remove failed: {}", stderr.trim()));
+            }
+        } else {
+            // Not registered, just remove the directory
+            fs::remove_dir_all(&path)
+                .map_err(|e| format!("failed to remove worktree dir: {}", e))?;
+        }
+    }
+
+    // Optionally delete the branch
+    if delete_branch {
+        delete_agent_branch(initial)?;
+    }
+
+    Ok(())
+}
+
+/// Clean up worktrees for multiple agents.
+/// Returns a summary of cleanup results.
+#[derive(Debug, Default)]
+pub struct CleanupSummary {
+    pub cleaned: Vec<char>,
+    pub errors: Vec<(char, String)>,
+}
+
+impl CleanupSummary {
+    pub fn cleaned_count(&self) -> usize {
+        self.cleaned.len()
+    }
+
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+}
+
+/// Clean up worktrees for specific agents.
+pub fn cleanup_agent_worktrees(
+    worktrees_dir: &Path,
+    initials: &[char],
+    delete_branches: bool,
+) -> CleanupSummary {
+    let mut summary = CleanupSummary::default();
+
+    for &initial in initials {
+        match cleanup_agent_worktree(worktrees_dir, initial, delete_branches) {
+            Ok(()) => summary.cleaned.push(initial),
+            Err(e) => summary.errors.push((initial, e)),
+        }
+    }
+
+    summary
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +666,12 @@ mod tests {
         assert_eq!(summary.success_count(), 0);
         assert_eq!(summary.conflict_count(), 0);
         assert!(!summary.has_conflicts());
+    }
+
+    #[test]
+    fn test_cleanup_summary_default() {
+        let summary = CleanupSummary::default();
+        assert_eq!(summary.cleaned_count(), 0);
+        assert!(!summary.has_errors());
     }
 }

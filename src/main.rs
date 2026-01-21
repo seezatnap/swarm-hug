@@ -500,6 +500,32 @@ fn cmd_merge(config: &Config) -> Result<(), String> {
         summary.no_changes.len()
     );
 
+    // Automatically clean up worktrees and branches for successful merges
+    // Collect agents to clean up: successful merges and those with no changes
+    let mut cleanup_initials: Vec<char> = summary.success.clone();
+    cleanup_initials.extend(&summary.no_changes);
+
+    if !cleanup_initials.is_empty() {
+        println!("\nCleaning up merged worktrees...");
+        let worktrees_dir = Path::new(&config.files_worktrees_dir);
+        let cleanup_summary = worktree::cleanup_agent_worktrees(
+            worktrees_dir,
+            &cleanup_initials,
+            true, // Also delete branches
+        );
+
+        if cleanup_summary.cleaned_count() > 0 {
+            println!("  Cleaned up {} worktree(s) and branch(es)", cleanup_summary.cleaned_count());
+        }
+
+        if cleanup_summary.has_errors() {
+            for (initial, err) in &cleanup_summary.errors {
+                let name = agent::name_from_initial(*initial).unwrap_or("?");
+                eprintln!("  warning: cleanup failed for {} ({}): {}", name, initial, err);
+            }
+        }
+    }
+
     if summary.has_conflicts() {
         Err("Some merges had conflicts".to_string())
     } else {

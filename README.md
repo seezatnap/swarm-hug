@@ -203,6 +203,7 @@ The merge command:
 - Reports conflicts (and aborts conflicted merges for manual resolution)
 - Skips branches with no changes
 - Posts merge status to chat.md
+- Automatically cleans up worktrees and branches after successful merges
 
 ### Task Assignment Commits
 

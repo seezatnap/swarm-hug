@@ -16,8 +16,8 @@
 - [ ] Document Lima setup in README.md
 
 ### Worktree Cleanup After Merge
-- [ ] Add automatic worktree cleanup after successful merges
-- [ ] Update `cmd_merge` to optionally clean up worktrees on success
+- [x] Add automatic worktree cleanup after successful merges
+- [x] Update `cmd_merge` to clean up worktrees and branches on success
 
 ### LLM-Assisted Planning (Optional)
 - [ ] Add engine method for LLM-assisted task planning
