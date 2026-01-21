@@ -1,8 +1,9 @@
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use std::thread;
 use std::time::Duration;
 
@@ -155,6 +156,22 @@ fn cmd_run(config: &Config) -> Result<(), String> {
              if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() },
              config.effective_engine().as_str());
 
+    let mut tail_stop: Option<Arc<AtomicBool>> = None;
+    let mut tail_handle: Option<thread::JoinHandle<()>> = None;
+
+    if !config.no_tail {
+        let stop = Arc::new(AtomicBool::new(false));
+        let path = config.files_chat.clone();
+        let stop_clone = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            if let Err(e) = tail_follow(&path, true, Some(stop_clone)) {
+                eprintln!("warning: tail stopped: {}", e);
+            }
+        });
+        tail_stop = Some(stop);
+        tail_handle = Some(handle);
+    }
+
     let mut sprint_number = 0;
 
     loop {
@@ -176,6 +193,13 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
         // Small delay between sprints
         thread::sleep(Duration::from_millis(100));
+    }
+
+    if let Some(stop) = tail_stop {
+        stop.store(true, Ordering::SeqCst);
+    }
+    if let Some(handle) = tail_handle {
+        let _ = handle.join();
     }
 
     Ok(())
@@ -579,26 +603,60 @@ fn cmd_team_init(_config: &Config, cli: &config::CliArgs) -> Result<(), String> 
 fn cmd_tail(config: &Config) -> Result<(), String> {
     let path = &config.files_chat;
 
-    if !Path::new(path).exists() {
-        return Err(format!("{} not found", path));
-    }
-
     println!("Tailing {}... (Ctrl+C to stop)", path);
 
-    // Simple tail implementation - read and print new lines
-    let file = fs::File::open(path)
-        .map_err(|e| format!("failed to open {}: {}", path, e))?;
-    let reader = BufReader::new(file);
+    tail_follow(path, false, None)
+}
 
-    for line in reader.lines() {
-        match line {
-            Ok(l) => println!("{}", l),
-            Err(e) => eprintln!("error reading line: {}", e),
+/// Tail a file and stream appended content.
+fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -> Result<(), String> {
+    let mut offset: u64 = 0;
+
+    loop {
+        if let Some(flag) = stop.as_ref() {
+            if flag.load(Ordering::SeqCst) {
+                break;
+            }
         }
+
+        if !Path::new(path).exists() {
+            if allow_missing {
+                thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+            return Err(format!("{} not found", path));
+        }
+
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .open(path)
+            .map_err(|e| format!("failed to open {}: {}", path, e))?;
+
+        let len = file
+            .metadata()
+            .map_err(|e| format!("failed to stat {}: {}", path, e))?
+            .len();
+        if len < offset {
+            offset = 0;
+        }
+
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("failed to seek {}: {}", path, e))?;
+
+        let mut buffer = String::new();
+        let bytes = file
+            .read_to_string(&mut buffer)
+            .map_err(|e| format!("failed to read {}: {}", path, e))?;
+
+        if bytes > 0 {
+            print!("{}", buffer);
+            let _ = io::stdout().flush();
+            offset += bytes as u64;
+        }
+
+        thread::sleep(Duration::from_millis(200));
     }
 
-    // In a real implementation, we'd watch for new content
-    // For now, just print what's there
     Ok(())
 }
 

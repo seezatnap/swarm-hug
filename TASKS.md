@@ -1,86 +1,100 @@
 # Tasks
 
 ## Current Priorities
-- [A] Integrate tailing into `swarm run` by default unless `--no-tail` is set
-- [A] Add per-agent log files under loop/agent-<initial>.log with rotation
-- [B] Create Lima VM bootstrap script init.sh (Docker, git, bash, Rust, claude/codex; no GridTUI)
-- [B] Add optional LLM-assisted planning via engine layer
-- [C] Clean up worktrees automatically after merge
-- [x] Run agent execution inside each agent worktree (pass worktree path to engine) (?)
-- [x] Add per-agent lifecycle tracking (assigned -> working -> done -> terminated) (?)
-- [x] Enforce one task = one commit rule per agent (commits in worktree with agent attribution) (?)
-- [x] Ensure agents only work on assigned tasks (?)
-- [x] Create `.swarm-hug/` as root for all team config and artifacts (?)
-- [x] Add `--team <name>` CLI flag to specify which team context to use (?)
-- [x] Update config to resolve paths relative to `.swarm-hug/<team>/` (?)
-- [x] Each team gets its own `specs.md`, `prompt.md`, `tasks.md` in `.swarm-hug/<team>/` (?)
-- [x] Each team gets its own `loop/` directory in `.swarm-hug/<team>/loop/` (?)
-- [x] Each team gets its own `worktrees/` directory in `.swarm-hug/<team>/worktrees/` (?)
-- [x] Team's `chat.md` lives in `.swarm-hug/<team>/chat.md` (?)
-- [x] Create `.swarm-hug/assignments.toml` to track agent-to-team assignments (?)
-- [x] Implement agent assignment logic (alphabetical: Aaron, Betty, Carlos, etc.) (?)
-- [x] Ensure agents cannot be assigned to multiple teams simultaneously (?)
-- [x] Add `swarm teams` command to list active teams and their assigned agents (?)
-- [x] Add `swarm team init <name>` command to initialize a new team (?)
-- [x] Update `swarm init` to create `.swarm-hug/` structure (?)
-- [x] Update `swarm run` to use `--team` for team-specific paths (?)
-- [x] Update `swarm status` to show team-specific status (?)
-- [x] Update `swarm cleanup` to clean team-specific artifacts (?)
-- [x] Implement CLI interface and dispatch (?)
-- [x] Implement default `swarm` behavior (defaults to `run`) (?)
-- [x] Implement `swarm init` (?)
-- [x] Implement `swarm run` (?)
-- [x] Implement `swarm sprint` (?)
-- [x] Implement `swarm plan` (?)
-- [x] Implement `swarm status` (?)
-- [x] Implement `swarm agents` (?)
-- [x] Implement `swarm teams` (?)
-- [x] Implement `swarm team init` (?)
-- [x] Implement `swarm tail` (?)
-- [x] Implement `swarm worktrees` command (lists team worktrees dir) (?)
-- [x] Implement `swarm worktrees-branch` command (list git branches) (?)
-- [x] Implement `swarm cleanup` command (?)
-- [x] Implement `swarm merge` (?)
-- [x] Implement configuration loading (config + CLI flags + env vars) (?)
-- [x] Support required config keys (?)
-- [x] Implement engine abstraction layer (?)
-- [x] Support claude/codex/stub engines (?)
-- [x] Stub engine writes deterministic output files (?)
-- [x] Implement task file parser/writer (TASKS.md format) (?)
-- [x] Implement blocked-task detection (?)
-- [x] Implement algorithmic sprint assignment (?)
-- [x] Commit assignment changes to git so worktrees see updates (?)
-- [x] Write sprint plan summary to CHAT.md (?)
-- [x] Implement adaptive agent spawning (?)
-- [x] Support hard sprint cap (?)
-- [x] Implement per-agent branch naming (agent/<name>) (?)
-- [x] Implement real git worktree management (not placeholder dirs) (?)
-- [x] Implement merge workflow (agents merge branch back to main) (?)
-- [x] Surface merge conflicts in CHAT.md and report sprint failure without crashing (?)
-- [x] Write unit tests for core modules (?)
-- [x] Write integration test harness for stubbed engine runs (?)
-- [x] Maintain TASKS.md coverage for all PROMPT/SPECS requirements (?)
-- [x] Keep README.md accurate, accessible, and friendly after each session (?)
-- [x] Use ../ralph-bash-v2 only as a behavior reference (legacy) (?)
-- [x] Check in work after each completed task (one task per commit) (?)
-- [x] Run tests after every iteration and fix issues (?)
-- [x] Keep outputs ASCII-only unless a file already uses Unicode (?)
-- [x] Avoid GridTUI integration or dependencies (?)
+- [ ] Add per-agent log files under `loop/agent-<initial>.log` with rotation
+- [ ] Create Lima VM bootstrap script `init.sh` (Docker, git, bash, Rust, claude/codex; no GridTUI)
+- [ ] Clean up worktrees automatically after merge
+- [ ] Add optional LLM-assisted planning via engine layer
 
 ---
 
 ## Completed
 
-### Agent Execution (just completed)
+### Goals
+- [x] Rebuild bash orchestration in Rust with multi-agent sprints and file-based workflow
+- [x] Start with a comprehensive, stub-first test suite for end-to-end behavior
+- [x] Preserve core behavior (TASKS.md, CHAT.md, git worktrees, merge flow) without GridTUI
+- [x] Support sprint limits for deterministic runs
+- [x] Provide multi-team support with isolated artifacts
+
+### CLI and Entrypoints
+- [x] Implement `swarm` binary with default command = `run`
+- [x] Implement commands: init, run, sprint, plan, status, agents, teams, team init, worktrees, worktrees-branch, cleanup, merge, tail
+- [x] Implement `swarm init` to create `.swarm-hug/` root, assignments, and default config
+- [x] Implement `swarm status` to show task counts and recent chat lines
+- [x] Implement `swarm worktrees` and `swarm worktrees-branch`
+- [x] Implement `swarm cleanup` to remove worktrees
+- [x] Implement `swarm merge` with conflict reporting to CHAT.md
+
+### Configuration
+- [x] Config file + CLI flags + env vars with precedence
+- [x] Support required config keys (agents, files, engine, sprints)
+- [x] Apply team-based path defaults under `.swarm-hug/<team>/`
+- [x] Support env var overrides for agents/files/engine/sprints
 
 ### Multi-Team Architecture
+- [x] Store all artifacts under `.swarm-hug/`
+- [x] Team directories include tasks.md, chat.md, specs.md, prompt.md, loop/, worktrees/
+- [x] Track agent assignments in `.swarm-hug/assignments.toml`
+- [x] Enforce exclusive agent assignment per team
+- [x] Implement `swarm teams` and `swarm team init <name>`
 
-### Core CLI + Engine
+### Task File Format
+- [x] Preserve checklist format with unassigned/assigned/completed states
+- [x] Map checkbox initials to canonical agent names
+- [x] Keep backlog ordering top-to-bottom
 
-### Planning + Tasks
+### Sprint Planning and Assignment
+- [x] Algorithmic sprint assignment with tasks-per-agent
+- [x] Commit assignment changes so worktrees see them
+- [x] Write sprint plan summary to CHAT.md
+- [x] Respect blocked markers (BLOCKED/blocked/Blocked by:)
 
-### Git Workflow + Merge
+### Adaptive Agent Spawning
+- [x] Spawn agents based on available assignable tasks
+- [x] Cap agent count with `agents.max_count`
+
+### Sprint Limits
+- [x] Support `--max-sprints` and config `sprints.max`
+- [x] Stop cleanly when sprint cap reached
+
+### Agent Execution Rules
+- [x] Run each agent inside its own git worktree
+- [x] Enforce one task = one commit per agent
+- [x] Track lifecycle states (assigned -> working -> done -> terminated)
+- [x] Agents operate only on assigned tasks
+
+### Chat and UI
+- [x] Append all communication to CHAT.md with required format
+- [x] Provide `swarm tail` command that follows appended lines
+- [x] Stream chat output during `swarm run` by default unless `--no-tail` is set
+
+### Engine Abstraction
+- [x] Support claude/codex/stub engines
+- [x] Stub engine writes deterministic output files per invocation
+- [x] Engine layer is swappable for tests vs production
+
+### Git Worktree Workflow
+- [x] Create real git worktrees under team worktrees dir
+- [x] Use per-agent branches (agent/<name>)
+- [x] Surface merge conflicts and report sprint failures without crashing
+
+### Logs
+- [x] Stub engine writes outputs to `loop/`
 
 ### Tests
+- [x] Unit tests for tasks, agents, chat formatting, lifecycle
+- [x] Integration test harness for stubbed engine runs
+- [x] Tests run without network access
 
-### Workflow Requirements (ongoing)
+### Workflow Requirements (Ongoing)
+- [x] Maintain exhaustive TASKS.md coverage for PROMPT/SPECS
+- [x] Keep README.md accurate, accessible, and friendly after each session
+- [x] Use ../ralph-bash-v2 as reference only (legacy, fragile)
+- [x] Run tests after each iteration and fix issues
+- [x] Check in work after each completed task
+- [x] Avoid GridTUI dependencies
+- [x] Prefer batching up to 3 related tasks per session when allowed by session rules
+
+### Repo Hygiene
+- [x] Checked src/tests for >1000 LOC files; none found

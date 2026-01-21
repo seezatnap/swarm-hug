@@ -31,6 +31,7 @@ git commit --allow-empty -m "init"
 # Run sprints for a specific team
 ./target/debug/swarm --team authentication run
 ./target/debug/swarm -t payments --stub --max-sprints 1 run
+# By default, `run` tails chat.md; use --no-tail to disable.
 
 # Check team status
 ./target/debug/swarm -t authentication status
@@ -225,7 +226,6 @@ The core architecture is complete:
 **Still in progress:**
 - Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
-- Tailing chat.md during `swarm run`
 
 ## Development Workflow
 
