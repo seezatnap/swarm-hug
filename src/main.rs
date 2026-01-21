@@ -11,6 +11,7 @@ use swarm::chat;
 use swarm::config::{self, Command, Config};
 use swarm::engine;
 use swarm::task::TaskList;
+use swarm::worktree;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -300,8 +301,9 @@ fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
 /// Clean up worktrees and branches.
 fn cmd_cleanup(_config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
-    // TODO: Implement cleanup
-    println!("  (not yet implemented)");
+    worktree::cleanup_worktrees(Path::new("."))
+        .map_err(|e| format!("cleanup failed: {}", e))?;
+    println!("  Worktrees removed");
     Ok(())
 }
 
@@ -391,6 +393,10 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
 
     println!("Sprint {}: assigned {} task(s) to {} agent(s)",
              sprint_number, assigned, agent_count);
+
+    // Create worktrees for assigned agents (placeholder dirs for now).
+    worktree::create_worktrees(Path::new("."), &assignments)
+        .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Create engine
     let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);

@@ -14,9 +14,12 @@ The CLI and core functionality are implemented. The following are working:
 - **Engine Abstraction**: Swappable backends (claude, codex, stub)
 - **Stub Engine**: Deterministic output for testing (no network calls)
 - **Sprint Execution**: Plan, run, and limit sprints
+- **Integration Tests**: Stubbed end-to-end run in a temp git repo
+- **Worktree Prep**: Placeholder worktree directories per assigned agent
 
 **Not yet implemented:**
-- Git worktree management
+- Full git worktree management (current worktrees are placeholder directories)
+- Worktree listing/branch listing
 - Agent branch merging
 - Per-agent logging
 
@@ -105,11 +108,13 @@ Environment variables (override config file):
 
 ```bash
 # Run tests
-cargo test --lib
+cargo test --lib --tests
 
 # Build release
 cargo build --release
 ```
+
+Note: doctests may fail in noexec temp environments; use `cargo test --lib --tests` when that occurs.
 
 ## Goals (from SPECS.md)
 
@@ -136,6 +141,8 @@ src/
   config.rs       - Configuration loading
   engine.rs       - Engine abstraction (claude, codex, stub)
   task.rs         - TASKS.md parsing
+  worktree.rs     - Placeholder worktree directory management
+tests/            - Integration tests
 loop/             - Log/output directory
 TASKS.md          - Active task backlog
 SPECS.md          - Product requirements

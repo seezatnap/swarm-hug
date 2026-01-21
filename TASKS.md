@@ -1,10 +1,14 @@
 # Tasks
 
-## Docs & Process
-- [x] Create README.md baseline with overview, current status, usage/testing, workflow constraints, and a note that ../ralph-bash-v2 is a legacy reference.
+## Process & Docs (requirements from PROMPT.md)
+- [x] Keep README.md accurate, accessible, and friendly after each session (and note ../ralph-bash-v2 is legacy).
+- [x] Maintain TASKS.md coverage for all PROMPT/SPECS requirements.
+- [x] Use ../ralph-bash-v2 only as a behavior reference (not a source of truth).
+- [x] Check in work after each completed task (one task per commit).
+- [x] Batch up to 3 related tasks only when session rules allow (AGENTS currently limits to 1).
 
 ## Tests (must be implemented first for product behavior)
-- [ ] Write integration test harness that runs `swarm` in a temp git repo with stub engine and `--max-sprints`, verifying TASKS.md completion, CHAT.md plan/completion entries, worktree create/cleanup, and stub output files; ensure deterministic/no-network behavior.
+- [x] Write integration test harness that runs `swarm` in a temp git repo with stub engine and `--max-sprints`, verifying TASKS.md completion, CHAT.md plan/completion entries, worktree create/cleanup, and stub output files; ensure deterministic/no-network behavior.
 
 ## CLI and Entrypoints
 - [x] Define CLI interface and dispatch for `swarm` (init/run/sprint/plan/status/agents/worktrees/worktrees-branch/cleanup/merge/tail).
@@ -57,6 +61,7 @@
 - [ ] Implement per-agent branch naming (agent/<name>).
 - [ ] Create worktrees before agents run and clean up after merge.
 - [ ] Implement merge workflow (agents merge branch back to main).
+- [ ] Surface merge conflicts in CHAT.md and report sprint failure without crashing.
 - [ ] Surface merge conflicts to CHAT.md; report failure but do not crash runner.
 
 ## Logs
