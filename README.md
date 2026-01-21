@@ -140,6 +140,7 @@ OPTIONS:
 ```
 
 Note: `swarm cleanup` removes team worktrees and any local `agent/*` branches.
+Tip: `swarm status` prints task counts and the last 5 chat lines for the selected team.
 
 ## Agent Assignments
 

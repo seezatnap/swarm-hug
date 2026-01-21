@@ -141,3 +141,53 @@ fn test_swarm_run_stub_integration() {
     let branches_after_stdout = String::from_utf8_lossy(&branches_after.stdout);
     assert!(branches_after_stdout.trim().is_empty());
 }
+
+#[test]
+fn test_swarm_status_shows_counts_and_recent_chat() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["team", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] Task one\n- [A] Task two\n- [x] Task three (A)\n- [ ] BLOCKED: Task four\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+
+    let chat_path = team_root.join("chat.md");
+    let mut chat_lines = Vec::new();
+    for i in 1..=7 {
+        chat_lines.push(format!(
+            "2026-01-21 10:00:0{} | Aaron | AGENT_THINK: Message {}",
+            i, i
+        ));
+    }
+    fs::write(&chat_path, format!("{}\n", chat_lines.join("\n"))).expect("write CHAT.md");
+
+    let mut status_cmd = Command::new(swarm_bin);
+    status_cmd
+        .args(["--team", team_name, "status"])
+        .current_dir(repo_path);
+    let output = run_success(&mut status_cmd);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("Unassigned: 2"));
+    assert!(stdout.contains("Assigned:   1"));
+    assert!(stdout.contains("Completed:  1"));
+    assert!(stdout.contains("Assignable: 1"));
+    assert!(stdout.contains("Total:      4"));
+
+    for i in 3..=7 {
+        assert!(stdout.contains(&format!("Message {}", i)));
+    }
+    assert!(!stdout.contains("Message 1"));
+    assert!(!stdout.contains("Message 2"));
+}
