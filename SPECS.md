@@ -142,3 +142,11 @@ Rust rewrite of ../ralph-bash-v2: a multi-agent, sprint-based orchestration syst
 - No new dependencies unless required to satisfy the spec.
 - Behavior must be deterministic under stubbed engine for tests.
 - Keep code minimal while meeting all requirements above.
+
+## Workflow requirements (from PROMPT.md)
+- Keep README.md accurate, accessible, and friendly after each session.
+- Use ../ralph-bash-v2 as a reference for behavior, noting it is older and fragile.
+- Maintain an exhaustive TASKS.md that captures all PROMPT/SPECS requirements.
+- Check in work (commit) after each completed task.
+- If any file exceeds 1000 LOC, add a TASKS.md entry to break it apart.
+- Prefer batching up to 3 related tasks per session when allowed by session rules.
