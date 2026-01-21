@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -211,6 +212,43 @@ fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn team_name_for_config(config: &Config) -> String {
+    config.team.clone().unwrap_or_else(|| "default".to_string())
+}
+
+fn release_assignments_for_team(team_name: &str, initials: &[char]) -> Result<usize, String> {
+    let mut assignments = Assignments::load()?;
+
+    if initials.is_empty() {
+        let released = assignments.team_agents(team_name).len();
+        if released > 0 {
+            assignments.release_team(team_name);
+            assignments.save()?;
+        }
+        return Ok(released);
+    }
+
+    let mut released = 0usize;
+    let mut seen = HashSet::new();
+
+    for initial in initials {
+        let upper = initial.to_ascii_uppercase();
+        if !seen.insert(upper) {
+            continue;
+        }
+        if assignments.get_team(upper) == Some(team_name) {
+            assignments.release(upper);
+            released += 1;
+        }
+    }
+
+    if released > 0 {
+        assignments.save()?;
+    }
+
+    Ok(released)
+}
+
 /// Run sprints until done or max-sprints reached.
 fn cmd_run(config: &Config) -> Result<(), String> {
     println!("Running swarm (max_sprints={}, engine={})...",
@@ -289,11 +327,18 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
         return Ok(());
     }
 
+    let team_name = team_name_for_config(config);
+    let mut assignments_state = Assignments::load()?;
+
     let tasks_per_agent = config.agents_tasks_per_agent;
     let agents_needed = (assignable + tasks_per_agent - 1) / tasks_per_agent;
-    let agent_count = agents_needed.min(config.agents_max_count);
-
-    let initials = agent::get_initials(agent_count);
+    let agent_cap = agents_needed.min(config.agents_max_count);
+    let initials = assignments_state.available_for_team(&team_name, agent_cap);
+    if initials.is_empty() {
+        println!("No available agents for team '{}'.", team_name);
+        return Ok(());
+    }
+    let agent_count = initials.len();
     let assigned = task_list.assign_sprint(&initials, tasks_per_agent);
 
     // Write updated tasks
@@ -312,6 +357,28 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
             }
         })
         .collect();
+
+    let mut assigned_initials: Vec<char> = Vec::new();
+    for (initial, _) in &assignments {
+        if !assigned_initials.contains(initial) {
+            assigned_initials.push(*initial);
+        }
+    }
+    if !assigned_initials.is_empty() {
+        for initial in &assigned_initials {
+            if let Some(existing) = assignments_state.get_team(*initial) {
+                if existing != team_name.as_str() {
+                    return Err(format!(
+                        "Agent {} is already assigned to team '{}'",
+                        initial, existing
+                    ));
+                }
+            } else {
+                assignments_state.assign(*initial, &team_name)?;
+            }
+        }
+        assignments_state.save()?;
+    }
 
     // Write sprint plan to chat
     chat::write_sprint_plan(&config.files_chat, 1, &assignments)
@@ -334,12 +401,20 @@ fn sprint_number_for_plan(_: usize) -> usize {
     1
 }
 
-/// Commit task assignment changes to git.
-fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
-    // Stage the tasks file
-    let add_result = process::Command::new("git")
-        .args(["add", tasks_file])
-        .output();
+fn commit_files(paths: &[&str], message: &str) -> Result<bool, String> {
+    let existing: Vec<&str> = paths
+        .iter()
+        .copied()
+        .filter(|p| !p.is_empty() && Path::new(p).exists())
+        .collect();
+
+    if existing.is_empty() {
+        return Ok(false);
+    }
+
+    let mut add_args = vec!["add"];
+    add_args.extend(existing);
+    let add_result = process::Command::new("git").args(add_args).output();
 
     match add_result {
         Ok(output) if output.status.success() => {}
@@ -361,13 +436,12 @@ fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(),
     };
 
     if !has_changes {
-        return Ok(()); // No changes to commit
+        return Ok(false); // No changes to commit
     }
 
     // Commit the changes
-    let commit_msg = format!("Sprint {}: task assignments", sprint_number);
     let commit_result = process::Command::new("git")
-        .args(["commit", "-m", &commit_msg])
+        .args(["commit", "-m", message])
         .env("GIT_AUTHOR_NAME", "Swarm ScrumMaster")
         .env("GIT_AUTHOR_EMAIL", "swarm@local")
         .env("GIT_COMMITTER_NAME", "Swarm ScrumMaster")
@@ -375,21 +449,28 @@ fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(),
         .output();
 
     match commit_result {
-        Ok(output) if output.status.success() => {
-            println!("  Committed task assignments to git.");
-            Ok(())
-        }
+        Ok(output) if output.status.success() => Ok(true),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Don't fail if there's nothing to commit
             if stderr.contains("nothing to commit") {
-                Ok(())
+                Ok(false)
             } else {
                 Err(format!("git commit failed: {}", stderr))
             }
         }
         Err(e) => Err(format!("git commit failed: {}", e)),
     }
+}
+
+/// Commit task assignment changes to git.
+fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
+    let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
+    let commit_msg = format!("Sprint {}: task assignments", sprint_number);
+    if commit_files(&[tasks_file, assignments_path.as_str()], &commit_msg)? {
+        println!("  Committed task assignments to git.");
+    }
+    Ok(())
 }
 
 /// Show task status.
@@ -473,6 +554,7 @@ fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
 /// Clean up worktrees and branches.
 fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
+    let team_name = team_name_for_config(config);
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
     let worktrees = worktree::list_worktrees(worktrees_dir).unwrap_or_default();
     let mut initials: Vec<char> = worktrees.iter().map(|wt| wt.initial).collect();
@@ -504,7 +586,7 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
 
     if !initials.is_empty() {
         let mut deleted = 0usize;
-        for initial in initials {
+        for &initial in &initials {
             match worktree::delete_agent_branch(initial) {
                 Ok(true) => deleted += 1,
                 Ok(false) => {}
@@ -520,6 +602,15 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
         }
     }
 
+    match release_assignments_for_team(&team_name, &[]) {
+        Ok(released) => {
+            if released > 0 {
+                println!("  Released {} agent assignment(s) for team {}", released, team_name);
+            }
+        }
+        Err(e) => errors.push(format!("assignment release failed: {}", e)),
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -530,6 +621,7 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
 /// Merge agent branches.
 fn cmd_merge(config: &Config) -> Result<(), String> {
     println!("Merging agent branches...");
+    let team_name = team_name_for_config(config);
 
     // Find all agent branches
     let branches = worktree::list_agent_branches()?;
@@ -630,6 +722,19 @@ fn cmd_merge(config: &Config) -> Result<(), String> {
             for (initial, err) in &cleanup_summary.errors {
                 let name = agent::name_from_initial(*initial).unwrap_or("?");
                 eprintln!("  warning: cleanup failed for {} ({}): {}", name, initial, err);
+            }
+        }
+    }
+
+    if !cleanup_initials.is_empty() {
+        match release_assignments_for_team(&team_name, &cleanup_initials) {
+            Ok(released) => {
+                if released > 0 {
+                    println!("Released {} agent assignment(s) for team {}", released, team_name);
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: assignment release failed: {}", e);
             }
         }
     }
@@ -808,11 +913,18 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         return Ok(0);
     }
 
+    let team_name = team_name_for_config(config);
+    let mut assignments_state = Assignments::load()?;
+
     let tasks_per_agent = config.agents_tasks_per_agent;
     let agents_needed = (assignable + tasks_per_agent - 1) / tasks_per_agent;
-    let agent_count = agents_needed.min(config.agents_max_count);
-
-    let initials = agent::get_initials(agent_count);
+    let agent_cap = agents_needed.min(config.agents_max_count);
+    let initials = assignments_state.available_for_team(&team_name, agent_cap);
+    if initials.is_empty() {
+        println!("No available agents for team '{}'.", team_name);
+        return Ok(0);
+    }
+    let agent_count = initials.len();
 
     // Assign tasks either via LLM or algorithmically
     let assigned = if config.planning_llm_enabled {
@@ -870,6 +982,28 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
             }
         })
         .collect();
+
+    let mut assigned_initials: Vec<char> = Vec::new();
+    for (initial, _) in &assignments {
+        if !assigned_initials.contains(initial) {
+            assigned_initials.push(*initial);
+        }
+    }
+    if !assigned_initials.is_empty() {
+        for initial in &assigned_initials {
+            if let Some(existing) = assignments_state.get_team(*initial) {
+                if existing != team_name.as_str() {
+                    return Err(format!(
+                        "Agent {} is already assigned to team '{}'",
+                        initial, existing
+                    ));
+                }
+            } else {
+                assignments_state.assign(*initial, &team_name)?;
+            }
+        }
+        assignments_state.save()?;
+    }
 
     // Write sprint plan to chat
     let assignments_ref: Vec<(char, &str)> = assignments

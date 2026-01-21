@@ -264,6 +264,20 @@ impl Assignments {
             .copied()
             .collect()
     }
+
+    /// Get the next N agents available to a specific team.
+    /// Includes unassigned agents and agents already assigned to the team.
+    pub fn available_for_team(&self, team: &str, count: usize) -> Vec<char> {
+        crate::agent::INITIALS
+            .iter()
+            .filter(|&&i| {
+                self.is_available(i)
+                    || self.get_team(i).map(|t| t == team).unwrap_or(false)
+            })
+            .take(count)
+            .copied()
+            .collect()
+    }
 }
 
 /// List all teams in the .swarm-hug directory.
@@ -440,6 +454,16 @@ C = "authentication"
 
         let available = assignments.next_available(3);
         assert_eq!(available, vec!['B', 'D', 'E']);
+    }
+
+    #[test]
+    fn test_available_for_team_includes_team_and_unassigned() {
+        let mut assignments = Assignments::default();
+        assignments.assign('A', "auth").unwrap();
+        assignments.assign('B', "payments").unwrap();
+
+        let available = assignments.available_for_team("auth", 4);
+        assert_eq!(available, vec!['A', 'C', 'D', 'E']);
     }
 
     #[test]

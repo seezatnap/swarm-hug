@@ -109,6 +109,11 @@ fn test_swarm_run_stub_integration() {
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
 
+    let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
+    let assignments_content = fs::read_to_string(&assignments_path).expect("read assignments.toml");
+    assert!(assignments_content.contains("A = \"alpha\""));
+    assert!(assignments_content.contains("B = \"alpha\""));
+
     let output_dir = team_root.join("loop");
     assert!(output_dir.join("turn1-agentA.md").exists());
     assert!(output_dir.join("turn1-agentB.md").exists());
@@ -132,6 +137,10 @@ fn test_swarm_run_stub_integration() {
         .current_dir(repo_path);
     run_success(&mut cleanup_cmd);
     assert!(!worktrees_dir.exists());
+
+    let assignments_after = fs::read_to_string(&assignments_path).expect("read assignments.toml");
+    assert!(!assignments_after.contains("A = \"alpha\""));
+    assert!(!assignments_after.contains("B = \"alpha\""));
 
     let mut branches_after_cmd = Command::new("git");
     branches_after_cmd

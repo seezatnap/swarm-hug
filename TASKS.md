@@ -10,10 +10,11 @@
 - [x] Unit tests cover config/env/CLI parsing.
 
 ## P1 - Core CLI/config behavior
+- [x] Config supports required values (agents/files/engine/sprints/planning) with CLI/env overrides and team path resolution.
 - [x] Move default (non-team) files under `.swarm-hug/` (no root TASKS.md/CHAT.md) and update config defaults, `swarm init`, docs, and tests accordingly.
 - [x] Ensure `swarm cleanup` removes agent branches as well as worktrees.
 - [x] Confirm `swarm status` reports task counts and recent chat lines.
-- [ ] Enforce exclusive agent assignment per team using `.swarm-hug/assignments.toml` during planning/spawn and release on cleanup/merge.
+- [x] Enforce exclusive agent assignment per team using `.swarm-hug/assignments.toml` during planning/spawn and release on cleanup/merge.
 - [x] CLI supports init/run/sprint/plan/status/agents/worktrees/worktrees-branch/cleanup/merge/tail/teams/team init.
 - [x] Default command is `run` and tails chat unless `--no-tail` is set.
 
@@ -50,6 +51,7 @@
 - [x] README notes ralph-bash-v2 is a legacy reference only.
 - [ ] Run tests after each task and fix failures (fast gate: `cargo test --lib --tests`).
 - [ ] Check in work after each completed task (commit once tests pass).
+- [ ] BLOCKED: Resolve prompt request to do up to 3 related tasks per session vs AGENTS one-task-per-session rule.
 
 ## Maintenance
-- [ ] Split `src/main.rs` (1038 LOC) into smaller modules.
+- [ ] Split `src/main.rs` (1099 LOC) into smaller modules.

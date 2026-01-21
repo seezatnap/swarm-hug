@@ -158,6 +158,7 @@ D = "payments"
 ```
 
 An agent working on one team cannot be assigned to another until released.
+Assignments are claimed during planning/run and released on `swarm cleanup` or `swarm merge`.
 
 ## Configuration
 
@@ -265,6 +266,7 @@ The merge command:
 ### Task Assignment Commits
 
 When tasks are assigned during sprint planning, the changes are automatically committed to git. This ensures worktrees can pull the latest task assignments.
+The commit also includes `.swarm-hug/assignments.toml` so agent claims stay in sync across worktrees.
 
 ### Per-Agent Logging
 
@@ -310,9 +312,12 @@ If LLM planning fails, it automatically falls back to algorithmic assignment.
 
 ## Status
 
-The core architecture is complete:
+Core multi-team orchestration is in place, with a few planning/merge polish items still in progress.
+See `TASKS.md` for current priorities and remaining verification work.
+
+**Highlights already working:**
 - Team isolation with separate directories
-- Agent assignment tracking (exclusive per team)
+- Exclusive agent assignment tracking per team
 - CLI commands for team management (`teams`, `team init`)
 - Path resolution based on `--team` flag
 - Worktree listing and cleanup per team
