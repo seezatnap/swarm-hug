@@ -208,6 +208,24 @@ The merge command:
 
 When tasks are assigned during sprint planning, the changes are automatically committed to git. This ensures worktrees can pull the latest task assignments.
 
+### Per-Agent Logging
+
+Each agent writes logs to `loop/agent-<initial>.log`:
+
+```
+2026-01-21 17:00:00 | Aaron | Assigned task: Implement feature
+2026-01-21 17:00:00 | Aaron | Working directory: .swarm-hug/myteam/worktrees/agent-A-Aaron
+2026-01-21 17:00:00 | Aaron | State: ASSIGNED -> WORKING
+2026-01-21 17:00:01 | Aaron | Executing with engine: stub
+2026-01-21 17:00:02 | Aaron | State: WORKING -> DONE (success)
+2026-01-21 17:00:02 | Aaron | Task completed: Implement feature
+```
+
+Features:
+- Automatic log rotation when files exceed 1000 lines
+- Rotated logs are backed up with timestamps (e.g., `agent-A.log.20260121-170000.bak`)
+- Session separators for clarity between runs
+
 ## Status
 
 The core architecture is complete:
@@ -222,9 +240,9 @@ The core architecture is complete:
 - Agent execution inside worktrees (engine uses worktree path)
 - Per-agent lifecycle tracking (assigned -> working -> done -> terminated)
 - One task = one commit rule enforced
+- Per-agent logging with rotation
 
 **Still in progress:**
-- Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
 
 ## Development Workflow

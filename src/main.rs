@@ -12,6 +12,7 @@ use swarm::chat;
 use swarm::config::{self, Command, Config};
 use swarm::engine;
 use swarm::lifecycle::LifecycleTracker;
+use swarm::log::{self, AgentLogger};
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments, Team};
 use swarm::worktree::{self, Worktree};
@@ -741,9 +742,23 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     // Create engine
     let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
 
+    // Rotate any large logs before starting
+    let log_dir = Path::new(&config.files_log_dir);
+    if let Err(e) = log::rotate_logs_in_dir(log_dir, log::DEFAULT_MAX_LINES) {
+        eprintln!("warning: failed to rotate logs: {}", e);
+    }
+
     // Execute tasks for each agent using lifecycle tracking
     for (initial, description) in &assignments {
         let agent_name = agent::name_from_initial(*initial).unwrap_or("Unknown");
+
+        // Create agent logger
+        let logger = AgentLogger::new(log_dir, *initial, agent_name);
+
+        // Log session start
+        if let Err(e) = logger.log_session_start() {
+            eprintln!("warning: failed to write log: {}", e);
+        }
 
         // Get worktree path for this agent
         let working_dir = worktree_map
@@ -751,14 +766,29 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
             .map(|wt| wt.path.clone())
             .unwrap_or_else(|| Path::new(".").to_path_buf());
 
+        // Log assignment
+        if let Err(e) = logger.log(&format!("Assigned task: {}", description)) {
+            eprintln!("warning: failed to write log: {}", e);
+        }
+        if let Err(e) = logger.log(&format!("Working directory: {}", working_dir.display())) {
+            eprintln!("warning: failed to write log: {}", e);
+        }
+
         // Transition: Assigned -> Working
         tracker.start(*initial);
+        if let Err(e) = logger.log("State: ASSIGNED -> WORKING") {
+            eprintln!("warning: failed to write log: {}", e);
+        }
 
         // Write agent start to chat
         chat::write_message(&config.files_chat, agent_name, &format!("Starting: {}", description))
             .map_err(|e| format!("failed to write chat: {}", e))?;
 
         // Execute via engine in the agent's worktree
+        if let Err(e) = logger.log(&format!("Executing with engine: {}", config.effective_engine().as_str())) {
+            eprintln!("warning: failed to write log: {}", e);
+        }
+
         let result = engine.execute(
             agent_name,
             description,
@@ -769,6 +799,9 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         if result.success {
             // Transition: Working -> Done (success)
             tracker.complete(*initial);
+            if let Err(e) = logger.log("State: WORKING -> DONE (success)") {
+                eprintln!("warning: failed to write log: {}", e);
+            }
 
             // Mark task as completed
             for task in &mut task_list.tasks {
@@ -780,16 +813,29 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
                 }
             }
 
+            if let Err(e) = logger.log(&format!("Task completed: {}", description)) {
+                eprintln!("warning: failed to write log: {}", e);
+            }
+
             chat::write_message(&config.files_chat, agent_name, &format!("Completed: {}", description))
                 .map_err(|e| format!("failed to write chat: {}", e))?;
 
             // Commit the agent's work in their worktree (one commit per task)
+            if let Err(e) = logger.log("Committing changes...") {
+                eprintln!("warning: failed to write log: {}", e);
+            }
             commit_agent_work(&working_dir, agent_name, description)?;
+            if let Err(e) = logger.log("Commit successful") {
+                eprintln!("warning: failed to write log: {}", e);
+            }
         } else {
             let error = result.error.unwrap_or_else(|| "unknown error".to_string());
 
             // Transition: Working -> Done (failure)
             tracker.fail(*initial, &error);
+            if let Err(e) = logger.log(&format!("State: WORKING -> DONE (failed: {})", error)) {
+                eprintln!("warning: failed to write log: {}", e);
+            }
 
             chat::write_message(&config.files_chat, agent_name, &format!("Failed: {} - {}", description, error))
                 .map_err(|e| format!("failed to write chat: {}", e))?;
@@ -797,6 +843,9 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
 
         // Transition: Done -> Terminated
         tracker.terminate(*initial);
+        if let Err(e) = logger.log("State: DONE -> TERMINATED") {
+            eprintln!("warning: failed to write log: {}", e);
+        }
     }
 
     // Log lifecycle summary

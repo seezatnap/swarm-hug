@@ -18,6 +18,7 @@ pub mod chat;
 pub mod config;
 pub mod engine;
 pub mod lifecycle;
+pub mod log;
 pub mod task;
 pub mod team;
 pub mod worktree;

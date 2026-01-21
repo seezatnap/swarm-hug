@@ -1,10 +1,27 @@
 # Tasks
 
 ## Current Priorities
-- [ ] Add per-agent log files under `loop/agent-<initial>.log` with rotation
-- [ ] Create Lima VM bootstrap script `init.sh` (Docker, git, bash, Rust, claude/codex; no GridTUI)
-- [ ] Clean up worktrees automatically after merge
-- [ ] Add optional LLM-assisted planning via engine layer
+
+### Per-Agent Logging with Rotation
+- [x] Create `src/log.rs` module for per-agent logging
+- [x] Implement log rotation (line-based, max 1000 lines per file)
+- [x] Write agent logs to `loop/agent-<initial>.log`
+- [x] Add tests for log module (12 tests)
+- [x] Integrate logging into agent execution in main.rs
+
+### Lima VM Bootstrap
+- [ ] Create `init.sh` script for Lima VM provisioning
+- [ ] Include Docker, git, bash, Rust toolchain in image
+- [ ] Mount repo and expose `swarm` command inside container
+- [ ] Document Lima setup in README.md
+
+### Worktree Cleanup After Merge
+- [ ] Add automatic worktree cleanup after successful merges
+- [ ] Update `cmd_merge` to optionally clean up worktrees on success
+
+### LLM-Assisted Planning (Optional)
+- [ ] Add engine method for LLM-assisted task planning
+- [ ] Create scrum master prompts for sprint planning
 
 ---
 
