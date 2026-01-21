@@ -2,3 +2,5 @@
 /.cargo
 loop
 .swarm-hug
+worktrees
+/.cargo*
