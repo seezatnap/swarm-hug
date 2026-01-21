@@ -56,10 +56,11 @@ To enter the container later:
 docker --context "lima-swarmbox" exec -it "swarmbox-agent" bash -l
 ```
 
-Inside the container, the `swarm` wrapper will auto-build if needed. You can also build manually:
+Inside the container, the `swarm` wrapper will auto-build if needed. You can also rebuild manually:
 ```bash
-cd /opt/swarm-hug
-cargo build
+rebuild-swarm    # Alias that rebuilds and reports success
+# or manually:
+cd /opt/swarm-hug && cargo build
 ```
 
 ## Requirements for init.sh

@@ -1,9 +1,12 @@
 # Tasks
 
 ## Current Priority
-- [x] Make `swarm init` create default TASKS.md, CHAT.md, and log dir when no team is specified (match ralph-bash-v2 init behavior).
+- [x] Add `rebuild-swarm` alias in init.sh for rebuilding swarm binary inside the VM
+- [x] Ensure /opt/swarm-hug is mounted RW (not RO) so cargo build works
+- [x] Update README.md with rebuild-swarm documentation
 
 ## Spec Coverage (Done)
+- [x] Make `swarm init` create default TASKS.md, CHAT.md, and log dir when no team is specified (match ralph-bash-v2 init behavior).
 - [x] Rust rewrite with multi-agent sprints, file-based workflow, and no GridTUI.
 - [x] CLI command suite: init, run (default), sprint, plan, status, agents, teams, team init, worktrees, worktrees-branch, cleanup, merge, tail.
 - [x] Default command is `run` and tails chat unless `--no-tail` is set.

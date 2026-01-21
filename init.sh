@@ -247,6 +247,8 @@ docker --context "$CTX" run --rm --user 0:0 \
     touch /home/agent/.bashrc
     grep -qE '^[[:space:]]*alias[[:space:]]+swarm=' /home/agent/.bashrc || \
       echo 'alias swarm=/usr/local/bin/swarm' >> /home/agent/.bashrc
+    grep -qE '^[[:space:]]*alias[[:space:]]+rebuild-swarm=' /home/agent/.bashrc || \
+      echo 'alias rebuild-swarm=\"cd /opt/swarm-hug && cargo build && echo \\\"[rebuild-swarm] Build complete. Binary at /opt/swarm-hug/target/debug/swarm\\\"\"' >> /home/agent/.bashrc
   " >/dev/null
 
 # --- Start container -----------------------------------------------------------
@@ -304,8 +306,11 @@ for d in "${FOLDERS_ABS[@]}"; do
 done
 echo ""
 echo "swarm is available as:"
-echo "  swarm (wrapper)"
-echo "  /opt/swarm-hug/target/debug/swarm (after cargo build)"
+echo "  swarm (wrapper that auto-builds if needed)"
+echo "  /opt/swarm-hug/target/debug/swarm (after build)"
+echo ""
+echo "To manually rebuild:"
+echo "  rebuild-swarm (alias)"
 echo ""
 echo "Host dev-server access from inside the container/VM:"
 echo "  Use: http://host.lima.internal:<port>"
