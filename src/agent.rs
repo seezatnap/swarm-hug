@@ -36,17 +36,22 @@ pub fn name_from_initial(initial: char) -> Option<&'static str> {
     }
 }
 
-/// Get initial from agent name.
+/// Get initial from agent name (case-insensitive).
 ///
 /// # Examples
 /// ```
 /// use swarm::agent::initial_from_name;
 /// assert_eq!(initial_from_name("Aaron"), Some('A'));
+/// assert_eq!(initial_from_name("aaron"), Some('A'));
 /// assert_eq!(initial_from_name("Zane"), Some('Z'));
 /// assert_eq!(initial_from_name("Unknown"), None);
 /// ```
 pub fn initial_from_name(name: &str) -> Option<char> {
-    NAMES.iter().position(|&n| n == name).map(|idx| INITIALS[idx])
+    let lower = name.to_lowercase();
+    NAMES
+        .iter()
+        .position(|&n| n.to_lowercase() == lower)
+        .map(|idx| INITIALS[idx])
 }
 
 /// Get the first N agent names starting from A.
@@ -131,7 +136,14 @@ mod tests {
     #[test]
     fn test_initial_from_name_invalid() {
         assert_eq!(initial_from_name("Unknown"), None);
-        assert_eq!(initial_from_name("aaron"), None); // case-sensitive
+    }
+
+    #[test]
+    fn test_initial_from_name_case_insensitive() {
+        assert_eq!(initial_from_name("aaron"), Some('A'));
+        assert_eq!(initial_from_name("AARON"), Some('A'));
+        assert_eq!(initial_from_name("zane"), Some('Z'));
+        assert_eq!(initial_from_name("ZANE"), Some('Z'));
     }
 
     #[test]

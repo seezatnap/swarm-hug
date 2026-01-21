@@ -32,11 +32,11 @@
 
 ### CLI and Entrypoints
 - [x] Implement `swarm worktrees` command (lists worktrees in team's worktrees dir)
-- [ ] Implement `swarm worktrees-branch` command (list git branches)
-- [ ] Implement `swarm merge` (merge agent branches)
+- [x] Implement `swarm worktrees-branch` command (list git branches)
+- [x] Implement `swarm merge` (merge agent branches)
 
 ### Sprint Planning and Assignment
-- [ ] Commit assignment changes to git so worktrees see updates
+- [x] Commit assignment changes to git so worktrees see updates
 - [ ] Add optional LLM-assisted planning via engine layer
 
 ### Agent Execution Rules
@@ -46,10 +46,10 @@
 
 ### Git Worktree Workflow
 - [ ] Implement real git worktree management under worktrees/agent-<initial>-<name>
-- [ ] Implement per-agent branch naming (agent/<name>)
+- [x] Implement per-agent branch naming (agent/<name>)
 - [ ] Create worktrees before agents run and clean up after merge
-- [ ] Implement merge workflow (agents merge branch back to main)
-- [ ] Surface merge conflicts in CHAT.md and report sprint failure without crashing
+- [x] Implement merge workflow (agents merge branch back to main)
+- [x] Surface merge conflicts in CHAT.md and report sprint failure without crashing
 
 ### Logs
 - [ ] Implement per-agent log files under loop/agent-<initial>.log

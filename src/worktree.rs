@@ -1,13 +1,15 @@
-//! Minimal worktree management.
+//! Git worktree management.
 //!
-//! Creates placeholder worktree directories for each agent. This is a
-//! foundation for the full git worktree implementation.
+//! Manages git worktrees and branches for agents. Each agent gets:
+//! - A worktree directory: `worktrees/agent-<INITIAL>-<name>`
+//! - A dedicated branch: `agent/<lowercase_name>`
 //!
 //! In multi-team mode, worktrees are created under `.swarm-hug/<team>/worktrees/`.
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct Worktree {
@@ -117,4 +119,247 @@ pub fn list_worktrees(worktrees_dir: &Path) -> Result<Vec<Worktree>, String> {
 
     worktrees.sort_by(|a, b| a.initial.cmp(&b.initial));
     Ok(worktrees)
+}
+
+/// Agent branch info.
+#[derive(Debug, Clone)]
+pub struct AgentBranch {
+    pub initial: char,
+    pub name: String,
+    pub branch: String,
+    pub exists: bool,
+}
+
+/// Get the branch name for an agent.
+/// Format: agent/<lowercase_name> (e.g., agent/aaron)
+pub fn agent_branch_name(initial: char) -> Option<String> {
+    let name = crate::agent::name_from_initial(initial)?;
+    Some(format!("agent/{}", name.to_lowercase()))
+}
+
+/// List agent branches in the repository.
+/// Returns branches matching the pattern `agent/<name>`.
+pub fn list_agent_branches() -> Result<Vec<AgentBranch>, String> {
+    let output = Command::new("git")
+        .args(["branch", "--list", "agent/*"])
+        .output()
+        .map_err(|e| format!("failed to run git branch: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git branch failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut branches = Vec::new();
+
+    for line in stdout.lines() {
+        let branch = line.trim().trim_start_matches("* ");
+        if let Some(agent_name) = branch.strip_prefix("agent/") {
+            // Find the initial for this agent name
+            if let Some(initial) = crate::agent::initial_from_name(agent_name) {
+                branches.push(AgentBranch {
+                    initial,
+                    name: agent_name.to_string(),
+                    branch: branch.to_string(),
+                    exists: true,
+                });
+            }
+        }
+    }
+
+    branches.sort_by(|a, b| a.initial.cmp(&b.initial));
+    Ok(branches)
+}
+
+/// Check if an agent branch exists.
+pub fn agent_branch_exists(initial: char) -> bool {
+    let branch = match agent_branch_name(initial) {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", &branch])
+        .output();
+
+    match output {
+        Ok(o) => o.status.success(),
+        Err(_) => false,
+    }
+}
+
+/// Merge result.
+#[derive(Debug, Clone)]
+pub enum MergeResult {
+    Success,
+    Conflict(Vec<String>),
+    NoBranch,
+    NoChanges,
+    Error(String),
+}
+
+/// Check if an agent branch has changes relative to a target branch.
+pub fn agent_branch_has_changes(initial: char, target: &str) -> Result<bool, String> {
+    let branch = agent_branch_name(initial)
+        .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
+
+    let output = Command::new("git")
+        .args(["rev-list", "--count", &format!("{}..{}", target, branch)])
+        .output()
+        .map_err(|e| format!("failed to run git rev-list: {}", e))?;
+
+    if !output.status.success() {
+        // Branch might not exist
+        return Ok(false);
+    }
+
+    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let count: i32 = count_str.parse().unwrap_or(0);
+    Ok(count > 0)
+}
+
+/// Merge an agent branch into the current branch.
+/// Returns MergeResult indicating success, conflict, or error.
+pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeResult {
+    let branch = match agent_branch_name(initial) {
+        Some(b) => b,
+        None => return MergeResult::Error(format!("invalid agent initial: {}", initial)),
+    };
+
+    // Check if branch exists
+    if !agent_branch_exists(initial) {
+        return MergeResult::NoBranch;
+    }
+
+    // If target branch specified, checkout first
+    if let Some(target) = target_branch {
+        let checkout = Command::new("git")
+            .args(["checkout", target])
+            .output();
+
+        if let Err(e) = checkout {
+            return MergeResult::Error(format!("checkout failed: {}", e));
+        }
+        let checkout = checkout.unwrap();
+        if !checkout.status.success() {
+            let stderr = String::from_utf8_lossy(&checkout.stderr);
+            return MergeResult::Error(format!("checkout failed: {}", stderr));
+        }
+
+        // Check if branch has changes
+        match agent_branch_has_changes(initial, target) {
+            Ok(false) => return MergeResult::NoChanges,
+            Err(e) => return MergeResult::Error(e),
+            Ok(true) => {}
+        }
+    }
+
+    // Get agent name for commit message
+    let agent_name = crate::agent::name_from_initial(initial).unwrap_or("Unknown");
+
+    // Attempt merge with --no-ff
+    let merge = Command::new("git")
+        .args(["merge", "--no-ff", "-m", &format!("Merge {}", branch), &branch])
+        .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
+        .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
+        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .output();
+
+    match merge {
+        Err(e) => MergeResult::Error(format!("merge command failed: {}", e)),
+        Ok(output) if output.status.success() => MergeResult::Success,
+        Ok(_) => {
+            // Check for conflicts
+            let conflicts = get_merge_conflicts();
+            if !conflicts.is_empty() {
+                // Abort the merge
+                let _ = Command::new("git").args(["merge", "--abort"]).output();
+                MergeResult::Conflict(conflicts)
+            } else {
+                MergeResult::Error("merge failed".to_string())
+            }
+        }
+    }
+}
+
+/// Get list of files with merge conflicts.
+fn get_merge_conflicts() -> Vec<String> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Merge summary for multiple agents.
+#[derive(Debug, Default)]
+pub struct MergeSummary {
+    pub success: Vec<char>,
+    pub conflicts: Vec<(char, Vec<String>)>,
+    pub no_changes: Vec<char>,
+    pub errors: Vec<(char, String)>,
+}
+
+impl MergeSummary {
+    pub fn success_count(&self) -> usize {
+        self.success.len()
+    }
+
+    pub fn conflict_count(&self) -> usize {
+        self.conflicts.len()
+    }
+
+    pub fn has_conflicts(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+}
+
+/// Merge all agent branches into the target branch.
+/// Returns a summary of merge results.
+pub fn merge_all_agent_branches(initials: &[char], target_branch: &str) -> MergeSummary {
+    let mut summary = MergeSummary::default();
+
+    for &initial in initials {
+        match merge_agent_branch(initial, Some(target_branch)) {
+            MergeResult::Success => summary.success.push(initial),
+            MergeResult::Conflict(files) => summary.conflicts.push((initial, files)),
+            MergeResult::NoChanges => summary.no_changes.push(initial),
+            MergeResult::NoBranch => {} // Skip non-existent branches
+            MergeResult::Error(e) => summary.errors.push((initial, e)),
+        }
+    }
+
+    summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_branch_name() {
+        assert_eq!(agent_branch_name('A'), Some("agent/aaron".to_string()));
+        assert_eq!(agent_branch_name('B'), Some("agent/betty".to_string()));
+        assert_eq!(agent_branch_name('Z'), Some("agent/zane".to_string()));
+        assert_eq!(agent_branch_name('a'), Some("agent/aaron".to_string()));
+        assert_eq!(agent_branch_name('1'), None);
+    }
+
+    #[test]
+    fn test_merge_summary_default() {
+        let summary = MergeSummary::default();
+        assert_eq!(summary.success_count(), 0);
+        assert_eq!(summary.conflict_count(), 0);
+        assert!(!summary.has_conflicts());
+    }
 }

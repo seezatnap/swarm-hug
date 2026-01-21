@@ -145,6 +145,39 @@ cargo test --lib --tests
 cargo build --release
 ```
 
+## Git Workflow
+
+swarm-hug manages git worktrees and branches for parallel agent work:
+
+### Agent Branches
+
+Each agent gets a dedicated branch named `agent/<lowercase_name>`:
+- Agent A (Aaron) → `agent/aaron`
+- Agent B (Betty) → `agent/betty`
+
+List agent branches:
+```bash
+./target/debug/swarm worktrees-branch
+```
+
+### Merging
+
+When agents complete their work, merge their branches:
+```bash
+./target/debug/swarm merge
+```
+
+The merge command:
+- Attempts to merge all active agent branches
+- Uses `--no-ff` to create merge commits
+- Reports conflicts (and aborts conflicted merges for manual resolution)
+- Skips branches with no changes
+- Posts merge status to chat.md
+
+### Task Assignment Commits
+
+When tasks are assigned during sprint planning, the changes are automatically committed to git. This ensures worktrees can pull the latest task assignments.
+
 ## Status
 
 The core multi-team architecture is complete:
@@ -153,10 +186,12 @@ The core multi-team architecture is complete:
 - CLI commands for team management (`teams`, `team init`)
 - Path resolution based on `--team` flag
 - Worktree listing and cleanup per team
+- Agent branch listing (`worktrees-branch`)
+- Agent branch merging (`merge`)
+- Automatic git commits for task assignments
 
 **Still in progress:**
-- Full git worktree management (current worktrees are placeholder directories)
-- Agent branch merging
+- Full git worktree creation with branch setup (current worktrees are placeholder directories)
 - Per-agent logging with rotation
 - Lima VM bootstrap script (init.sh)
 

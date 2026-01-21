@@ -231,6 +231,9 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
     chat::write_sprint_plan(&config.files_chat, 1, &assignments)
         .map_err(|e| format!("failed to write chat: {}", e))?;
 
+    // Commit assignment changes to git so worktrees can see them
+    commit_task_assignments(&config.files_tasks, sprint_number_for_plan(1))?;
+
     println!("Assigned {} task(s) to {} agent(s).", assigned, agent_count);
     for (initial, desc) in &assignments {
         let name = agent::name_from_initial(*initial).unwrap_or("Unknown");
@@ -238,6 +241,69 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Helper to generate sprint number string for plan command.
+fn sprint_number_for_plan(_: usize) -> usize {
+    1
+}
+
+/// Commit task assignment changes to git.
+fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
+    // Stage the tasks file
+    let add_result = process::Command::new("git")
+        .args(["add", tasks_file])
+        .output();
+
+    match add_result {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git add failed: {}", stderr));
+        }
+        Err(e) => return Err(format!("git add failed: {}", e)),
+    }
+
+    // Check if there are staged changes
+    let diff_result = process::Command::new("git")
+        .args(["diff", "--cached", "--quiet"])
+        .output();
+
+    let has_changes = match diff_result {
+        Ok(output) => !output.status.success(), // exit code 1 means changes exist
+        Err(_) => false,
+    };
+
+    if !has_changes {
+        return Ok(()); // No changes to commit
+    }
+
+    // Commit the changes
+    let commit_msg = format!("Sprint {}: task assignments", sprint_number);
+    let commit_result = process::Command::new("git")
+        .args(["commit", "-m", &commit_msg])
+        .env("GIT_AUTHOR_NAME", "Swarm ScrumMaster")
+        .env("GIT_AUTHOR_EMAIL", "swarm@local")
+        .env("GIT_COMMITTER_NAME", "Swarm ScrumMaster")
+        .env("GIT_COMMITTER_EMAIL", "swarm@local")
+        .output();
+
+    match commit_result {
+        Ok(output) if output.status.success() => {
+            println!("  Committed task assignments to git.");
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Don't fail if there's nothing to commit
+            if stderr.contains("nothing to commit") {
+                Ok(())
+            } else {
+                Err(format!("git commit failed: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("git commit failed: {}", e)),
+    }
 }
 
 /// Show task status.
@@ -303,9 +369,18 @@ fn cmd_worktrees(config: &Config) -> Result<(), String> {
 
 /// List worktree branches.
 fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
-    println!("Worktree Branches:");
-    // TODO: Implement worktree branch listing
-    println!("  (not yet implemented)");
+    println!("Agent Branches:");
+    let branches = worktree::list_agent_branches()?;
+
+    if branches.is_empty() {
+        println!("  (no agent branches found)");
+    } else {
+        for b in &branches {
+            let status = if b.exists { "active" } else { "missing" };
+            let name = agent::name_from_initial(b.initial).unwrap_or("?");
+            println!("  {} ({}) - {} [{}]", name, b.initial, b.branch, status);
+        }
+    }
     Ok(())
 }
 
@@ -319,11 +394,105 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
 }
 
 /// Merge agent branches.
-fn cmd_merge(_config: &Config) -> Result<(), String> {
+fn cmd_merge(config: &Config) -> Result<(), String> {
     println!("Merging agent branches...");
-    // TODO: Implement merge
-    println!("  (not yet implemented)");
-    Ok(())
+
+    // Find all agent branches
+    let branches = worktree::list_agent_branches()?;
+
+    if branches.is_empty() {
+        println!("  No agent branches found.");
+        return Ok(());
+    }
+
+    // Get the target branch (current branch or main)
+    let target = get_current_branch().unwrap_or_else(|| "main".to_string());
+    println!("  Target branch: {}", target);
+
+    let initials: Vec<char> = branches.iter().map(|b| b.initial).collect();
+    let summary = worktree::merge_all_agent_branches(&initials, &target);
+
+    // Report results
+    if !summary.success.is_empty() {
+        println!("\nSuccessful merges:");
+        for initial in &summary.success {
+            let name = agent::name_from_initial(*initial).unwrap_or("?");
+            let branch = worktree::agent_branch_name(*initial).unwrap_or_default();
+            println!("  {} ({}) - merged", name, initial);
+
+            // Write to chat
+            let msg = format!("Merged branch {} to {}", branch, target);
+            if let Err(e) = chat::write_merge_status(&config.files_chat, name, true, &msg) {
+                eprintln!("  warning: failed to write chat: {}", e);
+            }
+        }
+    }
+
+    if !summary.no_changes.is_empty() {
+        println!("\nSkipped (no changes):");
+        for initial in &summary.no_changes {
+            let name = agent::name_from_initial(*initial).unwrap_or("?");
+            println!("  {} ({}) - no changes", name, initial);
+        }
+    }
+
+    if !summary.conflicts.is_empty() {
+        println!("\nConflicts:");
+        for (initial, files) in &summary.conflicts {
+            let name = agent::name_from_initial(*initial).unwrap_or("?");
+            println!("  {} ({}) - conflict in {} file(s):", name, initial, files.len());
+            for f in files {
+                println!("    - {}", f);
+            }
+
+            // Write to chat
+            let files_str = format!("Conflicts in: {}", files.join(", "));
+            if let Err(e) = chat::write_merge_status(
+                &config.files_chat,
+                name,
+                false,
+                &files_str,
+            ) {
+                eprintln!("  warning: failed to write chat: {}", e);
+            }
+        }
+    }
+
+    if !summary.errors.is_empty() {
+        println!("\nErrors:");
+        for (initial, err) in &summary.errors {
+            let name = agent::name_from_initial(*initial).unwrap_or("?");
+            println!("  {} ({}) - {}", name, initial, err);
+        }
+    }
+
+    // Summary
+    println!(
+        "\nMerge summary: {} success, {} conflicts, {} skipped",
+        summary.success_count(),
+        summary.conflict_count(),
+        summary.no_changes.len()
+    );
+
+    if summary.has_conflicts() {
+        Err("Some merges had conflicts".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+/// Get the current git branch.
+fn get_current_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
 }
 
 /// List all teams and their assigned agents.
@@ -480,6 +649,9 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         .collect();
     chat::write_sprint_plan(&config.files_chat, sprint_number, &assignments_ref)
         .map_err(|e| format!("failed to write chat: {}", e))?;
+
+    // Commit assignment changes to git so worktrees can see them
+    commit_task_assignments(&config.files_tasks, sprint_number)?;
 
     println!("Sprint {}: assigned {} task(s) to {} agent(s)",
              sprint_number, assigned, agent_count);
