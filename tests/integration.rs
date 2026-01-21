@@ -171,6 +171,38 @@ fn test_swarm_run_stub_integration() {
 }
 
 #[test]
+fn test_swarm_plan_writes_chat_summary() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["team", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    let chat_path = team_root.join("chat.md");
+    commit_all(repo_path, "init");
+
+    let mut plan_cmd = Command::new(swarm_bin);
+    plan_cmd
+        .args(["--team", team_name, "--tasks-per-agent", "1", "plan"])
+        .current_dir(repo_path);
+    run_success(&mut plan_cmd);
+
+    let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
+    assert!(chat_content.contains("Sprint 1 plan: 2 task(s) assigned"));
+    assert!(chat_content.contains("Aaron assigned: Task one"));
+    assert!(chat_content.contains("Betty assigned: Task two"));
+}
+
+#[test]
 fn test_swarm_status_shows_counts_and_recent_chat() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();

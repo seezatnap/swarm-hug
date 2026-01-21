@@ -26,7 +26,7 @@
 
 ## P2 - Sprint planning/execution
 - [x] Confirm merge conflicts are recorded in CHAT.md and do not crash the runner (review merge flow end-to-end).
-- [ ] Ensure sprint planning writes a concise sprint plan summary to CHAT.md.
+- [x] Ensure sprint planning writes a concise sprint plan summary to CHAT.md.
 - [ ] Confirm LLM-assisted planning (when enabled) falls back to algorithmic assignment on failure.
 - [ ] Ensure task assignment respects top-to-bottom TASKS.md order (backlog priority).
 - [ ] Ensure agent prompts/rules enforce assigned-tasks-only and one-task-per-commit behavior.
@@ -54,4 +54,4 @@
 - [ ] BLOCKED: Resolve prompt request to do up to 3 related tasks per session vs AGENTS one-task-per-session rule.
 
 ## Maintenance
-- [ ] Split `src/main.rs` (1099 LOC) into smaller modules.
+- [ ] Split `src/main.rs` (1233 LOC) into smaller modules.

@@ -141,6 +141,7 @@ OPTIONS:
 
 Note: `swarm cleanup` removes team worktrees and any local `agent/*` branches.
 Tip: `swarm status` prints task counts and the last 5 chat lines for the selected team.
+Tip: `swarm plan` writes the sprint plan summary to chat.md (same format as `run`).
 
 ## Agent Assignments
 
