@@ -65,6 +65,8 @@ pub struct Config {
     pub no_tail: bool,
     /// Team name for multi-team mode.
     pub team: Option<String>,
+    /// Enable LLM-assisted sprint planning (optional).
+    pub planning_llm_enabled: bool,
 }
 
 impl Default for Config {
@@ -81,6 +83,7 @@ impl Default for Config {
             sprints_max: 0,
             no_tail: false,
             team: None,
+            planning_llm_enabled: false,
         }
     }
 }
@@ -207,6 +210,9 @@ impl Config {
                         config.sprints_max = value.parse()
                             .map_err(|_| ConfigError::Parse(format!("invalid sprints.max: {}", value)))?;
                     }
+                    "planning.llm_enabled" => {
+                        config.planning_llm_enabled = value == "true";
+                    }
                     _ => {} // Ignore unknown keys
                 }
             }
@@ -249,6 +255,9 @@ impl Config {
                 self.sprints_max = n;
             }
         }
+        if let Ok(val) = env::var("SWARM_PLANNING_LLM_ENABLED") {
+            self.planning_llm_enabled = val == "true" || val == "1";
+        }
     }
 
     /// Apply CLI arguments.
@@ -285,6 +294,9 @@ impl Config {
         if let Some(ref team) = args.team {
             self.team = Some(team.clone());
         }
+        if args.llm_planning {
+            self.planning_llm_enabled = true;
+        }
     }
 
     /// Merge values from another config (for file-based config).
@@ -297,6 +309,7 @@ impl Config {
         self.engine_type = other.engine_type;
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
+        self.planning_llm_enabled = other.planning_llm_enabled;
     }
 
     /// Generate default swarm.toml content.
@@ -318,6 +331,9 @@ stub_mode = false
 
 [sprints]
 max = 0
+
+[planning]
+llm_enabled = false
 "#.to_string()
     }
 
@@ -364,6 +380,8 @@ pub struct CliArgs {
     pub team: Option<String>,
     /// Team name for team-specific subcommands (positional arg).
     pub team_arg: Option<String>,
+    /// Enable LLM-assisted planning.
+    pub llm_planning: bool,
 }
 
 /// Swarm subcommands.
@@ -475,6 +493,7 @@ where
             "--stub" => cli.stub = true,
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
             "--no-tail" => cli.no_tail = true,
+            "--llm-planning" => cli.llm_planning = true,
             _ if !arg.starts_with('-') && cli.command.is_none() => {
                 cli.command = Command::from_str(&arg);
                 // For "team init <name>", capture the next arg as team_arg

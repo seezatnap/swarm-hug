@@ -2,15 +2,24 @@
 
 ## Current Priorities
 
-### Lima VM Bootstrap
-- [x] Create `init.sh` for Lima VM bootstrap: install Docker, git, bash, Rust toolchain, claude/codex CLIs; mount repo; expose `swarm`; document usage in README
+All major features have been implemented. The system is ready for use.
 
-### LLM-Assisted Planning (Optional)
-- [ ] Add LLM-assisted sprint planning support (engine hook + scrum master prompts)
+### Backlog
+- [ ] Add a rebuild function for `swarm` that works in the vm set up in init.sh. `swarm --rebuild-binary`. Make certain that permissions in init.sh are appropriate for this to work.
 
 ---
 
 ## Completed
+
+### LLM-Assisted Planning (Optional Feature)
+- [x] Add LLM planning trait extension to Engine for planning prompts
+- [x] Implement LLM-assisted task assignment (generate_scrum_master_prompt + parse)
+- [x] Add post-sprint review capability (review_sprint_work)
+- [x] Add config option `planning.llm_enabled` to toggle LLM planning
+- [x] Write tests for LLM planning (stubbed) - 13 tests
+
+### Lima VM Bootstrap
+- [x] Create `init.sh` for Lima VM bootstrap: install Docker, git, bash, Rust toolchain, claude/codex CLIs; mount repo; expose `swarm`; document usage in README
 
 ### Per-Agent Logging with Rotation
 - [x] Create `src/log.rs` module for per-agent logging
@@ -60,6 +69,7 @@
 
 ### Sprint Planning and Assignment
 - [x] Algorithmic sprint assignment with tasks-per-agent
+- [x] LLM-assisted intelligent assignment (optional via --llm-planning)
 - [x] Commit assignment changes so worktrees see them
 - [x] Write sprint plan summary to CHAT.md
 - [x] Respect blocked markers (BLOCKED/blocked/Blocked by:)
@@ -99,9 +109,10 @@
 - [x] Log rotation when files exceed 1000 lines
 
 ### Tests
-- [x] Unit tests for tasks, agents, chat formatting, lifecycle, logging
+- [x] Unit tests for tasks, agents, chat formatting, lifecycle, logging, planning
 - [x] Integration test harness for stubbed engine runs
 - [x] Tests run without network access
+- [x] 122+ tests total
 
 ### Workflow Requirements (Ongoing)
 - [x] Maintain exhaustive TASKS.md coverage for PROMPT/SPECS

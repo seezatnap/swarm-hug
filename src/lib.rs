@@ -19,6 +19,7 @@ pub mod config;
 pub mod engine;
 pub mod lifecycle;
 pub mod log;
+pub mod planning;
 pub mod task;
 pub mod team;
 pub mod worktree;

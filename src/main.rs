@@ -13,6 +13,7 @@ use swarm::config::{self, Command, Config};
 use swarm::engine;
 use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
+use swarm::planning;
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments, Team};
 use swarm::worktree::{self, Worktree};
@@ -96,6 +97,7 @@ OPTIONS:
     --stub                  Enable stub mode for testing
     --max-sprints <N>       Maximum sprints to run (0 = unlimited)
     --no-tail               Don't tail chat.md during run
+    --llm-planning          Enable LLM-assisted sprint planning (experimental)
 
 MULTI-TEAM MODE:
     All config and artifacts live in .swarm-hug/:
@@ -705,7 +707,42 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     let agent_count = agents_needed.min(config.agents_max_count);
 
     let initials = agent::get_initials(agent_count);
-    let assigned = task_list.assign_sprint(&initials, tasks_per_agent);
+
+    // Assign tasks either via LLM or algorithmically
+    let assigned = if config.planning_llm_enabled {
+        // Create engine for LLM planning
+        let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
+        let log_dir = Path::new(&config.files_log_dir);
+
+        // Run LLM-assisted assignment
+        let plan_result = planning::run_llm_assignment(
+            engine.as_ref(),
+            &task_list,
+            &initials,
+            tasks_per_agent,
+            log_dir,
+        );
+
+        if !plan_result.success {
+            eprintln!("LLM planning failed: {}, falling back to algorithmic assignment",
+                     plan_result.error.unwrap_or_default());
+            task_list.assign_sprint(&initials, tasks_per_agent)
+        } else {
+            // Apply LLM assignments (line numbers are 1-indexed in the response)
+            let mut count = 0;
+            for (line_num, initial) in &plan_result.assignments {
+                // Convert line number to task index (0-indexed)
+                let task_idx = line_num.saturating_sub(1);
+                if task_idx < task_list.tasks.len() {
+                    task_list.tasks[task_idx].assign(*initial);
+                    count += 1;
+                }
+            }
+            count
+        }
+    } else {
+        task_list.assign_sprint(&initials, tasks_per_agent)
+    };
 
     if assigned == 0 {
         return Ok(0);
