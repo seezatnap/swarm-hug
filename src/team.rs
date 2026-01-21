@@ -319,19 +319,21 @@ pub fn root_exists() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_temp_dir<F, R>(f: F) -> R
     where
         F: FnOnce() -> R,
     {
+        let _guard = CWD_LOCK.lock().unwrap();
         let original = std::env::current_dir().unwrap();
-        let temp = std::env::temp_dir().join(format!("swarm-test-{}", std::process::id()));
-        fs::create_dir_all(&temp).unwrap();
-        std::env::set_current_dir(&temp).unwrap();
+        let temp = TempDir::new().unwrap();
+        std::env::set_current_dir(temp.path()).unwrap();
         let result = f();
         std::env::set_current_dir(original).unwrap();
-        fs::remove_dir_all(&temp).ok();
         result
     }
 

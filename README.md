@@ -15,11 +15,14 @@ Multiple teams can work on the same repository simultaneously without conflicts.
 # Build
 cargo build
 
-# Initialize the swarm-hug structure (creates swarm.toml, TASKS.md, CHAT.md, loop/)
+# Initialize the swarm-hug structure (creates swarm.toml and .swarm-hug/default/{tasks.md,chat.md,loop/,worktrees/})
 ./target/debug/swarm init
 
 # Ensure there is at least one git commit (required for worktrees)
 git commit --allow-empty -m "init"
+
+# Run using the default workspace (no team flag)
+./target/debug/swarm run
 
 # Create teams (each team gets its own tasks/chat/loop/worktrees under .swarm-hug/)
 ./target/debug/swarm team init authentication
@@ -80,6 +83,11 @@ cd /opt/swarm-hug && cargo build
 your-repo/
 ├── .swarm-hug/
 │   ├── assignments.toml          # Agent-to-team assignments
+│   ├── default/                  # Used when no --team is specified
+│   │   ├── tasks.md
+│   │   ├── chat.md
+│   │   ├── loop/
+│   │   └── worktrees/
 │   ├── authentication/           # Team directory
 │   │   ├── tasks.md              # Team's task list
 │   │   ├── chat.md               # Team's chat log
@@ -121,7 +129,7 @@ OPTIONS:
     -h, --help              Show this help message
     -V, --version           Show version
     -c, --config <PATH>     Path to config file (default: swarm.toml)
-    -t, --team <NAME>       Team to operate on (uses .swarm-hug/<team>/)
+    -t, --team <NAME>       Team to operate on (default uses .swarm-hug/default/)
     --max-agents <N>        Maximum number of agents to spawn
     --tasks-per-agent <N>   Tasks to assign per agent per sprint
     --engine <TYPE>         Engine type: claude, codex, stub
@@ -158,9 +166,9 @@ max_count = 4
 tasks_per_agent = 2
 
 [files]
-tasks = "TASKS.md"      # Default; overridden by --team
-chat = "CHAT.md"        # Default; overridden by --team
-log_dir = "loop"        # Default; overridden by --team
+tasks = ".swarm-hug/default/tasks.md"  # Default; overridden by --team
+chat = ".swarm-hug/default/chat.md"    # Default; overridden by --team
+log_dir = ".swarm-hug/default/loop"    # Default; overridden by --team
 
 [engine]
 type = "claude"         # claude, codex, or stub
@@ -319,7 +327,7 @@ The core architecture is complete:
 
 ## Development Workflow
 
-- Track work in TASKS.md
+- Track work in the team task file (default: `.swarm-hug/default/tasks.md`)
 - Keep README.md accurate after each session
 - Use ../ralph-bash-v2 as a reference only (it is older and fragile)
 

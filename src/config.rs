@@ -74,10 +74,10 @@ impl Default for Config {
         Self {
             agents_max_count: 4,
             agents_tasks_per_agent: 2,
-            files_tasks: "TASKS.md".to_string(),
-            files_chat: "CHAT.md".to_string(),
-            files_log_dir: "loop".to_string(),
-            files_worktrees_dir: "worktrees".to_string(),
+            files_tasks: ".swarm-hug/default/tasks.md".to_string(),
+            files_chat: ".swarm-hug/default/chat.md".to_string(),
+            files_log_dir: ".swarm-hug/default/loop".to_string(),
+            files_worktrees_dir: ".swarm-hug/default/worktrees".to_string(),
             engine_type: EngineType::Claude,
             engine_stub_mode: false,
             sprints_max: 0,
@@ -321,9 +321,9 @@ max_count = 4
 tasks_per_agent = 2
 
 [files]
-tasks = "TASKS.md"
-chat = "CHAT.md"
-log_dir = "loop"
+tasks = ".swarm-hug/default/tasks.md"
+chat = ".swarm-hug/default/chat.md"
+log_dir = ".swarm-hug/default/loop"
 
 [engine]
 type = "claude"
@@ -542,9 +542,10 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.agents_max_count, 4);
         assert_eq!(config.agents_tasks_per_agent, 2);
-        assert_eq!(config.files_tasks, "TASKS.md");
-        assert_eq!(config.files_chat, "CHAT.md");
-        assert_eq!(config.files_log_dir, "loop");
+        assert_eq!(config.files_tasks, ".swarm-hug/default/tasks.md");
+        assert_eq!(config.files_chat, ".swarm-hug/default/chat.md");
+        assert_eq!(config.files_log_dir, ".swarm-hug/default/loop");
+        assert_eq!(config.files_worktrees_dir, ".swarm-hug/default/worktrees");
         assert_eq!(config.engine_type, EngineType::Claude);
         assert!(!config.engine_stub_mode);
         assert_eq!(config.sprints_max, 0);
@@ -702,7 +703,9 @@ max = 5
         let toml = Config::default_toml();
         assert!(toml.contains("max_count = 4"));
         assert!(toml.contains("tasks_per_agent = 2"));
-        assert!(toml.contains("tasks = \"TASKS.md\""));
+        assert!(toml.contains("tasks = \".swarm-hug/default/tasks.md\""));
+        assert!(toml.contains("chat = \".swarm-hug/default/chat.md\""));
+        assert!(toml.contains("log_dir = \".swarm-hug/default/loop\""));
     }
 
     #[test]

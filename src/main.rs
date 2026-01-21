@@ -185,6 +185,19 @@ fn init_default_files(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("failed to create log dir {}: {}", config.files_log_dir, e))?;
     println!("  Created log directory: {}", config.files_log_dir);
 
+    if config.files_worktrees_dir.is_empty() {
+        return Err("worktrees dir path is empty".to_string());
+    }
+
+    fs::create_dir_all(&config.files_worktrees_dir)
+        .map_err(|e| {
+            format!(
+                "failed to create worktrees dir {}: {}",
+                config.files_worktrees_dir, e
+            )
+        })?;
+    println!("  Created worktrees directory: {}", config.files_worktrees_dir);
+
     Ok(())
 }
 

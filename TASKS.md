@@ -10,7 +10,7 @@
 - [x] Unit tests cover config/env/CLI parsing.
 
 ## P1 - Core CLI/config behavior
-- [ ] Move default (non-team) files under `.swarm-hug/` (no root TASKS.md/CHAT.md) and update config defaults, `swarm init`, docs, and tests accordingly.
+- [x] Move default (non-team) files under `.swarm-hug/` (no root TASKS.md/CHAT.md) and update config defaults, `swarm init`, docs, and tests accordingly.
 - [ ] Ensure `swarm cleanup` removes agent branches as well as worktrees.
 - [ ] Enforce exclusive agent assignment per team using `.swarm-hug/assignments.toml` during planning/spawn and release on cleanup/merge.
 - [x] CLI supports init/run/sprint/plan/status/agents/worktrees/worktrees-branch/cleanup/merge/tail/teams/team init.
