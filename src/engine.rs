@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 
 use crate::config::EngineType;
@@ -165,14 +165,25 @@ const DEFAULT_AGENT_PROMPT: &str = r#"You are agent {{agent_name}}. Complete the
 
 ## Git workflow (CRITICAL)
 You are working in a dedicated git worktree on branch `agent/{{agent_name_lower}}`.
-After completing your task:
-1. Stage and commit your changes with a descriptive message
-2. Merge your branch back to the main branch:
-   - `git checkout main` (or master)
-   - `git merge --no-ff agent/{{agent_name_lower}} -m "Merge {{agent_name}}: {{task_short}}"`
-   - Return to your branch: `git checkout agent/{{agent_name_lower}}`
 
-This merge step is REQUIRED so your work is integrated immediately."#;
+After completing your task:
+1. Stage all your changes: `git add -A`
+2. Commit with your agent name:
+   ```bash
+   git commit -m "{{task_short}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
+   ```
+3. Find the main repo and merge your branch:
+   ```bash
+   MAIN_REPO=$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')
+   git -C "$MAIN_REPO" merge --no-ff agent/{{agent_name_lower}} -m "Merge Agent {{agent_name}}: {{task_short}}"
+   ```
+4. Reset your branch to match master for the next task:
+   ```bash
+   git fetch origin master:master 2>/dev/null || git fetch origin main:main 2>/dev/null
+   git reset --hard master 2>/dev/null || git reset --hard main
+   ```
+
+All steps are REQUIRED so your work is integrated and you're ready for the next task."#;
 
 /// Build the agent prompt with variable substitution.
 fn build_agent_prompt(agent_name: &str, task_description: &str) -> String {
@@ -182,10 +193,16 @@ fn build_agent_prompt(agent_name: &str, task_description: &str) -> String {
         task_description.to_string()
     };
 
+    // Get initial from agent name
+    let agent_initial = crate::agent::initial_from_name(agent_name)
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "?".to_string());
+
     let mut vars = HashMap::new();
     vars.insert("agent_name", agent_name.to_string());
     vars.insert("task_description", task_description.to_string());
     vars.insert("agent_name_lower", agent_name.to_lowercase());
+    vars.insert("agent_initial", agent_initial);
     vars.insert("task_short", task_short);
 
     prompt::load_and_render("agent", &vars, DEFAULT_AGENT_PROMPT)
@@ -202,9 +219,11 @@ impl Engine for ClaudeEngine {
         let prompt = build_agent_prompt(agent_name, task_description);
 
         let result = Command::new(&self.cli_path)
+            .arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg(&prompt)
             .current_dir(working_dir)
+            .stdin(Stdio::null())
             .output();
 
         match result {
@@ -256,14 +275,30 @@ impl Engine for CodexEngine {
     ) -> EngineResult {
         let prompt = build_agent_prompt(agent_name, task_description);
 
+        // Codex uses "exec" subcommand with stdin for prompts
         let result = Command::new(&self.cli_path)
-            .arg("--prompt")
-            .arg(&prompt)
+            .arg("exec")
+            .arg("--dangerously-bypass-approvals-and-sandbox")
+            .arg("-")  // Read prompt from stdin
             .current_dir(working_dir)
-            .output();
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
 
         match result {
-            Ok(output) => output_to_result(output),
+            Ok(mut child) => {
+                // Write prompt to stdin
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(prompt.as_bytes());
+                }
+                // Wait for completion
+                match child.wait_with_output() {
+                    Ok(output) => output_to_result(output),
+                    Err(e) => EngineResult::failure(format!("codex wait failed: {}", e), 1),
+                }
+            }
             Err(e) => EngineResult::failure(format!("failed to execute codex: {}", e), 1),
         }
     }

@@ -1027,9 +1027,25 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     println!("Sprint {}: assigned {} task(s) to {} agent(s)",
              sprint_number, assigned, agent_count);
 
+    // Clean up any existing worktrees for assigned agents before creating new ones
+    // This ensures a clean slate from master for each sprint
+    let worktrees_dir = Path::new(&config.files_worktrees_dir);
+    let cleanup_summary = worktree::cleanup_agent_worktrees(
+        worktrees_dir,
+        &assigned_initials,
+        true, // Also delete branches so they're recreated fresh from HEAD
+    );
+    if cleanup_summary.cleaned_count() > 0 {
+        println!("  Pre-sprint cleanup: removed {} worktree(s)", cleanup_summary.cleaned_count());
+    }
+    for (initial, err) in &cleanup_summary.errors {
+        let name = agent::name_from_initial(*initial).unwrap_or("?");
+        eprintln!("  warning: pre-sprint cleanup failed for {} ({}): {}", name, initial, err);
+    }
+
     // Create worktrees for assigned agents
     let worktrees: Vec<Worktree> = worktree::create_worktrees_in(
-        Path::new(&config.files_worktrees_dir),
+        worktrees_dir,
         &assignments,
     ).map_err(|e| format!("failed to create worktrees: {}", e))?;
 
@@ -1227,6 +1243,21 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     // Write final task state
     fs::write(&config.files_tasks, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
+
+    // Clean up worktrees after sprint completes
+    // This ensures worktrees are recreated fresh from master on the next sprint
+    let cleanup_summary = worktree::cleanup_agent_worktrees(
+        worktrees_dir,
+        &assigned_initials,
+        true, // Also delete branches
+    );
+    if cleanup_summary.cleaned_count() > 0 {
+        println!("  Post-sprint cleanup: removed {} worktree(s)", cleanup_summary.cleaned_count());
+    }
+    for (initial, err) in &cleanup_summary.errors {
+        let name = agent::name_from_initial(*initial).unwrap_or("?");
+        eprintln!("  warning: post-sprint cleanup failed for {} ({}): {}", name, initial, err);
+    }
 
     Ok(assigned)
 }
