@@ -127,15 +127,6 @@ fn cmd_init(config: &Config) -> Result<(), String> {
     println!("  Created .swarm-hug/");
     println!("  Created .swarm-hug/assignments.toml");
 
-    // Create config file if it doesn't exist
-    if !Path::new("swarm.toml").exists() {
-        fs::write("swarm.toml", Config::default_toml())
-            .map_err(|e| format!("failed to create swarm.toml: {}", e))?;
-        println!("  Created swarm.toml");
-    } else {
-        println!("  swarm.toml already exists");
-    }
-
     // If a team is specified, initialize that team's directory
     if let Some(ref team_name) = config.team {
         let team = Team::new(team_name);

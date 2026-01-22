@@ -60,4 +60,5 @@
 - [ ] BLOCKED: Resolve prompt request to do up to 3 related tasks per session vs AGENTS one-task-per-session rule.
 
 ## Maintenance
+- [x] Remove `swarm.toml` creation from `swarm init` command.
 - [ ] Split `src/main.rs` (1233 LOC) into smaller modules.
