@@ -53,9 +53,29 @@ pub fn load_prompt(name: &str) -> Option<String> {
     fs::read_to_string(&path).ok()
 }
 
-/// Load a prompt template from file, with a fallback default.
-pub fn load_prompt_or(name: &str, default: &str) -> String {
-    load_prompt(name).unwrap_or_else(|| default.to_string())
+/// Load a prompt template from file, returning an error if not found.
+///
+/// # Errors
+/// Returns an error message if the prompt file cannot be found or read.
+pub fn load_prompt_required(name: &str) -> Result<String, String> {
+    match find_prompts_dir() {
+        Some(prompts_dir) => {
+            let path = prompts_dir.join(format!("{}.md", name));
+            fs::read_to_string(&path).map_err(|e| {
+                format!(
+                    "Failed to read required prompt '{}' from {}: {}",
+                    name,
+                    path.display(),
+                    e
+                )
+            })
+        }
+        None => Err(format!(
+            "Prompts directory not found. Create a 'prompts/' directory with {}.md, \
+             or set SWARM_PROMPTS_DIR environment variable.",
+            name
+        )),
+    }
 }
 
 /// Render a prompt template with variable substitution.
@@ -70,10 +90,13 @@ pub fn render(template: &str, vars: &HashMap<&str, String>) -> String {
     result
 }
 
-/// Convenience function to load and render a prompt in one call.
-pub fn load_and_render(name: &str, vars: &HashMap<&str, String>, default: &str) -> String {
-    let template = load_prompt_or(name, default);
-    render(&template, vars)
+/// Convenience function to load and render a required prompt in one call.
+///
+/// # Errors
+/// Returns an error if the prompt file cannot be found or read.
+pub fn load_and_render(name: &str, vars: &HashMap<&str, String>) -> Result<String, String> {
+    let template = load_prompt_required(name)?;
+    Ok(render(&template, vars))
 }
 
 #[cfg(test)]

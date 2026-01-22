@@ -61,4 +61,5 @@
 
 ## Maintenance
 - [x] Remove `swarm.toml` creation from `swarm init` command.
+- [x] Remove DEFAULT_*_PROMPT fallbacks; error if prompt markdown files are missing.
 - [ ] Split `src/main.rs` (1233 LOC) into smaller modules.
