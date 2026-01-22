@@ -333,6 +333,12 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
     let agent_count = initials.len();
     let assigned = task_list.assign_sprint(&initials, tasks_per_agent);
 
+    // Load sprint history and increment for this planning session
+    let mut sprint_history = team::SprintHistory::load(&team_name)?;
+    let historical_sprint = sprint_history.next_sprint();
+    let formatted_team = sprint_history.formatted_team_name();
+    sprint_history.save()?;
+
     // Write updated tasks
     fs::write(&config.files_tasks, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
@@ -373,24 +379,26 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
     }
 
     // Write sprint plan to chat
-    chat::write_sprint_plan(&config.files_chat, 1, &assignments)
+    chat::write_sprint_plan(&config.files_chat, historical_sprint, &assignments)
         .map_err(|e| format!("failed to write chat: {}", e))?;
 
     // Commit assignment changes to git so worktrees can see them
-    commit_task_assignments(&config.files_tasks, sprint_number_for_plan(1))?;
+    let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
+    commit_task_assignments(
+        &config.files_tasks,
+        sprint_history_path.to_str().unwrap_or(""),
+        &formatted_team,
+        historical_sprint,
+    )?;
 
-    println!("Assigned {} task(s) to {} agent(s).", assigned, agent_count);
+    println!("{} Sprint {}: assigned {} task(s) to {} agent(s).",
+             formatted_team, historical_sprint, assigned, agent_count);
     for (initial, desc) in &assignments {
         let name = agent::name_from_initial(*initial).unwrap_or("Unknown");
         println!("  {} ({}): {}", name, initial, desc);
     }
 
     Ok(())
-}
-
-/// Helper to generate sprint number string for plan command.
-fn sprint_number_for_plan(_: usize) -> usize {
-    1
 }
 
 fn commit_files(paths: &[&str], message: &str) -> Result<bool, String> {
@@ -456,19 +464,42 @@ fn commit_files(paths: &[&str], message: &str) -> Result<bool, String> {
 }
 
 /// Commit task assignment changes to git.
-fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
+///
+/// # Arguments
+/// * `tasks_file` - Path to the team's tasks.md file
+/// * `sprint_history_file` - Path to the team's sprint-history.json file
+/// * `team_name` - Formatted team name for commit message (e.g., "Greenfield")
+/// * `sprint_number` - The historical sprint number for this team
+fn commit_task_assignments(
+    tasks_file: &str,
+    sprint_history_file: &str,
+    team_name: &str,
+    sprint_number: usize,
+) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
-    let commit_msg = format!("Sprint {}: task assignments", sprint_number);
-    if commit_files(&[tasks_file, assignments_path.as_str()], &commit_msg)? {
+    let commit_msg = format!("{} Sprint {}: task assignments", team_name, sprint_number);
+    if commit_files(
+        &[tasks_file, sprint_history_file, assignments_path.as_str()],
+        &commit_msg,
+    )? {
         println!("  Committed task assignments to git.");
     }
     Ok(())
 }
 
 /// Commit sprint completion (updated tasks and released assignments).
-fn commit_sprint_completion(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
+///
+/// # Arguments
+/// * `tasks_file` - Path to the team's tasks.md file
+/// * `team_name` - Formatted team name for commit message (e.g., "Greenfield")
+/// * `sprint_number` - The historical sprint number for this team
+fn commit_sprint_completion(
+    tasks_file: &str,
+    team_name: &str,
+    sprint_number: usize,
+) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
-    let commit_msg = format!("Sprint {}: completed", sprint_number);
+    let commit_msg = format!("{} Sprint {}: completed", team_name, sprint_number);
     if commit_files(&[tasks_file, assignments_path.as_str()], &commit_msg)? {
         println!("  Committed sprint completion to git.");
     }
@@ -833,11 +864,18 @@ fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -
 }
 
 /// Run a single sprint.
-fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
+///
+/// The `session_sprint_number` is the sprint number within this run session (1, 2, 3...).
+/// The historical sprint number (used in commits) is loaded from sprint-history.json.
+fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, String> {
     // Load tasks
     let content = fs::read_to_string(&config.files_tasks)
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
     let mut task_list = TaskList::parse(&content);
+
+    // Load sprint history to get historical sprint number
+    let team_name = team_name_for_config(config);
+    let mut sprint_history = team::SprintHistory::load(&team_name)?;
 
     // Unassign any incomplete tasks from previous sprints so they can be reassigned fresh
     let unassigned = task_list.unassign_all();
@@ -900,6 +938,11 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         return Ok(0);
     }
 
+    // Increment and save sprint history now that we have tasks assigned
+    let historical_sprint = sprint_history.next_sprint();
+    let formatted_team = sprint_history.formatted_team_name();
+    sprint_history.save()?;
+
     // Write updated tasks
     fs::write(&config.files_tasks, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
@@ -944,18 +987,24 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         .iter()
         .map(|(i, d)| (*i, d.as_str()))
         .collect();
-    chat::write_sprint_plan(&config.files_chat, sprint_number, &assignments_ref)
+    chat::write_sprint_plan(&config.files_chat, historical_sprint, &assignments_ref)
         .map_err(|e| format!("failed to write chat: {}", e))?;
 
     // Commit assignment changes to git so worktrees can see them
-    commit_task_assignments(&config.files_tasks, sprint_number)?;
+    let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
+    commit_task_assignments(
+        &config.files_tasks,
+        sprint_history_path.to_str().unwrap_or(""),
+        &formatted_team,
+        historical_sprint,
+    )?;
 
     // Capture the commit hash at sprint start (after assignment commit)
     // This will be used to determine git range for post-sprint review
     let sprint_start_commit = get_current_commit().unwrap_or_else(|| "HEAD".to_string());
 
-    println!("Sprint {}: assigned {} task(s) to {} agent(s)",
-             sprint_number, assigned, agent_count);
+    println!("{} Sprint {}: assigned {} task(s) to {} agent(s)",
+             formatted_team, historical_sprint, assigned, agent_count);
 
     // Clean up any existing worktrees for assigned agents before creating new ones
     // This ensures a clean slate from master for each sprint
@@ -1076,7 +1125,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
                     agent_name,
                     &description,
                     &working_dir,
-                    sprint_number,
+                    session_sprint_number,
                     team_dir.as_deref(),
                 );
 
@@ -1225,7 +1274,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     }
 
     // Commit sprint completion (updated tasks and released assignments)
-    commit_sprint_completion(&config.files_tasks, sprint_number)?;
+    commit_sprint_completion(&config.files_tasks, &formatted_team, historical_sprint)?;
 
     // Run post-sprint review to identify follow-up tasks
     run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
