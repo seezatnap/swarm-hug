@@ -27,6 +27,9 @@ pub struct Task {
     pub status: TaskStatus,
     /// Original line number (1-indexed) for error reporting.
     pub line_number: usize,
+    /// Lines that appeared before this task (section headings, blank lines, etc.).
+    /// This preserves document structure when writing back.
+    pub prefix: Vec<String>,
 }
 
 impl Task {
@@ -36,6 +39,7 @@ impl Task {
             description: description.into(),
             status: TaskStatus::Unassigned,
             line_number: 0,
+            prefix: Vec::new(),
         }
     }
 
@@ -97,42 +101,42 @@ pub struct TaskList {
 
 impl TaskList {
     /// Parse a TASKS.md file content.
+    ///
+    /// Preserves document structure by storing non-task lines (section headings,
+    /// blank lines) as prefixes on the following task. This ensures roundtrip
+    /// fidelity when writing back.
     pub fn parse(content: &str) -> Self {
         let mut header = Vec::new();
         let mut tasks = Vec::new();
-        let mut footer = Vec::new();
-        let mut in_tasks = false;
-        let mut past_tasks = false;
+        let mut seen_task = false;
+        let mut pending_prefix: Vec<String> = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
-            if let Some(task) = parse_task_line(line, line_num + 1) {
-                in_tasks = true;
-                past_tasks = false;
+            if let Some(mut task) = parse_task_line(line, line_num + 1) {
+                // Attach any pending prefix lines to this task
+                task.prefix = std::mem::take(&mut pending_prefix);
                 tasks.push(task);
-            } else if in_tasks && !past_tasks {
-                // Check if this looks like end of task section
-                if line.trim().is_empty() && !tasks.is_empty() {
-                    // Could be spacing between tasks or end of section
-                    // Look ahead behavior: treat as footer start for now
-                    past_tasks = true;
-                    footer.push(line.to_string());
-                } else if !line.trim().is_empty() && !line.starts_with('-') {
-                    past_tasks = true;
-                    footer.push(line.to_string());
-                } else {
-                    // Empty line within task section, skip for now
-                }
-            } else if past_tasks {
-                footer.push(line.to_string());
-            } else {
+                seen_task = true;
+            } else if !seen_task {
+                // Before any task, everything goes to header
                 header.push(line.to_string());
+            } else {
+                // After seeing at least one task, non-task lines become
+                // prefix for the next task (or footer if no more tasks)
+                pending_prefix.push(line.to_string());
             }
         }
+
+        // Any remaining pending lines after the last task become footer
+        let footer = pending_prefix;
 
         Self { header, tasks, footer }
     }
 
     /// Format tasks back to TASKS.md content.
+    ///
+    /// Preserves document structure by outputting each task's prefix lines
+    /// (section headings, blank lines) before the task itself.
     pub fn to_string(&self) -> String {
         let mut lines = Vec::new();
 
@@ -141,6 +145,10 @@ impl TaskList {
         }
 
         for task in &self.tasks {
+            // Output any prefix lines (section headings, etc.) before this task
+            for prefix_line in &task.prefix {
+                lines.push(prefix_line.clone());
+            }
             lines.push(task.to_line());
         }
 
@@ -261,6 +269,7 @@ fn parse_task_line(line: &str, line_number: usize) -> Option<Task> {
                             description: desc,
                             status: TaskStatus::Completed(initial.to_ascii_uppercase()),
                             line_number,
+                            prefix: Vec::new(),
                         });
                     }
                 }
@@ -284,6 +293,7 @@ fn parse_task_line(line: &str, line_number: usize) -> Option<Task> {
         description,
         status,
         line_number,
+        prefix: Vec::new(),
     })
 }
 
@@ -507,5 +517,141 @@ mod tests {
         assert_eq!(list.assigned_count(), 0);
         assert_eq!(list.unassigned_count(), 3); // Task 1, 2, 3 now unassigned
         assert_eq!(list.completed_count(), 1); // Task 4 still completed
+    }
+
+    #[test]
+    fn test_tasklist_preserves_section_headings() {
+        // Test that section headings between tasks are preserved
+        let content = "# Tasks\n\n### Section 1\n- [ ] Task 1\n- [ ] Task 2\n\n### Section 2\n- [ ] Task 3\n";
+        let list = TaskList::parse(content);
+
+        // Header includes everything before the first task
+        assert_eq!(list.header.len(), 3); // "# Tasks", "", "### Section 1"
+        assert_eq!(list.header, vec!["# Tasks", "", "### Section 1"]);
+        assert_eq!(list.tasks.len(), 3);
+
+        // First task has no prefix (section heading is in header since it's before first task)
+        assert!(list.tasks[0].prefix.is_empty());
+        assert_eq!(list.tasks[0].description, "Task 1");
+
+        // Second task has no prefix (follows directly after first)
+        assert!(list.tasks[1].prefix.is_empty());
+        assert_eq!(list.tasks[1].description, "Task 2");
+
+        // Third task should have blank line and section heading as prefix
+        assert_eq!(list.tasks[2].prefix, vec!["", "### Section 2"]);
+        assert_eq!(list.tasks[2].description, "Task 3");
+    }
+
+    #[test]
+    fn test_tasklist_section_roundtrip() {
+        // Test that parsing and writing back preserves document structure
+        let content = "# Phase 0 Tasks\n\n## M0.1 — Setup\n\n### Directory Structure\n- [ ] Task 1\n- [A] Task 2\n\n### Tooling\n- [ ] Task 3\n- [x] Task 4 (B)\n\n## M0.2 — Database\n- [ ] Task 5\n";
+        let list = TaskList::parse(content);
+        let output = list.to_string();
+
+        // The output should preserve the section structure
+        assert!(output.contains("# Phase 0 Tasks"));
+        assert!(output.contains("## M0.1 — Setup"));
+        assert!(output.contains("### Directory Structure"));
+        assert!(output.contains("### Tooling"));
+        assert!(output.contains("## M0.2 — Database"));
+
+        // Verify order is correct by checking substring positions
+        let pos_setup = output.find("## M0.1 — Setup").unwrap();
+        let pos_dir = output.find("### Directory Structure").unwrap();
+        let pos_task1 = output.find("Task 1").unwrap();
+        let pos_tooling = output.find("### Tooling").unwrap();
+        let pos_task3 = output.find("Task 3").unwrap();
+        let pos_database = output.find("## M0.2 — Database").unwrap();
+        let pos_task5 = output.find("Task 5").unwrap();
+
+        assert!(pos_setup < pos_dir, "Setup should come before Directory Structure");
+        assert!(pos_dir < pos_task1, "Directory Structure should come before Task 1");
+        assert!(pos_task1 < pos_tooling, "Task 1 should come before Tooling");
+        assert!(pos_tooling < pos_task3, "Tooling should come before Task 3");
+        assert!(pos_task3 < pos_database, "Task 3 should come before Database");
+        assert!(pos_database < pos_task5, "Database should come before Task 5");
+    }
+
+    #[test]
+    fn test_tasklist_section_roundtrip_exact() {
+        // Test exact roundtrip fidelity
+        let content = "# Tasks\n\n### Section A\n- [ ] Task 1\n\n### Section B\n- [ ] Task 2\n";
+        let list = TaskList::parse(content);
+        let output = list.to_string();
+
+        assert_eq!(output, content);
+    }
+
+    #[test]
+    fn test_tasklist_preserves_blank_lines_between_sections() {
+        let content = "# Header\n\n- [ ] Task 1\n\n\n### New Section\n- [ ] Task 2\n";
+        let list = TaskList::parse(content);
+
+        assert_eq!(list.tasks.len(), 2);
+        // Task 2 should have two blank lines and section heading as prefix
+        assert_eq!(list.tasks[1].prefix, vec!["", "", "### New Section"]);
+
+        let output = list.to_string();
+        assert_eq!(output, content);
+    }
+
+    #[test]
+    fn test_tasklist_complex_structure_roundtrip() {
+        // Real-world example similar to user's issue
+        let content = r#"# Phase 0 Tasks
+
+## M0.1 — Repository Structure
+
+### Directory Setup
+- [x] Create /apps/web directory (A)
+- [A] Configure ESLint
+- [ ] Configure Prettier
+
+### Build Scripts
+- [B] Add pnpm build script
+- [ ] Add pnpm test script
+
+## M0.2 — Database
+
+### Schema
+- [ ] Create jobs table migration
+- [ ] Create candidates table migration
+"#;
+        let list = TaskList::parse(content);
+        let output = list.to_string();
+
+        // Verify all sections are preserved in correct order
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Find key lines and verify order
+        let phase_idx = lines.iter().position(|l| l.contains("# Phase 0")).unwrap();
+        let m01_idx = lines.iter().position(|l| l.contains("## M0.1")).unwrap();
+        let dir_idx = lines.iter().position(|l| l.contains("### Directory")).unwrap();
+        let build_idx = lines.iter().position(|l| l.contains("### Build")).unwrap();
+        let m02_idx = lines.iter().position(|l| l.contains("## M0.2")).unwrap();
+        let schema_idx = lines.iter().position(|l| l.contains("### Schema")).unwrap();
+
+        assert!(phase_idx < m01_idx);
+        assert!(m01_idx < dir_idx);
+        assert!(dir_idx < build_idx);
+        assert!(build_idx < m02_idx);
+        assert!(m02_idx < schema_idx);
+
+        // Verify tasks are under correct sections
+        let create_web_idx = lines.iter().position(|l| l.contains("Create /apps/web")).unwrap();
+        let eslint_idx = lines.iter().position(|l| l.contains("Configure ESLint")).unwrap();
+        let build_script_idx = lines.iter().position(|l| l.contains("pnpm build")).unwrap();
+        let jobs_table_idx = lines.iter().position(|l| l.contains("jobs table")).unwrap();
+
+        assert!(dir_idx < create_web_idx && create_web_idx < build_idx,
+            "Create /apps/web should be under Directory Setup");
+        assert!(dir_idx < eslint_idx && eslint_idx < build_idx,
+            "Configure ESLint should be under Directory Setup");
+        assert!(build_idx < build_script_idx && build_script_idx < m02_idx,
+            "pnpm build should be under Build Scripts");
+        assert!(schema_idx < jobs_table_idx,
+            "jobs table should be under Schema");
     }
 }
