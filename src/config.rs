@@ -364,6 +364,8 @@ pub struct CliArgs {
     pub team: Option<String>,
     /// Team name for team-specific subcommands (positional arg).
     pub team_arg: Option<String>,
+    /// Email for set-email command (positional arg).
+    pub email_arg: Option<String>,
 }
 
 /// Swarm subcommands.
@@ -393,6 +395,8 @@ pub enum Command {
     TeamInit,
     /// Copy embedded prompts to .swarm-hug/prompts for customization.
     CustomizePrompts,
+    /// Set the co-author email for commits.
+    SetEmail,
 }
 
 impl Command {
@@ -411,6 +415,7 @@ impl Command {
             "teams" => Some(Self::Teams),
             "team" => Some(Self::TeamInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
+            "set-email" => Some(Self::SetEmail),
             _ => None,
         }
     }
@@ -484,6 +489,14 @@ where
                         } else if !next.starts_with('-') {
                             // Just "team <name>" - treat as team init
                             cli.team_arg = args.next();
+                        }
+                    }
+                }
+                // For "set-email <email>", capture the email argument
+                if cli.command == Some(Command::SetEmail) {
+                    if let Some(next) = args.peek() {
+                        if !next.starts_with('-') {
+                            cli.email_arg = args.next();
                         }
                     }
                 }
@@ -634,7 +647,20 @@ max = 5
         assert_eq!(Command::from_str("teams"), Some(Command::Teams));
         assert_eq!(Command::from_str("team"), Some(Command::TeamInit));
         assert_eq!(Command::from_str("customize-prompts"), Some(Command::CustomizePrompts));
+        assert_eq!(Command::from_str("set-email"), Some(Command::SetEmail));
         assert_eq!(Command::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_parse_args_set_email() {
+        let args = vec![
+            "swarm".to_string(),
+            "set-email".to_string(),
+            "user@example.com".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::SetEmail));
+        assert_eq!(cli.email_arg, Some("user@example.com".to_string()));
     }
 
     #[test]

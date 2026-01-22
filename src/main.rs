@@ -54,6 +54,7 @@ fn main() {
         Command::Teams => cmd_teams(&config),
         Command::TeamInit => cmd_team_init(&config, &cli),
         Command::CustomizePrompts => cmd_customize_prompts(),
+        Command::SetEmail => cmd_set_email(&cli),
     };
 
     if let Err(e) = result {
@@ -82,6 +83,7 @@ COMMANDS:
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
     customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
+    set-email <email> Set co-author email for commits (stored in .swarm-hug/email.txt)
 
 OPTIONS:
     -h, --help              Show this help message
@@ -732,6 +734,41 @@ fn cmd_customize_prompts() -> Result<(), String> {
     Ok(())
 }
 
+/// Set the co-author email for commits.
+fn cmd_set_email(cli: &config::CliArgs) -> Result<(), String> {
+    let email = cli.email_arg.as_ref()
+        .ok_or("Usage: swarm set-email <email>")?;
+
+    // Validate email format (basic check)
+    if !email.contains('@') {
+        return Err("Invalid email format (must contain @)".to_string());
+    }
+
+    // Ensure .swarm-hug directory exists
+    let swarm_hug_dir = Path::new(".swarm-hug");
+    if !swarm_hug_dir.exists() {
+        fs::create_dir_all(swarm_hug_dir)
+            .map_err(|e| format!("failed to create .swarm-hug/: {}", e))?;
+    }
+
+    // Write email to .swarm-hug/email.txt
+    let email_path = swarm_hug_dir.join("email.txt");
+    fs::write(&email_path, email)
+        .map_err(|e| format!("failed to write {}: {}", email_path.display(), e))?;
+
+    println!("Co-author email set to: {}", email);
+    println!("Stored in: {}", email_path.display());
+    println!("\nAll commits and merges will now include:");
+    println!("  Co-Authored-By: {} <{}>", extract_username(email), email);
+
+    Ok(())
+}
+
+/// Extract username from email (part before @).
+fn extract_username(email: &str) -> &str {
+    email.split('@').next().unwrap_or(email)
+}
+
 /// Tail a file and stream appended content.
 fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -> Result<(), String> {
     let mut offset: u64 = 0;
@@ -1152,6 +1189,17 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     for (initial, err) in &cleanup_summary.errors {
         let name = agent::name_from_initial(*initial).unwrap_or("?");
         eprintln!("  warning: post-sprint cleanup failed for {} ({}): {}", name, initial, err);
+    }
+
+    // Release agent assignments after sprint completes
+    // This ensures agents are available for the next sprint or other teams
+    match release_assignments_for_team(&team_name, &assigned_initials) {
+        Ok(released) => {
+            if released > 0 {
+                println!("  Released {} agent assignment(s)", released);
+            }
+        }
+        Err(e) => eprintln!("  warning: failed to release agent assignments: {}", e),
     }
 
     Ok(assigned)

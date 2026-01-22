@@ -52,6 +52,14 @@ fn write_team_tasks(team_root: &Path) -> PathBuf {
     tasks_path
 }
 
+fn write_team_tasks_multi_sprint(team_root: &Path) -> PathBuf {
+    // 6 tasks: 2 per sprint for 3 sprints (with --tasks-per-agent 1 and 2 agents)
+    let content = "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n- [ ] Task 4\n- [ ] Task 5\n- [ ] Task 6\n";
+    let tasks_path = team_root.join("tasks.md");
+    fs::write(&tasks_path, content).expect("write TASKS.md");
+    tasks_path
+}
+
 #[test]
 fn test_swarm_run_stub_integration() {
     let temp = TempDir::new().expect("temp dir");
@@ -109,10 +117,17 @@ fn test_swarm_run_stub_integration() {
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
 
+    // Agents are unassigned after each sprint completes so they are available for next sprint
     let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
     let assignments_content = fs::read_to_string(&assignments_path).expect("read assignments.toml");
-    assert!(assignments_content.contains("A = \"alpha\""));
-    assert!(assignments_content.contains("B = \"alpha\""));
+    assert!(
+        !assignments_content.contains("A = \"alpha\""),
+        "agent A should be unassigned after sprint"
+    );
+    assert!(
+        !assignments_content.contains("B = \"alpha\""),
+        "agent B should be unassigned after sprint"
+    );
 
     let output_dir = team_root.join("loop");
     assert!(output_dir.join("turn1-agentA.md").exists());
@@ -222,5 +237,117 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
     }
     assert!(!stdout.contains("Message 1"));
     assert!(!stdout.contains("Message 2"));
+}
+
+/// Test that multiple consecutive sprints correctly reassign agents.
+/// This verifies agents are released after each sprint and picked up again for the next.
+#[test]
+fn test_swarm_run_multiple_sprints_reassigns_agents() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["team", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write 6 tasks - should complete in 3 sprints with 2 agents, 1 task per agent per sprint
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = write_team_tasks_multi_sprint(&team_root);
+    let chat_path = team_root.join("chat.md");
+    commit_all(repo_path, "init");
+
+    // Run 3 sprints
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--team",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "3",
+            "--tasks-per-agent",
+            "1",
+            "--max-agents",
+            "2",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verify all 3 sprints were executed
+    assert!(
+        stdout.contains("Sprint 1: assigned 2 task(s)"),
+        "Sprint 1 should assign 2 tasks. Output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Sprint 2: assigned 2 task(s)"),
+        "Sprint 2 should assign 2 tasks. Output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Sprint 3: assigned 2 task(s)"),
+        "Sprint 3 should assign 2 tasks. Output: {}",
+        stdout
+    );
+
+    // Verify all tasks are completed
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        6,
+        "All 6 tasks should be completed"
+    );
+    assert_eq!(task_list.assigned_count(), 0, "No tasks should be assigned");
+    assert_eq!(
+        task_list.unassigned_count(),
+        0,
+        "No tasks should be unassigned"
+    );
+
+    // Verify chat contains sprint plans for all 3 sprints
+    let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
+    assert!(
+        chat_content.contains("Sprint 1 plan:"),
+        "Chat should contain Sprint 1 plan"
+    );
+    assert!(
+        chat_content.contains("Sprint 2 plan:"),
+        "Chat should contain Sprint 2 plan"
+    );
+    assert!(
+        chat_content.contains("Sprint 3 plan:"),
+        "Chat should contain Sprint 3 plan"
+    );
+
+    // Verify agents were released after all sprints (assignments should be empty)
+    let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
+    let assignments_content =
+        fs::read_to_string(&assignments_path).expect("read assignments.toml");
+    assert!(
+        !assignments_content.contains("A = \"alpha\""),
+        "Agent A should be unassigned after all sprints"
+    );
+    assert!(
+        !assignments_content.contains("B = \"alpha\""),
+        "Agent B should be unassigned after all sprints"
+    );
+
+    // Verify release messages were logged for each sprint
+    assert!(
+        stdout.contains("Released 2 agent assignment(s)"),
+        "Should release agents after each sprint. Output: {}",
+        stdout
+    );
 }
 
