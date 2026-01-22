@@ -1,7 +1,6 @@
 //! Agent naming module with A-Z name/initial mappings.
 //!
 //! Provides deterministic agent names for assignment tracking.
-//! The mapping is identical to ralph-bash-v2.
 
 /// All agent initials in order (A-Z).
 pub const INITIALS: [char; 26] = [

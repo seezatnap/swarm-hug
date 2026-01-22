@@ -1,14 +1,12 @@
 # Specifications: swarm-hug
 
-Rust rewrite of ../ralph-bash-v2: a multi-agent, sprint-based orchestration system that is robust, minimal, and deeply tested.
-
 ## Goals
 - Rebuild the bash-based agent orchestration in Rust for correctness and maintainability.
 - Start with a comprehensive test suite that validates end-to-end behavior, using stubbed engines by default.
 - Preserve the core behavior of the current system (multi-agent sprints, tasks.md, chat.md, git worktrees, merge flow) while removing GridTUI.
 - Provide a simple, tail-based UI that streams chat.md to the operator.
 - Support limiting the number of sprints for deterministic tests and short runs.
-- Provide a VM bootstrap script (init.sh) similar to ralph-bash-v2 that provisions a Lima VM and exposes the `swarm` command inside it.
+- Provide a VM bootstrap script (init.sh) that provisions a Lima VM and exposes the `swarm` command inside it.
 - **Multi-team support**: Multiple teams can work on the same repo simultaneously with isolated artifacts.
 
 ## Non-goals
