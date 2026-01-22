@@ -387,10 +387,6 @@ pub enum Command {
     WorktreesBranch,
     /// Clean up worktrees and branches.
     Cleanup,
-    /// Merge agent branches.
-    Merge,
-    /// Tail CHAT.md.
-    Tail,
     /// List all teams and their assigned agents.
     Teams,
     /// Initialize a new team (use with team name argument).
@@ -412,8 +408,6 @@ impl Command {
             "worktrees" => Some(Self::Worktrees),
             "worktrees-branch" => Some(Self::WorktreesBranch),
             "cleanup" => Some(Self::Cleanup),
-            "merge" => Some(Self::Merge),
-            "tail" => Some(Self::Tail),
             "teams" => Some(Self::Teams),
             "team" => Some(Self::TeamInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
@@ -637,8 +631,6 @@ max = 5
         assert_eq!(Command::from_str("worktrees"), Some(Command::Worktrees));
         assert_eq!(Command::from_str("worktrees-branch"), Some(Command::WorktreesBranch));
         assert_eq!(Command::from_str("cleanup"), Some(Command::Cleanup));
-        assert_eq!(Command::from_str("merge"), Some(Command::Merge));
-        assert_eq!(Command::from_str("tail"), Some(Command::Tail));
         assert_eq!(Command::from_str("teams"), Some(Command::Teams));
         assert_eq!(Command::from_str("team"), Some(Command::TeamInit));
         assert_eq!(Command::from_str("customize-prompts"), Some(Command::CustomizePrompts));

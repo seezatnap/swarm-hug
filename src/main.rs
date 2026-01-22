@@ -51,8 +51,6 @@ fn main() {
         Command::Worktrees => cmd_worktrees(&config),
         Command::WorktreesBranch => cmd_worktrees_branch(&config),
         Command::Cleanup => cmd_cleanup(&config),
-        Command::Merge => cmd_merge(&config),
-        Command::Tail => cmd_tail(&config),
         Command::Teams => cmd_teams(&config),
         Command::TeamInit => cmd_team_init(&config, &cli),
         Command::CustomizePrompts => cmd_customize_prompts(),
@@ -83,8 +81,6 @@ COMMANDS:
     worktrees         List active git worktrees
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
-    merge             Merge agent branches to main
-    tail              Tail chat.md (stream output)
     customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
 
 OPTIONS:
@@ -629,148 +625,6 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
     }
 }
 
-/// Merge agent branches.
-fn cmd_merge(config: &Config) -> Result<(), String> {
-    println!("Merging agent branches...");
-    let team_name = team_name_for_config(config);
-
-    // Find all agent branches
-    let branches = worktree::list_agent_branches()?;
-
-    if branches.is_empty() {
-        println!("  No agent branches found.");
-        return Ok(());
-    }
-
-    // Get the target branch (current branch or main)
-    let target = get_current_branch().unwrap_or_else(|| "main".to_string());
-    println!("  Target branch: {}", target);
-
-    let initials: Vec<char> = branches.iter().map(|b| b.initial).collect();
-    let summary = worktree::merge_all_agent_branches(&initials, &target);
-
-    // Report results
-    if !summary.success.is_empty() {
-        println!("\nSuccessful merges:");
-        for initial in &summary.success {
-            let name = agent::name_from_initial(*initial).unwrap_or("?");
-            let branch = worktree::agent_branch_name(*initial).unwrap_or_default();
-            println!("  {} ({}) - merged", name, initial);
-
-            // Write to chat
-            let msg = format!("Merged branch {} to {}", branch, target);
-            if let Err(e) = chat::write_merge_status(&config.files_chat, name, true, &msg) {
-                eprintln!("  warning: failed to write chat: {}", e);
-            }
-        }
-    }
-
-    if !summary.no_changes.is_empty() {
-        println!("\nSkipped (no changes):");
-        for initial in &summary.no_changes {
-            let name = agent::name_from_initial(*initial).unwrap_or("?");
-            println!("  {} ({}) - no changes", name, initial);
-        }
-    }
-
-    if !summary.conflicts.is_empty() {
-        println!("\nConflicts:");
-        for (initial, files) in &summary.conflicts {
-            let name = agent::name_from_initial(*initial).unwrap_or("?");
-            println!("  {} ({}) - conflict in {} file(s):", name, initial, files.len());
-            for f in files {
-                println!("    - {}", f);
-            }
-
-            // Write to chat
-            let files_str = format!("Conflicts in: {}", files.join(", "));
-            if let Err(e) = chat::write_merge_status(
-                &config.files_chat,
-                name,
-                false,
-                &files_str,
-            ) {
-                eprintln!("  warning: failed to write chat: {}", e);
-            }
-        }
-    }
-
-    if !summary.errors.is_empty() {
-        println!("\nErrors:");
-        for (initial, err) in &summary.errors {
-            let name = agent::name_from_initial(*initial).unwrap_or("?");
-            println!("  {} ({}) - {}", name, initial, err);
-        }
-    }
-
-    // Summary
-    println!(
-        "\nMerge summary: {} success, {} conflicts, {} skipped",
-        summary.success_count(),
-        summary.conflict_count(),
-        summary.no_changes.len()
-    );
-
-    // Automatically clean up worktrees and branches for successful merges
-    // Collect agents to clean up: successful merges and those with no changes
-    let mut cleanup_initials: Vec<char> = summary.success.clone();
-    cleanup_initials.extend(&summary.no_changes);
-
-    if !cleanup_initials.is_empty() {
-        println!("\nCleaning up merged worktrees...");
-        let worktrees_dir = Path::new(&config.files_worktrees_dir);
-        let cleanup_summary = worktree::cleanup_agent_worktrees(
-            worktrees_dir,
-            &cleanup_initials,
-            true, // Also delete branches
-        );
-
-        if cleanup_summary.cleaned_count() > 0 {
-            println!("  Cleaned up {} worktree(s) and branch(es)", cleanup_summary.cleaned_count());
-        }
-
-        if cleanup_summary.has_errors() {
-            for (initial, err) in &cleanup_summary.errors {
-                let name = agent::name_from_initial(*initial).unwrap_or("?");
-                eprintln!("  warning: cleanup failed for {} ({}): {}", name, initial, err);
-            }
-        }
-    }
-
-    if !cleanup_initials.is_empty() {
-        match release_assignments_for_team(&team_name, &cleanup_initials) {
-            Ok(released) => {
-                if released > 0 {
-                    println!("Released {} agent assignment(s) for team {}", released, team_name);
-                }
-            }
-            Err(e) => {
-                eprintln!("warning: assignment release failed: {}", e);
-            }
-        }
-    }
-
-    if summary.has_conflicts() {
-        Err("Some merges had conflicts".to_string())
-    } else {
-        Ok(())
-    }
-}
-
-/// Get the current git branch.
-fn get_current_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    }
-}
-
 /// List all teams and their assigned agents.
 fn cmd_teams(_config: &Config) -> Result<(), String> {
     if !team::root_exists() {
@@ -876,15 +730,6 @@ fn cmd_customize_prompts() -> Result<(), String> {
     println!("  review.md:       {{{{git_log}}}}, {{{{tasks_content}}}}");
 
     Ok(())
-}
-
-/// Tail CHAT.md.
-fn cmd_tail(config: &Config) -> Result<(), String> {
-    let path = &config.files_chat;
-
-    println!("Tailing {}... (Ctrl+C to stop)", path);
-
-    tail_follow(path, false, None)
 }
 
 /// Tail a file and stream appended content.

@@ -17,17 +17,6 @@ fn run_success(cmd: &mut Command) -> Output {
     output
 }
 
-fn run_failure(cmd: &mut Command) -> Output {
-    let output = cmd.output().expect("failed to run command");
-    assert!(
-        !output.status.success(),
-        "command unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
 fn init_git_repo(path: &Path) {
     let mut cmd = Command::new("git");
     cmd.arg("init").current_dir(path);
@@ -44,14 +33,6 @@ fn init_git_repo(path: &Path) {
         .args(["config", "user.email", "swarm-test@example.com"])
         .current_dir(path);
     run_success(&mut email_cmd);
-}
-
-fn current_branch(path: &Path) -> String {
-    let mut cmd = Command::new("git");
-    cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path);
-    let output = run_success(&mut cmd);
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
 fn commit_all(path: &Path, message: &str) {
@@ -243,75 +224,3 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
     assert!(!stdout.contains("Message 2"));
 }
 
-#[test]
-fn test_swarm_merge_conflict_writes_chat_and_exits_nonzero() {
-    let temp = TempDir::new().expect("temp dir");
-    let repo_path = temp.path();
-    let team_name = "alpha";
-
-    init_git_repo(repo_path);
-    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
-
-    let mut team_init_cmd = Command::new(swarm_bin);
-    team_init_cmd
-        .args(["team", "init", team_name])
-        .current_dir(repo_path);
-    run_success(&mut team_init_cmd);
-
-    let team_root = repo_path.join(".swarm-hug").join(team_name);
-    let chat_path = team_root.join("chat.md");
-
-    let file_path = repo_path.join("greeting.txt");
-    fs::write(&file_path, "hello\n").expect("write base file");
-    commit_all(repo_path, "base");
-
-    let base_branch = current_branch(repo_path);
-
-    let mut checkout_a = Command::new("git");
-    checkout_a
-        .args(["checkout", "-b", "agent/aaron"])
-        .current_dir(repo_path);
-    run_success(&mut checkout_a);
-    fs::write(&file_path, "hello from aaron\n").expect("write aaron change");
-    commit_all(repo_path, "aaron change");
-
-    let mut checkout_base = Command::new("git");
-    checkout_base
-        .args(["checkout", &base_branch])
-        .current_dir(repo_path);
-    run_success(&mut checkout_base);
-
-    let mut checkout_b = Command::new("git");
-    checkout_b
-        .args(["checkout", "-b", "agent/betty"])
-        .current_dir(repo_path);
-    run_success(&mut checkout_b);
-    fs::write(&file_path, "hello from betty\n").expect("write betty change");
-    commit_all(repo_path, "betty change");
-
-    let mut checkout_base_again = Command::new("git");
-    checkout_base_again
-        .args(["checkout", &base_branch])
-        .current_dir(repo_path);
-    run_success(&mut checkout_base_again);
-
-    let mut merge_cmd = Command::new(swarm_bin);
-    merge_cmd
-        .args(["--team", team_name, "merge"])
-        .current_dir(repo_path);
-    let merge_output = run_failure(&mut merge_cmd);
-    let stderr = String::from_utf8_lossy(&merge_output.stderr);
-    assert!(stderr.contains("Some merges had conflicts"));
-
-    let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
-    assert!(chat_content.contains("Merge conflict for Betty"));
-    assert!(chat_content.contains("Conflicts in: greeting.txt"));
-
-    let mut status_cmd = Command::new("git");
-    status_cmd
-        .args(["status", "--porcelain"])
-        .current_dir(repo_path);
-    let status_output = run_success(&mut status_cmd);
-    let status_text = String::from_utf8_lossy(&status_output.stdout);
-    assert!(!status_text.contains("UU"));
-}
