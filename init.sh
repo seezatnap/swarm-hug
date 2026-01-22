@@ -157,6 +157,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libssl-dev \
   && rm -rf /var/lib/apt/lists/*
 
+# Enable pnpm via corepack (included in Node 20+)
+RUN corepack enable pnpm
+
 # Latest CLIs
 RUN npm install -g @openai/codex @anthropic-ai/claude-code
 
