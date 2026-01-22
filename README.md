@@ -4,7 +4,9 @@ A sprint analogy for agent orchestration, in a cli interface.
 
 ## Quick Start
 
-This program will spawn agents that run in "full automatic" mode; they will run arbitrary commands, and might make mistakes. As such, you should only run them in a sandbox.
+`swarm` will spawn agents that run in "full automatic" mode; they will run arbitrary commands, and might make catastrophic mistakes, like deleting your home folder. Who knows! 
+
+As such, you should only run this in a sandbox. This script will set up a [Lima](https://github.com/lima-vm/lima) VM and mount your target folders, then set up the `swarm` alias for you to use within:
 
 ```bash
 # Wherever you checked this out:
@@ -12,6 +14,8 @@ This program will spawn agents that run in "full automatic" mode; they will run 
 ```
 
 ## CLI Usage
+
+The idea here is to make a command that can spawn a custom-tailored sprint, or set of sprints, to accomplish specific goals. i.e. you might have a small project where the tickets all block each other, in which case you might just want one agent. Later you might have broader tasks that can be parallelized with several agents.
 
 ```
 swarm - multi-agent sprint-based orchestration system
@@ -48,10 +52,6 @@ OPTIONS:
     --max-sprints <N>       Maximum sprints to run (0 = unlimited)
     --no-tail               Don't tail chat.md during run
 ```
-
-- Note: `swarm cleanup` removes team worktrees and any local `agent/*` branches.
-- Tip: `swarm status` prints task counts and the last 5 chat lines for the selected team.
-- Tip: `swarm plan` writes the sprint plan summary to chat.md (same format as `run`).
 
 ## Agent Assignments
 
