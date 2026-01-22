@@ -62,4 +62,7 @@
 ## Maintenance
 - [x] Remove `swarm.toml` creation from `swarm init` command.
 - [x] Remove DEFAULT_*_PROMPT fallbacks; embed prompts in binary with customize-prompts command.
+- [x] Fix cleanup to only delete branches for current team's agents, not all teams.
+- [x] Fix ScrumMaster to use raw prompt (not agent prompt) preventing spurious branch creation.
+- [x] Fix worktree creation to force fresh start from HEAD each sprint.
 - [ ] Split `src/main.rs` (1233 LOC) into smaller modules.

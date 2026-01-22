@@ -140,25 +140,34 @@ pub fn create_worktrees_in(
         let name = crate::agent::name_from_initial(upper).unwrap_or("Unknown");
         let path = worktree_path(&worktrees_dir, upper, name);
         let path_str = path.to_string_lossy().to_string();
-        if is_registered_path(&registered, &path) {
-            created.push(Worktree {
-                path,
-                initial: upper,
-                name: name.to_string(),
-            });
-            continue;
-        }
-
-        if path.exists() {
-            return Err(format!(
-                "worktree path exists but is not registered: {}",
-                path.display()
-            ));
-        }
 
         let branch = agent_branch_name(upper)
             .ok_or_else(|| format!("invalid agent initial: {}", upper))?;
 
+        // If worktree already exists, remove it first to ensure a fresh start
+        if is_registered_path(&registered, &path) {
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args(["worktree", "remove", "--force", &path_str])
+                .output();
+            registered.remove(&path_str);
+        }
+
+        // If path exists but not registered, remove the directory
+        if path.exists() {
+            fs::remove_dir_all(&path)
+                .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
+        }
+
+        // Delete the branch if it exists (to ensure fresh start from HEAD)
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["branch", "-D", &branch])
+            .output();
+
+        // Create fresh worktree with new branch from HEAD
         let output = Command::new("git")
             .arg("-C")
             .arg(&repo_root)
@@ -357,20 +366,38 @@ pub fn list_agent_branches() -> Result<Vec<AgentBranch>, String> {
     for line in stdout.lines() {
         let branch = line.trim().trim_start_matches("* ");
         if let Some(agent_name) = branch.strip_prefix("agent/") {
-            // Find the initial for this agent name
-            if let Some(initial) = crate::agent::initial_from_name(agent_name) {
-                branches.push(AgentBranch {
-                    initial,
-                    name: agent_name.to_string(),
-                    branch: branch.to_string(),
-                    exists: true,
-                });
-            }
+            // Find the initial for this agent name (may be None for non-standard branches)
+            let initial = crate::agent::initial_from_name(agent_name).unwrap_or('?');
+            branches.push(AgentBranch {
+                initial,
+                name: agent_name.to_string(),
+                branch: branch.to_string(),
+                exists: true,
+            });
         }
     }
 
     branches.sort_by(|a, b| a.initial.cmp(&b.initial));
     Ok(branches)
+}
+
+/// Delete a branch by full name.
+pub fn delete_branch(branch_name: &str) -> Result<bool, String> {
+    let output = Command::new("git")
+        .args(["branch", "-D", branch_name])
+        .output()
+        .map_err(|e| format!("failed to run git branch -D: {}", e))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not found") {
+            Ok(false)
+        } else {
+            Err(format!("git branch -D failed: {}", stderr.trim()))
+        }
+    }
 }
 
 /// Check if an agent branch exists.
@@ -673,5 +700,37 @@ mod tests {
         let summary = CleanupSummary::default();
         assert_eq!(summary.cleaned_count(), 0);
         assert!(!summary.has_errors());
+    }
+
+    #[test]
+    fn test_agent_branch_struct() {
+        // Valid agent branch
+        let branch = AgentBranch {
+            initial: 'A',
+            name: "aaron".to_string(),
+            branch: "agent/aaron".to_string(),
+            exists: true,
+        };
+        assert_eq!(branch.initial, 'A');
+        assert_eq!(branch.name, "aaron");
+        assert_eq!(branch.branch, "agent/aaron");
+
+        // Non-standard branch (like scrummaster) uses '?' as initial
+        let sm_branch = AgentBranch {
+            initial: '?',
+            name: "scrummaster".to_string(),
+            branch: "agent/scrummaster".to_string(),
+            exists: true,
+        };
+        assert_eq!(sm_branch.initial, '?');
+        assert_eq!(sm_branch.name, "scrummaster");
+    }
+
+    #[test]
+    fn test_worktree_path() {
+        use std::path::Path;
+        let root = Path::new("/tmp/worktrees");
+        let path = super::worktree_path(root, 'A', "Aaron");
+        assert_eq!(path, Path::new("/tmp/worktrees/agent-A-Aaron"));
     }
 }

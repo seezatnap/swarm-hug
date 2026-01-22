@@ -549,52 +549,70 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
     let team_name = team_name_for_config(config);
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
-    let worktrees = worktree::list_worktrees(worktrees_dir).unwrap_or_default();
-    let mut initials: Vec<char> = worktrees.iter().map(|wt| wt.initial).collect();
     let mut errors: Vec<String> = Vec::new();
 
+    // Get agents currently assigned to this team (before we release them)
+    let team_agents: Vec<char> = match Assignments::load() {
+        Ok(assignments) => assignments.team_agents(&team_name),
+        Err(_) => Vec::new(),
+    };
+
+    // Also get agents from existing worktrees (in case assignments already released)
+    let worktree_agents: Vec<char> = worktree::list_worktrees(worktrees_dir)
+        .unwrap_or_default()
+        .iter()
+        .map(|wt| wt.initial)
+        .collect();
+
+    // Combine both lists (union)
+    let mut agents_to_cleanup: Vec<char> = team_agents.clone();
+    for initial in worktree_agents {
+        if !agents_to_cleanup.contains(&initial) {
+            agents_to_cleanup.push(initial);
+        }
+    }
+
+    // Clean up worktrees in the team directory
     if let Err(e) = worktree::cleanup_worktrees_in(worktrees_dir) {
         errors.push(format!("worktree cleanup failed: {}", e));
     } else {
         println!("  Worktrees removed from {}", config.files_worktrees_dir);
     }
 
-    let branches = match worktree::list_agent_branches() {
-        Ok(list) => list,
-        Err(e) => {
-            errors.push(format!("branch listing failed: {}", e));
-            Vec::new()
-        }
-    };
-
-    if initials.is_empty() {
-        initials = branches.iter().map(|b| b.initial).collect();
-    } else {
-        for branch in &branches {
-            if !initials.contains(&branch.initial) {
-                initials.push(branch.initial);
+    // Delete branches only for this team's agents
+    let mut deleted = 0usize;
+    for initial in &agents_to_cleanup {
+        match worktree::delete_agent_branch(*initial) {
+            Ok(true) => {
+                let name = agent::name_from_initial(*initial).unwrap_or("?");
+                println!("  Deleted branch: agent/{}", name.to_lowercase());
+                deleted += 1;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                let name = agent::name_from_initial(*initial).unwrap_or("?");
+                errors.push(format!("failed to delete branch for {}: {}", name, e));
             }
         }
     }
 
-    if !initials.is_empty() {
-        let mut deleted = 0usize;
-        for &initial in &initials {
-            match worktree::delete_agent_branch(initial) {
-                Ok(true) => deleted += 1,
-                Ok(false) => {}
-                Err(e) => {
-                    let name = agent::name_from_initial(initial).unwrap_or("?");
-                    errors.push(format!("failed to delete branch for {} ({}): {}", name, initial, e));
-                }
-            }
-        }
-
-        if deleted > 0 {
-            println!("  Deleted {} agent branch(es)", deleted);
-        }
+    // Also clean up team-specific scrummaster branch if it exists
+    let scrummaster_branch = format!("agent/scrummaster-{}", team_name);
+    if let Ok(true) = worktree::delete_branch(&scrummaster_branch) {
+        println!("  Deleted branch: {}", scrummaster_branch);
+        deleted += 1;
+    }
+    // Clean up legacy scrummaster branch too (from before this fix)
+    if let Ok(true) = worktree::delete_branch("agent/scrummaster") {
+        println!("  Deleted branch: agent/scrummaster (legacy)");
+        deleted += 1;
     }
 
+    if deleted > 0 {
+        println!("  Deleted {} branch(es) total", deleted);
+    }
+
+    // Release agent assignments for this team
     match release_assignments_for_team(&team_name, &[]) {
         Ok(released) => {
             if released > 0 {

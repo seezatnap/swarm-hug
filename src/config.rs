@@ -641,6 +641,7 @@ max = 5
         assert_eq!(Command::from_str("tail"), Some(Command::Tail));
         assert_eq!(Command::from_str("teams"), Some(Command::Teams));
         assert_eq!(Command::from_str("team"), Some(Command::TeamInit));
+        assert_eq!(Command::from_str("customize-prompts"), Some(Command::CustomizePrompts));
         assert_eq!(Command::from_str("unknown"), None);
     }
 

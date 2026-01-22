@@ -165,19 +165,24 @@ impl Default for ClaudeEngine {
 
 /// Build the agent prompt with variable substitution.
 ///
+/// Only builds the agent prompt for valid agents (A-Z mapping to names).
+/// For non-agent callers (like ScrumMaster), returns None so the caller
+/// can use the raw prompt directly.
+///
 /// # Errors
 /// Returns an error if the agent prompt file (prompts/agent.md) cannot be found.
-fn build_agent_prompt(agent_name: &str, task_description: &str) -> Result<String, String> {
+fn build_agent_prompt(agent_name: &str, task_description: &str) -> Result<Option<String>, String> {
+    // Only use agent prompt for valid agents (those with A-Z initials)
+    let agent_initial = match crate::agent::initial_from_name(agent_name) {
+        Some(c) => c.to_string(),
+        None => return Ok(None), // Not a valid agent, use raw prompt
+    };
+
     let task_short = if task_description.len() > 50 {
         format!("{}...", &task_description[..47])
     } else {
         task_description.to_string()
     };
-
-    // Get initial from agent name
-    let agent_initial = crate::agent::initial_from_name(agent_name)
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "?".to_string());
 
     let mut vars = HashMap::new();
     vars.insert("agent_name", agent_name.to_string());
@@ -186,7 +191,7 @@ fn build_agent_prompt(agent_name: &str, task_description: &str) -> Result<String
     vars.insert("agent_initial", agent_initial);
     vars.insert("task_short", task_short);
 
-    prompt::load_and_render("agent", &vars)
+    prompt::load_and_render("agent", &vars).map(Some)
 }
 
 impl Engine for ClaudeEngine {
@@ -197,8 +202,10 @@ impl Engine for ClaudeEngine {
         working_dir: &Path,
         _turn_number: usize,
     ) -> EngineResult {
+        // For valid agents, wrap in agent prompt; otherwise use raw prompt
         let prompt = match build_agent_prompt(agent_name, task_description) {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => task_description.to_string(), // Non-agent (e.g., ScrumMaster)
             Err(e) => return EngineResult::failure(e, 1),
         };
 
@@ -288,8 +295,10 @@ impl Engine for CodexEngine {
         working_dir: &Path,
         _turn_number: usize,
     ) -> EngineResult {
+        // For valid agents, wrap in agent prompt; otherwise use raw prompt
         let prompt = match build_agent_prompt(agent_name, task_description) {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => task_description.to_string(), // Non-agent (e.g., ScrumMaster)
             Err(e) => return EngineResult::failure(e, 1),
         };
 
@@ -496,5 +505,33 @@ mod tests {
         // Both turn files should exist
         assert!(output_dir.join("turn1-agentA.md").exists());
         assert!(output_dir.join("turn2-agentA.md").exists());
+    }
+
+    #[test]
+    fn test_build_agent_prompt_valid_agent() {
+        // Valid agent should return Some(prompt)
+        let result = super::build_agent_prompt("Aaron", "Test task");
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.is_some());
+        let text = prompt.unwrap();
+        assert!(text.contains("Aaron"));
+        assert!(text.contains("Test task"));
+    }
+
+    #[test]
+    fn test_build_agent_prompt_non_agent() {
+        // Non-agent (ScrumMaster) should return None to use raw prompt
+        let result = super::build_agent_prompt("ScrumMaster", "Plan sprint");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_build_agent_prompt_invalid_name() {
+        // Invalid name should return None
+        let result = super::build_agent_prompt("RandomName", "Some task");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 }
