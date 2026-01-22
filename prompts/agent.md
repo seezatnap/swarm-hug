@@ -69,7 +69,7 @@ MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
 
 ### Step 4: Merge your branch into main (run from main repo)
 ```bash
-git -C "$MAIN_REPO" merge agent/{{agent_name_lower}} --no-ff -m "Merge agent/{{agent_name_lower}}: {{task_short}}{{co_author}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
+GIT_AUTHOR_NAME="Agent {{agent_name}}" GIT_AUTHOR_EMAIL="agent-{{agent_initial}}@swarm.local" GIT_COMMITTER_NAME="Agent {{agent_name}}" GIT_COMMITTER_EMAIL="agent-{{agent_initial}}@swarm.local" git -C "$MAIN_REPO" merge agent/{{agent_name_lower}} --no-ff -m "Merge agent/{{agent_name_lower}}: {{task_short}}{{co_author}}"
 ```
 
 ### Step 5: Reset your branch to match main (prepares you for next task)
@@ -83,7 +83,7 @@ git pull "$MAIN_REPO" main --rebase 2>/dev/null || git reset --hard $(git -C "$M
 2. Check which files have conflicts: `git status`
 3. Open each conflicted file, understand the context, and resolve the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
 4. Stage resolved files: `git add <file>`
-5. Complete the merge: `git commit -m "Merge agent/{{agent_name_lower}}: {{task_short}} (resolved conflicts){{co_author}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"`
+5. Complete the merge: `GIT_AUTHOR_NAME="Agent {{agent_name}}" GIT_AUTHOR_EMAIL="agent-{{agent_initial}}@swarm.local" GIT_COMMITTER_NAME="Agent {{agent_name}}" GIT_COMMITTER_EMAIL="agent-{{agent_initial}}@swarm.local" git commit -m "Merge agent/{{agent_name_lower}}: {{task_short}} (resolved conflicts){{co_author}}"`
 6. Return to your worktree and continue with Step 5
 
 ## Important
