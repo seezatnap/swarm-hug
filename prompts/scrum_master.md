@@ -21,6 +21,8 @@ You MUST assign exactly {{to_assign}} tasks total across {{num_agents}} agents.
 4. **Avoid file conflicts** - Don't give different agents tasks that edit the same files
 5. **Priority = line order** - Lower line numbers are higher priority
 
+THINK VERY HARD ABOUT WHAT TICKETS MIGHT BLOCK WHAT, AND DON'T ASSIGN TICKETS OUT IF YOU'RE NOT SURE. EXAMINE THE CODE IF YOU'RE NOT SURE.
+
 ## Output Format
 
 Output ONLY valid JSON (no markdown code blocks, no explanation before or after):
