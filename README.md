@@ -154,7 +154,6 @@ OPTIONS:
     --stub                  Enable stub mode for testing
     --max-sprints <N>       Maximum sprints to run (0 = unlimited)
     --no-tail               Don't tail chat.md during run
-    --llm-planning          Enable LLM-assisted sprint planning (experimental)
 ```
 
 Note: `swarm cleanup` removes team worktrees and any local `agent/*` branches.
@@ -199,9 +198,6 @@ stub_mode = false
 
 [sprints]
 max = 0                 # 0 = unlimited
-
-[planning]
-llm_enabled = false     # Use LLM for intelligent task assignment
 ```
 
 Environment variables (override config file):
@@ -210,7 +206,6 @@ Environment variables (override config file):
 - `SWARM_ENGINE_TYPE`
 - `SWARM_ENGINE_STUB_MODE`
 - `SWARM_SPRINTS_MAX`
-- `SWARM_PLANNING_LLM_ENABLED`
 
 ## Building and Testing
 
@@ -306,29 +301,15 @@ Features:
 - Rotated logs are backed up with timestamps (e.g., `agent-A.log.20260121-170000.bak`)
 - Session separators for clarity between runs
 
-## LLM-Assisted Planning (Experimental)
+## LLM-Assisted Planning
 
-By default, tasks are assigned algorithmically (round-robin). Enable LLM-assisted planning for smarter assignments:
-
-```bash
-# Via CLI flag
-./target/debug/swarm --team myteam --llm-planning run
-
-# Via config file (swarm.toml)
-[planning]
-llm_enabled = true
-
-# Via environment variable
-SWARM_PLANNING_LLM_ENABLED=true ./target/debug/swarm run
-```
-
-When enabled, the LLM acts as scrum master and:
+Sprint planning uses the LLM as a scrum master to intelligently assign tasks:
 - Groups related tasks to the same agent
 - Respects task dependencies
 - Avoids file conflicts between agents
 - Uses priority order (earlier tasks = higher priority)
 
-If LLM planning fails, it automatically falls back to algorithmic assignment.
+If LLM planning fails, it automatically falls back to algorithmic (round-robin) assignment.
 
 ## Status
 
@@ -348,7 +329,7 @@ See `TASKS.md` for current priorities and remaining verification work.
 - Per-agent lifecycle tracking (assigned -> working -> done -> terminated)
 - One task = one commit rule enforced
 - Per-agent logging with rotation
-- LLM-assisted sprint planning (experimental)
+- LLM-assisted sprint planning
 
 **Also available:**
 - Lima VM bootstrap script (`init.sh`) for a reproducible Docker+Lima environment

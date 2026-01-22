@@ -98,7 +98,6 @@ OPTIONS:
     --stub                  Enable stub mode for testing
     --max-sprints <N>       Maximum sprints to run (0 = unlimited)
     --no-tail               Don't tail chat.md during run
-    --llm-planning          Enable LLM-assisted sprint planning (experimental)
 
 MULTI-TEAM MODE:
     All config and artifacts live in .swarm-hug/:
@@ -934,40 +933,34 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     }
     let agent_count = initials.len();
 
-    // Assign tasks either via LLM or algorithmically
-    let assigned = if config.planning_llm_enabled {
-        // Create engine for LLM planning
-        let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
-        let log_dir = Path::new(&config.files_log_dir);
+    // Assign tasks via LLM planning (with fallback to algorithmic)
+    let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
+    let log_dir = Path::new(&config.files_log_dir);
 
-        // Run LLM-assisted assignment
-        let plan_result = planning::run_llm_assignment(
-            engine.as_ref(),
-            &task_list,
-            &initials,
-            tasks_per_agent,
-            log_dir,
-        );
+    let plan_result = planning::run_llm_assignment(
+        engine.as_ref(),
+        &task_list,
+        &initials,
+        tasks_per_agent,
+        log_dir,
+    );
 
-        if !plan_result.success {
-            eprintln!("LLM planning failed: {}, falling back to algorithmic assignment",
-                     plan_result.error.unwrap_or_default());
-            task_list.assign_sprint(&initials, tasks_per_agent)
-        } else {
-            // Apply LLM assignments (line numbers are 1-indexed in the response)
-            let mut count = 0;
-            for (line_num, initial) in &plan_result.assignments {
-                // Convert line number to task index (0-indexed)
-                let task_idx = line_num.saturating_sub(1);
-                if task_idx < task_list.tasks.len() {
-                    task_list.tasks[task_idx].assign(*initial);
-                    count += 1;
-                }
-            }
-            count
-        }
-    } else {
+    let assigned = if !plan_result.success {
+        eprintln!("LLM planning failed: {}, falling back to algorithmic assignment",
+                 plan_result.error.unwrap_or_default());
         task_list.assign_sprint(&initials, tasks_per_agent)
+    } else {
+        // Apply LLM assignments (line numbers are 1-indexed in the response)
+        let mut count = 0;
+        for (line_num, initial) in &plan_result.assignments {
+            // Convert line number to task index (0-indexed)
+            let task_idx = line_num.saturating_sub(1);
+            if task_idx < task_list.tasks.len() {
+                task_list.tasks[task_idx].assign(*initial);
+                count += 1;
+            }
+        }
+        count
     };
 
     if assigned == 0 {
@@ -1142,6 +1135,23 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
                     &working_dir,
                     sprint_number,
                 );
+
+                // Log engine output for debugging (truncated if very long)
+                let output_preview = if result.output.len() > 500 {
+                    format!("{}... [truncated, {} bytes total]", &result.output[..500], result.output.len())
+                } else {
+                    result.output.clone()
+                };
+                if !output_preview.is_empty() {
+                    if let Err(e) = logger.log(&format!("Engine output:\n{}", output_preview)) {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                }
+                if let Some(ref err) = result.error {
+                    if let Err(e) = logger.log(&format!("Engine error: {} (exit code: {})", err, result.exit_code)) {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                }
 
                 let (success, error) = if result.success {
                     // Transition: Working -> Done (success)

@@ -11,6 +11,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
+use std::thread;
 
 use crate::config::EngineType;
 use crate::prompt;
@@ -130,6 +132,9 @@ impl Engine for StubEngine {
     }
 }
 
+/// Interval for "still waiting" log messages (5 minutes).
+const WAIT_LOG_INTERVAL_SECS: u64 = 300;
+
 /// Claude CLI engine.
 pub struct ClaudeEngine {
     /// Path to claude CLI binary.
@@ -163,27 +168,46 @@ const DEFAULT_AGENT_PROMPT: &str = r#"You are agent {{agent_name}}. Complete the
 
 {{task_description}}
 
-## Git workflow (CRITICAL)
-You are working in a dedicated git worktree on branch `agent/{{agent_name_lower}}`.
+## Your environment
+- You are in a git worktree directory
+- Your current branch: `agent/{{agent_name_lower}}`
+- The main repository is the parent of `.swarm-hug/`
 
-After completing your task:
-1. Stage all your changes: `git add -A`
-2. Commit with your agent name:
-   ```bash
-   git commit -m "{{task_short}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
-   ```
-3. Find the main repo and merge your branch:
-   ```bash
-   MAIN_REPO=$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')
-   git -C "$MAIN_REPO" merge --no-ff agent/{{agent_name_lower}} -m "Merge Agent {{agent_name}}: {{task_short}}"
-   ```
-4. Reset your branch to match master for the next task:
-   ```bash
-   git fetch origin master:master 2>/dev/null || git fetch origin main:main 2>/dev/null
-   git reset --hard master 2>/dev/null || git reset --hard main
-   ```
+## After completing your task - FOLLOW THESE STEPS EXACTLY
 
-All steps are REQUIRED so your work is integrated and you're ready for the next task."#;
+### Step 1: Commit your changes
+```bash
+git add -A
+git commit -m "{{task_short}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
+```
+
+### Step 2: Find the main repository path
+```bash
+MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
+```
+
+### Step 3: Merge your branch into main (run from main repo)
+```bash
+git -C "$MAIN_REPO" merge agent/{{agent_name_lower}} --no-ff -m "Merge agent/{{agent_name_lower}}: {{task_short}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
+```
+
+### Step 4: Reset your branch to match main (prepares you for next task)
+```bash
+git reset --hard HEAD
+git pull "$MAIN_REPO" main --rebase 2>/dev/null || git reset --hard $(git -C "$MAIN_REPO" rev-parse HEAD)
+```
+
+## If Step 3 (merge) has conflicts
+1. Go to the main repo: `cd "$MAIN_REPO"`
+2. Check which files have conflicts: `git status`
+3. Open each conflicted file, understand the context, and resolve the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
+4. Stage resolved files: `git add <file>`
+5. Complete the merge: `git commit -m "Merge agent/{{agent_name_lower}}: {{task_short}} (resolved conflicts)" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"`
+6. Return to your worktree and continue with Step 4
+
+## Important
+- Run ALL steps in order after completing your task
+- Do not skip steps"#;
 
 /// Build the agent prompt with variable substitution.
 fn build_agent_prompt(agent_name: &str, task_description: &str) -> String {
@@ -218,17 +242,48 @@ impl Engine for ClaudeEngine {
     ) -> EngineResult {
         let prompt = build_agent_prompt(agent_name, task_description);
 
-        let result = Command::new(&self.cli_path)
+        let mut child = match Command::new(&self.cli_path)
             .arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg(&prompt)
             .current_dir(working_dir)
             .stdin(Stdio::null())
-            .output();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return EngineResult::failure(format!("failed to spawn claude: {}", e), 1),
+        };
 
-        match result {
-            Ok(output) => output_to_result(output),
-            Err(e) => EngineResult::failure(format!("failed to execute claude: {}", e), 1),
+        let pid = child.id();
+        let start = std::time::Instant::now();
+        let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
+        let mut next_log = log_interval;
+
+        // Wait for completion, logging periodically
+        loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    match child.wait_with_output() {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => return EngineResult::failure(format!("failed to get output: {}", e), 1),
+                    }
+                }
+                Ok(None) => {
+                    // Process still running
+                    let elapsed = start.elapsed();
+                    if elapsed >= next_log {
+                        let mins = elapsed.as_secs() / 60;
+                        eprintln!("[{}] Still executing... ({} min elapsed, pid {})", agent_name, mins, pid);
+                        next_log += log_interval;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    return EngineResult::failure(format!("failed to wait for claude: {}", e), 1);
+                }
+            }
         }
     }
 
@@ -276,7 +331,7 @@ impl Engine for CodexEngine {
         let prompt = build_agent_prompt(agent_name, task_description);
 
         // Codex uses "exec" subcommand with stdin for prompts
-        let result = Command::new(&self.cli_path)
+        let mut child = match Command::new(&self.cli_path)
             .arg("exec")
             .arg("--dangerously-bypass-approvals-and-sandbox")
             .arg("-")  // Read prompt from stdin
@@ -284,22 +339,44 @@ impl Engine for CodexEngine {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn();
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return EngineResult::failure(format!("failed to spawn codex: {}", e), 1),
+        };
 
-        match result {
-            Ok(mut child) => {
-                // Write prompt to stdin
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(prompt.as_bytes());
+        // Write prompt to stdin
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(prompt.as_bytes());
+        }
+
+        let pid = child.id();
+        let start = std::time::Instant::now();
+        let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
+        let mut next_log = log_interval;
+
+        // Wait for completion, logging periodically
+        loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    match child.wait_with_output() {
+                        Ok(output) => return output_to_result(output),
+                        Err(e) => return EngineResult::failure(format!("failed to get output: {}", e), 1),
+                    }
                 }
-                // Wait for completion
-                match child.wait_with_output() {
-                    Ok(output) => output_to_result(output),
-                    Err(e) => EngineResult::failure(format!("codex wait failed: {}", e), 1),
+                Ok(None) => {
+                    let elapsed = start.elapsed();
+                    if elapsed >= next_log {
+                        let mins = elapsed.as_secs() / 60;
+                        eprintln!("[{}] Still executing... ({} min elapsed, pid {})", agent_name, mins, pid);
+                        next_log += log_interval;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    return EngineResult::failure(format!("failed to wait for codex: {}", e), 1);
                 }
             }
-            Err(e) => EngineResult::failure(format!("failed to execute codex: {}", e), 1),
         }
     }
 
