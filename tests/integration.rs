@@ -155,6 +155,24 @@ fn test_swarm_run_stub_integration() {
         branches_stdout.trim().is_empty(),
         "agent branches should be cleaned up after sprint"
     );
+
+    // Sprint completion should be committed (tasks marked complete, assignments released)
+    let mut status_cmd = Command::new("git");
+    status_cmd
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path);
+    let status_output = run_success(&mut status_cmd);
+    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+    // Filter out loop/ directory which contains non-committed logs
+    let uncommitted: Vec<&str> = status_stdout
+        .lines()
+        .filter(|line| !line.contains("/loop/") && !line.contains("loop/"))
+        .collect();
+    assert!(
+        uncommitted.is_empty(),
+        "tasks and assignments should be committed after sprint, found uncommitted: {:?}",
+        uncommitted
+    );
 }
 
 #[test]
