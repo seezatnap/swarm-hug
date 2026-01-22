@@ -395,6 +395,8 @@ pub enum Command {
     Teams,
     /// Initialize a new team (use with team name argument).
     TeamInit,
+    /// Copy embedded prompts to .swarm-hug/prompts for customization.
+    CustomizePrompts,
 }
 
 impl Command {
@@ -414,6 +416,7 @@ impl Command {
             "tail" => Some(Self::Tail),
             "teams" => Some(Self::Teams),
             "team" => Some(Self::TeamInit),
+            "customize-prompts" => Some(Self::CustomizePrompts),
             _ => None,
         }
     }

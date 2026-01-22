@@ -15,6 +15,7 @@ use swarm::engine;
 use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
 use swarm::planning;
+use swarm::prompt;
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments, Team};
 use swarm::worktree::{self, Worktree};
@@ -54,6 +55,7 @@ fn main() {
         Command::Tail => cmd_tail(&config),
         Command::Teams => cmd_teams(&config),
         Command::TeamInit => cmd_team_init(&config, &cli),
+        Command::CustomizePrompts => cmd_customize_prompts(),
     };
 
     if let Err(e) = result {
@@ -83,6 +85,7 @@ COMMANDS:
     cleanup           Remove worktrees and branches
     merge             Merge agent branches to main
     tail              Tail chat.md (stream output)
+    customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
 
 OPTIONS:
     -h, --help              Show this help message
@@ -825,6 +828,34 @@ fn cmd_team_init(_config: &Config, cli: &config::CliArgs) -> Result<(), String> 
     println!("\nTo work on this team, use:");
     println!("  swarm --team {} run", team_name);
     println!("  swarm -t {} status", team_name);
+
+    Ok(())
+}
+
+/// Copy embedded prompts to .swarm-hug/prompts/ for customization.
+fn cmd_customize_prompts() -> Result<(), String> {
+    let target_dir = Path::new(".swarm-hug/prompts");
+
+    if target_dir.exists() {
+        println!("Prompts directory already exists: {}", target_dir.display());
+        println!("To reset to defaults, remove the directory first:");
+        println!("  rm -rf .swarm-hug/prompts");
+        return Ok(());
+    }
+
+    println!("Copying embedded prompts to {}...", target_dir.display());
+    let created = prompt::copy_prompts_to(target_dir)?;
+
+    println!("\nCreated {} prompt file(s):", created.len());
+    for path in &created {
+        println!("  {}", path.display());
+    }
+
+    println!("\nYou can now customize these prompts. They will be used instead of the built-in defaults.");
+    println!("Available variables:");
+    println!("  agent.md:        {{{{agent_name}}}}, {{{{task_description}}}}, {{{{agent_name_lower}}}}, {{{{agent_initial}}}}, {{{{task_short}}}}");
+    println!("  scrum_master.md: {{{{to_assign}}}}, {{{{num_agents}}}}, {{{{tasks_per_agent}}}}, {{{{num_unassigned}}}}, {{{{agent_list}}}}, {{{{task_list}}}}");
+    println!("  review.md:       {{{{git_log}}}}, {{{{tasks_content}}}}");
 
     Ok(())
 }

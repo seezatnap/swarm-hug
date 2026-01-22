@@ -1,21 +1,38 @@
 //! Prompt template loading and rendering.
 //!
-//! Loads prompt templates from the `prompts/` directory and renders them
-//! with variable substitution.
+//! Prompts are embedded in the binary at compile time but can be overridden
+//! by placing custom prompts in `.swarm-hug/prompts/` or setting SWARM_PROMPTS_DIR.
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Default prompts directory relative to the binary.
-const DEFAULT_PROMPTS_DIR: &str = "prompts";
+/// Embedded prompts (compiled into the binary).
+pub mod embedded {
+    pub const AGENT: &str = include_str!("../prompts/agent.md");
+    pub const SCRUM_MASTER: &str = include_str!("../prompts/scrum_master.md");
+    pub const REVIEW: &str = include_str!("../prompts/review.md");
+}
 
-/// Find the prompts directory.
+/// All available prompt names.
+pub const PROMPT_NAMES: &[&str] = &["agent", "scrum_master", "review"];
+
+/// Get the embedded prompt content by name.
+pub fn get_embedded(name: &str) -> Option<&'static str> {
+    match name {
+        "agent" => Some(embedded::AGENT),
+        "scrum_master" => Some(embedded::SCRUM_MASTER),
+        "review" => Some(embedded::REVIEW),
+        _ => None,
+    }
+}
+
+/// Find the prompts directory for custom overrides.
 ///
 /// Looks for the prompts directory in the following order:
 /// 1. SWARM_PROMPTS_DIR environment variable
-/// 2. ./prompts (relative to current directory)
-/// 3. Alongside the executable
+/// 2. .swarm-hug/prompts (for project-specific customization)
+/// 3. ./prompts (relative to current directory)
 fn find_prompts_dir() -> Option<PathBuf> {
     // Check environment variable
     if let Ok(dir) = std::env::var("SWARM_PROMPTS_DIR") {
@@ -25,57 +42,53 @@ fn find_prompts_dir() -> Option<PathBuf> {
         }
     }
 
-    // Check relative to current directory
-    let cwd_prompts = PathBuf::from(DEFAULT_PROMPTS_DIR);
-    if cwd_prompts.is_dir() {
-        return Some(cwd_prompts);
+    // Check .swarm-hug/prompts for project-specific overrides
+    let swarm_prompts = PathBuf::from(".swarm-hug/prompts");
+    if swarm_prompts.is_dir() {
+        return Some(swarm_prompts);
     }
 
-    // Check alongside executable
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let exe_prompts = exe_dir.join(DEFAULT_PROMPTS_DIR);
-            if exe_prompts.is_dir() {
-                return Some(exe_prompts);
-            }
-        }
+    // Check relative to current directory
+    let cwd_prompts = PathBuf::from("prompts");
+    if cwd_prompts.is_dir() {
+        return Some(cwd_prompts);
     }
 
     None
 }
 
-/// Load a prompt template from file.
+/// Load a prompt template, checking for custom overrides first.
 ///
-/// Returns None if the file cannot be read.
+/// Priority:
+/// 1. Custom file in prompts directory (if found)
+/// 2. Embedded prompt (compiled into binary)
+///
+/// Returns None only if the prompt name is unknown.
 pub fn load_prompt(name: &str) -> Option<String> {
-    let prompts_dir = find_prompts_dir()?;
-    let path = prompts_dir.join(format!("{}.md", name));
-    fs::read_to_string(&path).ok()
+    // Try to load from file first (custom override)
+    if let Some(prompts_dir) = find_prompts_dir() {
+        let path = prompts_dir.join(format!("{}.md", name));
+        if let Ok(content) = fs::read_to_string(&path) {
+            return Some(content);
+        }
+    }
+
+    // Fall back to embedded prompt
+    get_embedded(name).map(|s| s.to_string())
 }
 
-/// Load a prompt template from file, returning an error if not found.
+/// Load a prompt template, returning an error if not found.
 ///
-/// # Errors
-/// Returns an error message if the prompt file cannot be found or read.
+/// This should only fail for unknown prompt names since valid prompts
+/// are embedded in the binary.
 pub fn load_prompt_required(name: &str) -> Result<String, String> {
-    match find_prompts_dir() {
-        Some(prompts_dir) => {
-            let path = prompts_dir.join(format!("{}.md", name));
-            fs::read_to_string(&path).map_err(|e| {
-                format!(
-                    "Failed to read required prompt '{}' from {}: {}",
-                    name,
-                    path.display(),
-                    e
-                )
-            })
-        }
-        None => Err(format!(
-            "Prompts directory not found. Create a 'prompts/' directory with {}.md, \
-             or set SWARM_PROMPTS_DIR environment variable.",
-            name
-        )),
-    }
+    load_prompt(name).ok_or_else(|| {
+        format!(
+            "Unknown prompt '{}'. Valid prompts are: {}",
+            name,
+            PROMPT_NAMES.join(", ")
+        )
+    })
 }
 
 /// Render a prompt template with variable substitution.
@@ -90,13 +103,36 @@ pub fn render(template: &str, vars: &HashMap<&str, String>) -> String {
     result
 }
 
-/// Convenience function to load and render a required prompt in one call.
+/// Convenience function to load and render a prompt in one call.
 ///
 /// # Errors
-/// Returns an error if the prompt file cannot be found or read.
+/// Returns an error only if the prompt name is unknown.
 pub fn load_and_render(name: &str, vars: &HashMap<&str, String>) -> Result<String, String> {
     let template = load_prompt_required(name)?;
     Ok(render(&template, vars))
+}
+
+/// Copy all embedded prompts to a target directory for customization.
+///
+/// Creates the directory if it doesn't exist.
+pub fn copy_prompts_to(target_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    fs::create_dir_all(target_dir)
+        .map_err(|e| format!("Failed to create prompts directory: {}", e))?;
+
+    let mut created = Vec::new();
+
+    for &name in PROMPT_NAMES {
+        let content = get_embedded(name)
+            .ok_or_else(|| format!("Missing embedded prompt: {}", name))?;
+
+        let path = target_dir.join(format!("{}.md", name));
+        fs::write(&path, content)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+        created.push(path);
+    }
+
+    Ok(created)
 }
 
 #[cfg(test)]
@@ -132,5 +168,38 @@ mod tests {
 
         let result = render(template, &vars);
         assert_eq!(result, "Hello World and {{other}}!");
+    }
+
+    #[test]
+    fn test_get_embedded_valid() {
+        assert!(get_embedded("agent").is_some());
+        assert!(get_embedded("scrum_master").is_some());
+        assert!(get_embedded("review").is_some());
+    }
+
+    #[test]
+    fn test_get_embedded_invalid() {
+        assert!(get_embedded("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_load_prompt_uses_embedded() {
+        // Even without a prompts directory, embedded prompts work
+        let prompt = load_prompt("agent");
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("{{agent_name}}"));
+    }
+
+    #[test]
+    fn test_load_prompt_required_valid() {
+        let result = load_prompt_required("agent");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_prompt_required_invalid() {
+        let result = load_prompt_required("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown prompt"));
     }
 }
