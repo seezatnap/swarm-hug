@@ -252,12 +252,15 @@ impl Engine for ClaudeEngine {
             Err(e) => return EngineResult::failure(e, 1),
         };
 
+        // Use stdin for prompt to avoid "Argument list too long" (E2BIG) errors
+        // when prompts exceed the OS argument size limit (~256KB on macOS)
         let mut child = match Command::new(&self.cli_path)
             .arg("--dangerously-skip-permissions")
             .arg("--print")
-            .arg(&prompt)
+            .arg("-p")
+            .arg("-")  // Read prompt from stdin
             .current_dir(working_dir)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -265,6 +268,11 @@ impl Engine for ClaudeEngine {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn claude: {}", e), 1),
         };
+
+        // Write prompt to stdin
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(prompt.as_bytes());
+        }
 
         let pid = child.id();
         let start = std::time::Instant::now();

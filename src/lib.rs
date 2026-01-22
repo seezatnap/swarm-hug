@@ -21,6 +21,7 @@ pub mod lifecycle;
 pub mod log;
 pub mod planning;
 pub mod prompt;
+pub mod shutdown;
 pub mod task;
 pub mod team;
 pub mod worktree;

@@ -16,6 +16,7 @@ use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
 use swarm::planning;
 use swarm::prompt;
+use swarm::shutdown;
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments, Team};
 use swarm::worktree::{self, Worktree};
@@ -40,6 +41,13 @@ fn main() {
 
     // Default command is Run if none specified
     let command = cli.command.clone().unwrap_or(Command::Run);
+
+    // Register Ctrl+C handler for commands that run sprints
+    if matches!(command, Command::Run | Command::Sprint) {
+        if let Err(e) = shutdown::register_handler() {
+            eprintln!("warning: {}", e);
+        }
+    }
 
     let result = match command {
         Command::Init => cmd_init(&config),
@@ -264,9 +272,17 @@ fn cmd_run(config: &Config) -> Result<(), String> {
     }
 
     let mut sprint_number = 0;
+    let mut interrupted = false;
 
     loop {
         sprint_number += 1;
+
+        // Check for shutdown request before starting new sprint
+        if shutdown::requested() {
+            println!("Shutdown requested, not starting new sprint.");
+            interrupted = true;
+            break;
+        }
 
         // Check sprint limit
         if config.sprints_max > 0 && sprint_number > config.sprints_max {
@@ -274,8 +290,21 @@ fn cmd_run(config: &Config) -> Result<(), String> {
             break;
         }
 
-        // Run one sprint
-        let tasks_assigned = run_sprint(config, sprint_number)?;
+        // Run one sprint (may return early if shutdown requested)
+        let result = run_sprint(config, sprint_number);
+
+        // Check if we were interrupted during the sprint
+        if shutdown::requested() {
+            println!("Sprint interrupted by shutdown request.");
+            interrupted = true;
+            // Still process the result to ensure cleanup happened
+            if let Err(e) = result {
+                eprintln!("Sprint error during shutdown: {}", e);
+            }
+            break;
+        }
+
+        let tasks_assigned = result?;
 
         if tasks_assigned == 0 {
             println!("No tasks to assign, sprints complete.");
@@ -284,6 +313,10 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
         // Small delay between sprints
         thread::sleep(Duration::from_millis(100));
+    }
+
+    if interrupted {
+        println!("Graceful shutdown complete.");
     }
 
     if let Some(stop) = tail_stop {
@@ -1097,6 +1130,16 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
 
             // Process each task sequentially for this agent
             for description in tasks {
+                // Check for shutdown before starting a new task
+                if shutdown::requested() {
+                    if let Err(e) = logger.log("Shutdown requested, skipping remaining tasks") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                    // Mark remaining tasks as not completed (they stay assigned)
+                    task_results.push((initial, description.clone(), false, Some("Shutdown requested".to_string())));
+                    continue;
+                }
+
                 // Log assignment
                 if let Err(e) = logger.log(&format!("Assigned task: {}", description)) {
                     eprintln!("warning: failed to write log: {}", e);
@@ -1215,11 +1258,23 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
 
     // Wait for all agents to complete and collect results
     let mut results: Vec<(char, String, bool, Option<String>)> = Vec::new();
-    for handle in handles {
+    let shutdown_in_progress = shutdown::requested();
+    let total_agents = handles.len();
+    if shutdown_in_progress {
+        println!("Waiting for {} agent(s) to finish current work...", total_agents);
+    }
+    for (idx, handle) in handles.into_iter().enumerate() {
+        if shutdown_in_progress && idx > 0 {
+            // Provide periodic status during shutdown
+            println!("  {} agent(s) remaining...", total_agents - idx);
+        }
         match handle.join() {
             Ok(agent_results) => results.extend(agent_results),
             Err(_) => eprintln!("warning: agent thread panicked"),
         }
+    }
+    if shutdown_in_progress {
+        println!("All agents finished. Cleaning up sprint...");
     }
 
     // Update task list based on results
@@ -1276,8 +1331,12 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     // Commit sprint completion (updated tasks and released assignments)
     commit_sprint_completion(&config.files_tasks, &formatted_team, historical_sprint)?;
 
-    // Run post-sprint review to identify follow-up tasks
-    run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
+    // Run post-sprint review to identify follow-up tasks (skip if shutting down)
+    if shutdown::requested() {
+        println!("  Skipping post-sprint review due to shutdown.");
+    } else {
+        run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
+    }
 
     Ok(assigned)
 }
@@ -1296,11 +1355,11 @@ fn get_current_commit() -> Option<String> {
     }
 }
 
-/// Get git log between two commits, including diffs.
+/// Get git log between two commits (messages and stats, no diffs).
 fn get_git_log_range(from: &str, to: &str) -> Result<String, String> {
     let range = format!("{}..{}", from, to);
     let output = process::Command::new("git")
-        .args(["log", "--stat", "-p", &range])
+        .args(["log", "--stat", &range])
         .output()
         .map_err(|e| format!("failed to run git log: {}", e))?;
 
