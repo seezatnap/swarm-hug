@@ -31,8 +31,7 @@ COMMANDS:
     worktrees         List active git worktrees
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
-    merge             Merge agent branches to main
-    tail              Tail chat.md (stream output)
+    customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
 
 OPTIONS:
     -h, --help              Show this help message
