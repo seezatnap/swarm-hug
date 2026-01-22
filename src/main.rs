@@ -127,6 +127,7 @@ fn cmd_init(config: &Config) -> Result<(), String> {
     team::init_root()?;
     println!("  Created .swarm-hug/");
     println!("  Created .swarm-hug/assignments.toml");
+    println!("  Created .swarm-hug/.gitignore");
 
     // If a team is specified, initialize that team's directory
     if let Some(ref team_name) = config.team {
@@ -464,11 +465,11 @@ fn commit_task_assignments(tasks_file: &str, sprint_number: usize) -> Result<(),
     Ok(())
 }
 
-/// Commit sprint completion (updated tasks, released assignments, and chat log).
-fn commit_sprint_completion(tasks_file: &str, chat_file: &str, sprint_number: usize) -> Result<(), String> {
+/// Commit sprint completion (updated tasks and released assignments).
+fn commit_sprint_completion(tasks_file: &str, sprint_number: usize) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("Sprint {}: completed", sprint_number);
-    if commit_files(&[tasks_file, assignments_path.as_str(), chat_file], &commit_msg)? {
+    if commit_files(&[tasks_file, assignments_path.as_str()], &commit_msg)? {
         println!("  Committed sprint completion to git.");
     }
     Ok(())
@@ -1216,8 +1217,8 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         Err(e) => eprintln!("  warning: failed to release agent assignments: {}", e),
     }
 
-    // Commit sprint completion (updated tasks, released assignments, and chat log)
-    commit_sprint_completion(&config.files_tasks, &config.files_chat, sprint_number)?;
+    // Commit sprint completion (updated tasks and released assignments)
+    commit_sprint_completion(&config.files_tasks, sprint_number)?;
 
     // Run post-sprint review to identify follow-up tasks
     run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;

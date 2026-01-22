@@ -163,10 +163,16 @@ fn test_swarm_run_stub_integration() {
         .current_dir(repo_path);
     let status_output = run_success(&mut status_cmd);
     let status_stdout = String::from_utf8_lossy(&status_output.stdout);
-    // Filter out loop/ directory which contains non-committed logs
+    // Filter out gitignored files (loop/, worktrees/, chat.md)
     let uncommitted: Vec<&str> = status_stdout
         .lines()
-        .filter(|line| !line.contains("/loop/") && !line.contains("loop/"))
+        .filter(|line| {
+            !line.contains("/loop/")
+                && !line.contains("loop/")
+                && !line.contains("/worktrees/")
+                && !line.contains("worktrees/")
+                && !line.contains("chat.md")
+        })
         .collect();
     assert!(
         uncommitted.is_empty(),
