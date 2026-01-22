@@ -7,6 +7,21 @@ You are agent {{agent_name}}. Complete the following task:
 - Your current branch: `agent/{{agent_name_lower}}`
 - The main repository is the parent of `.swarm-hug/`
 
+## Team context (IMPORTANT - read before starting)
+Your team's context files are located in the main repository at `{{team_dir}}/`:
+
+1. **Read `$MAIN_REPO/{{team_dir}}/prompt.md` first** - Contains the goals and requirements for the current work
+2. **Review `$MAIN_REPO/{{team_dir}}/specs.md`** - Detailed specifications that may help you understand your task
+3. **Check `$MAIN_REPO/{{team_dir}}/tasks.md`** - See what tasks are assigned and in progress
+
+To access these files, first get the main repo path:
+```bash
+MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
+cat "$MAIN_REPO/{{team_dir}}/prompt.md"
+```
+
+Understanding the broader context will help you complete your task correctly.
+
 ## Golden rules
 - Do not assume the stack. Discover it from files and existing automation.
 - Prefer existing scripts and tools already used by the repository.

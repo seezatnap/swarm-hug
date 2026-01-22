@@ -271,6 +271,7 @@ pub fn run_llm_assignment(
         &prompt,
         log_dir,
         0, // turn 0 for planning
+        None, // ScrumMaster doesn't need team context
     );
 
     if !result.success {
@@ -386,6 +387,7 @@ pub fn run_sprint_review(
         &prompt,
         log_dir,
         0, // turn 0 for review
+        None, // ScrumMaster doesn't need team context
     );
 
     if !result.success {

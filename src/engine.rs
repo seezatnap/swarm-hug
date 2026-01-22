@@ -77,12 +77,20 @@ impl EngineResult {
 /// Engine trait for agent execution backends.
 pub trait Engine: Send + Sync {
     /// Execute a prompt for the given agent and task.
+    ///
+    /// # Arguments
+    /// * `agent_name` - Name of the agent (e.g., "Aaron")
+    /// * `task_description` - The task to complete
+    /// * `working_dir` - The agent's working directory (worktree)
+    /// * `turn_number` - Current sprint/turn number
+    /// * `team_dir` - Optional path to team directory (e.g., ".swarm-hug/greenfield")
     fn execute(
         &self,
         agent_name: &str,
         task_description: &str,
         working_dir: &Path,
         turn_number: usize,
+        team_dir: Option<&str>,
     ) -> EngineResult;
 
     /// Get the engine type.
@@ -118,6 +126,7 @@ impl Engine for StubEngine {
         task_description: &str,
         _working_dir: &Path,
         turn_number: usize,
+        _team_dir: Option<&str>,
     ) -> EngineResult {
         // Get agent initial from name
         let initial = crate::agent::initial_from_name(agent_name)
@@ -191,9 +200,18 @@ impl Default for ClaudeEngine {
 /// For non-agent callers (like ScrumMaster), returns None so the caller
 /// can use the raw prompt directly.
 ///
+/// # Arguments
+/// * `agent_name` - Name of the agent
+/// * `task_description` - The task to complete
+/// * `team_dir` - Optional path to team directory for context files
+///
 /// # Errors
 /// Returns an error if the agent prompt file (prompts/agent.md) cannot be found.
-fn build_agent_prompt(agent_name: &str, task_description: &str) -> Result<Option<String>, String> {
+fn build_agent_prompt(
+    agent_name: &str,
+    task_description: &str,
+    team_dir: Option<&str>,
+) -> Result<Option<String>, String> {
     // Only use agent prompt for valid agents (those with A-Z initials)
     let agent_initial = match crate::agent::initial_from_name(agent_name) {
         Some(c) => c.to_string(),
@@ -213,6 +231,7 @@ fn build_agent_prompt(agent_name: &str, task_description: &str) -> Result<Option
     vars.insert("agent_initial", agent_initial);
     vars.insert("task_short", task_short);
     vars.insert("co_author", generate_coauthor_line());
+    vars.insert("team_dir", team_dir.unwrap_or("").to_string());
 
     prompt::load_and_render("agent", &vars).map(Some)
 }
@@ -224,9 +243,10 @@ impl Engine for ClaudeEngine {
         task_description: &str,
         working_dir: &Path,
         _turn_number: usize,
+        team_dir: Option<&str>,
     ) -> EngineResult {
         // For valid agents, wrap in agent prompt; otherwise use raw prompt
-        let prompt = match build_agent_prompt(agent_name, task_description) {
+        let prompt = match build_agent_prompt(agent_name, task_description, team_dir) {
             Ok(Some(p)) => p,
             Ok(None) => task_description.to_string(), // Non-agent (e.g., ScrumMaster)
             Err(e) => return EngineResult::failure(e, 1),
@@ -317,9 +337,10 @@ impl Engine for CodexEngine {
         task_description: &str,
         working_dir: &Path,
         _turn_number: usize,
+        team_dir: Option<&str>,
     ) -> EngineResult {
         // For valid agents, wrap in agent prompt; otherwise use raw prompt
-        let prompt = match build_agent_prompt(agent_name, task_description) {
+        let prompt = match build_agent_prompt(agent_name, task_description, team_dir) {
             Ok(Some(p)) => p,
             Ok(None) => task_description.to_string(), // Non-agent (e.g., ScrumMaster)
             Err(e) => return EngineResult::failure(e, 1),
@@ -437,6 +458,7 @@ mod tests {
             "Write tests",
             tmp_dir.path(),
             1,
+            None,
         );
 
         assert!(result.success);
@@ -459,8 +481,8 @@ mod tests {
         let engine = StubEngine::new(output_dir.to_str().unwrap());
 
         // Execute twice with same parameters
-        let result1 = engine.execute("Aaron", "Task 1", tmp_dir.path(), 1);
-        let result2 = engine.execute("Aaron", "Task 1", tmp_dir.path(), 1);
+        let result1 = engine.execute("Aaron", "Task 1", tmp_dir.path(), 1, None);
+        let result2 = engine.execute("Aaron", "Task 1", tmp_dir.path(), 1, None);
 
         // Output should be identical
         assert_eq!(result1.output, result2.output);
@@ -508,8 +530,8 @@ mod tests {
         let output_dir = tmp_dir.path().join("loop");
         let engine = StubEngine::new(output_dir.to_str().unwrap());
 
-        engine.execute("Aaron", "Task A", tmp_dir.path(), 1);
-        engine.execute("Betty", "Task B", tmp_dir.path(), 1);
+        engine.execute("Aaron", "Task A", tmp_dir.path(), 1, None);
+        engine.execute("Betty", "Task B", tmp_dir.path(), 1, None);
 
         // Both files should exist
         assert!(output_dir.join("turn1-agentA.md").exists());
@@ -522,8 +544,8 @@ mod tests {
         let output_dir = tmp_dir.path().join("loop");
         let engine = StubEngine::new(output_dir.to_str().unwrap());
 
-        engine.execute("Aaron", "Task 1", tmp_dir.path(), 1);
-        engine.execute("Aaron", "Task 2", tmp_dir.path(), 2);
+        engine.execute("Aaron", "Task 1", tmp_dir.path(), 1, None);
+        engine.execute("Aaron", "Task 2", tmp_dir.path(), 2, None);
 
         // Both turn files should exist
         assert!(output_dir.join("turn1-agentA.md").exists());
@@ -533,7 +555,7 @@ mod tests {
     #[test]
     fn test_build_agent_prompt_valid_agent() {
         // Valid agent should return Some(prompt)
-        let result = super::build_agent_prompt("Aaron", "Test task");
+        let result = super::build_agent_prompt("Aaron", "Test task", None);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert!(prompt.is_some());
@@ -545,7 +567,7 @@ mod tests {
     #[test]
     fn test_build_agent_prompt_non_agent() {
         // Non-agent (ScrumMaster) should return None to use raw prompt
-        let result = super::build_agent_prompt("ScrumMaster", "Plan sprint");
+        let result = super::build_agent_prompt("ScrumMaster", "Plan sprint", None);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -553,9 +575,20 @@ mod tests {
     #[test]
     fn test_build_agent_prompt_invalid_name() {
         // Invalid name should return None
-        let result = super::build_agent_prompt("RandomName", "Some task");
+        let result = super::build_agent_prompt("RandomName", "Some task", None);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_build_agent_prompt_with_team_dir() {
+        // Prompt should include team_dir when provided
+        let result = super::build_agent_prompt("Aaron", "Test task", Some(".swarm-hug/greenfield"));
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.is_some());
+        let text = prompt.unwrap();
+        assert!(text.contains(".swarm-hug/greenfield"));
     }
 
     #[test]
@@ -623,7 +656,7 @@ mod tests {
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp_dir.path()).unwrap();
 
-        let result = super::build_agent_prompt("Aaron", "Test task");
+        let result = super::build_agent_prompt("Aaron", "Test task", None);
         assert!(result.is_ok());
         let prompt = result.unwrap().unwrap();
         // Check that the co-author line is in the prompt (in commit messages)

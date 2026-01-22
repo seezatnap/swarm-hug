@@ -1014,6 +1014,11 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     // Execute agents in parallel, each agent processes their tasks sequentially
     let mut handles: Vec<thread::JoinHandle<Vec<(char, String, bool, Option<String>)>>> = Vec::new();
 
+    // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
+    let team_dir: Option<String> = Path::new(&config.files_tasks)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string());
+
     for (initial, tasks) in agent_tasks {
         let working_dir = worktree_map
             .get(&initial)
@@ -1024,6 +1029,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         let chat_path = config.files_chat.clone();
         let log_dir = log_dir_path.clone();
         let engine_type_str = config.effective_engine().as_str().to_string();
+        let team_dir = team_dir.clone();
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
@@ -1071,6 +1077,7 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
                     &description,
                     &working_dir,
                     sprint_number,
+                    team_dir.as_deref(),
                 );
 
                 // Log engine output for debugging (truncated if very long)
