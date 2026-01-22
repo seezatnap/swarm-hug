@@ -939,6 +939,10 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
     // Commit assignment changes to git so worktrees can see them
     commit_task_assignments(&config.files_tasks, sprint_number)?;
 
+    // Capture the commit hash at sprint start (after assignment commit)
+    // This will be used to determine git range for post-sprint review
+    let sprint_start_commit = get_current_commit().unwrap_or_else(|| "HEAD".to_string());
+
     println!("Sprint {}: assigned {} task(s) to {} agent(s)",
              sprint_number, assigned, agent_count);
 
@@ -1202,7 +1206,103 @@ fn run_sprint(config: &Config, sprint_number: usize) -> Result<usize, String> {
         Err(e) => eprintln!("  warning: failed to release agent assignments: {}", e),
     }
 
+    // Run post-sprint review to identify follow-up tasks
+    run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
+
     Ok(assigned)
+}
+
+/// Get the current git commit hash.
+fn get_current_commit() -> Option<String> {
+    let output = process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Get git log between two commits, including diffs.
+fn get_git_log_range(from: &str, to: &str) -> Result<String, String> {
+    let range = format!("{}..{}", from, to);
+    let output = process::Command::new("git")
+        .args(["log", "--stat", "-p", &range])
+        .output()
+        .map_err(|e| format!("failed to run git log: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        // If range is invalid (no commits), return empty string
+        Ok(String::new())
+    }
+}
+
+/// Run post-sprint review to identify follow-up tasks.
+fn run_post_sprint_review(
+    config: &Config,
+    engine: &dyn engine::Engine,
+    sprint_start_commit: &str,
+    task_list: &TaskList,
+) -> Result<(), String> {
+    // Get git log from sprint start to now
+    let git_log = get_git_log_range(sprint_start_commit, "HEAD")?;
+
+    // If no changes, skip review
+    if git_log.trim().is_empty() {
+        println!("  Post-sprint review: skipped (no git changes detected)");
+        return Ok(());
+    }
+
+    // Get current tasks content
+    let tasks_content = task_list.to_string();
+
+    // Run the review
+    let log_dir = Path::new(&config.files_log_dir);
+    match planning::run_sprint_review(engine, &tasks_content, &git_log, log_dir) {
+        Ok(follow_ups) => {
+            if follow_ups.is_empty() {
+                println!("  Post-sprint review: no follow-up tasks needed");
+            } else {
+                println!("  Post-sprint review: {} follow-up task(s) identified", follow_ups.len());
+
+                // Append follow-up tasks to TASKS.md
+                let mut current_content = fs::read_to_string(&config.files_tasks)
+                    .unwrap_or_default();
+
+                // Ensure newline before appending
+                if !current_content.ends_with('\n') {
+                    current_content.push('\n');
+                }
+
+                // Add follow-up tasks
+                current_content.push_str("\n## Follow-up tasks (from sprint review)\n");
+                for task in &follow_ups {
+                    current_content.push_str(task);
+                    current_content.push('\n');
+                    println!("    {}", task);
+                }
+
+                fs::write(&config.files_tasks, current_content)
+                    .map_err(|e| format!("failed to write follow-up tasks: {}", e))?;
+
+                // Write to chat
+                let msg = format!("Sprint review added {} follow-up task(s)", follow_ups.len());
+                if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &msg) {
+                    eprintln!("  warning: failed to write chat: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("  warning: post-sprint review failed: {}", e);
+        }
+    }
+
+    Ok(())
 }
 
 /// Commit an agent's work in their worktree.

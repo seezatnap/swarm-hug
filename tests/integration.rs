@@ -349,5 +349,12 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
         "Should release agents after each sprint. Output: {}",
         stdout
     );
+
+    // Verify post-sprint review was attempted (stub engine makes no git changes, so review is skipped)
+    assert!(
+        stdout.contains("Post-sprint review:"),
+        "Should attempt post-sprint review after each sprint. Output: {}",
+        stdout
+    );
 }
 
