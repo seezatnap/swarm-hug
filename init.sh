@@ -165,7 +165,7 @@ RUN npm install -g @openai/codex
 
 # Install Claude Code via native installer and symlink to /usr/local/bin
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-  && ln -s /root/.claude/local/bin/claude /usr/local/bin/claude
+  && ln -s /root/.local/bin/claude /usr/local/bin/claude
 
 # Install Rust (system-wide via rustup)
 ENV RUSTUP_HOME=/usr/local/rustup
