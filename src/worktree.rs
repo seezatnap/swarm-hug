@@ -84,6 +84,70 @@ fn registered_worktrees(repo_root: &Path) -> Result<HashSet<String>, String> {
     Ok(registered)
 }
 
+/// Parse git worktree list --porcelain output to find worktrees with a specific branch.
+/// This is separated out for testability.
+fn parse_worktrees_with_branch(porcelain_output: &str, branch: &str) -> Vec<String> {
+    let mut worktrees_with_branch = Vec::new();
+    let mut current_path: Option<String> = None;
+
+    // Parse porcelain output format:
+    // worktree /path/to/worktree
+    // HEAD <sha>
+    // branch refs/heads/<branch>
+    // <blank line>
+    for line in porcelain_output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_path = Some(path.trim().to_string());
+        } else if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
+            if branch_ref.trim() == branch {
+                if let Some(ref path) = current_path {
+                    worktrees_with_branch.push(path.clone());
+                }
+            }
+        } else if line.is_empty() {
+            current_path = None;
+        }
+    }
+
+    worktrees_with_branch
+}
+
+/// Find all worktree paths that have a specific branch checked out.
+/// Returns a list of absolute paths to worktrees using that branch.
+fn find_worktrees_with_branch(repo_root: &Path, branch: &str) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_worktrees_with_branch(&stdout, branch))
+}
+
+/// Remove a worktree by its path (used when cleaning up worktrees with a specific branch).
+fn remove_worktree_by_path(repo_root: &Path, worktree_path: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "remove", "--force", worktree_path])
+        .output()
+        .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git worktree remove failed: {}", stderr.trim()))
+    }
+}
+
 fn is_registered_path(registered: &HashSet<String>, path: &Path) -> bool {
     let display = path.to_string_lossy().to_string();
     if registered.contains(&display) {
@@ -158,6 +222,15 @@ pub fn create_worktrees_in(
         if path.exists() {
             fs::remove_dir_all(&path)
                 .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
+        }
+
+        // Before deleting the branch, remove any worktrees that have it checked out
+        // (this handles multi-team scenarios where another team's worktree uses this branch)
+        if let Ok(worktrees_with_branch) = find_worktrees_with_branch(&repo_root, &branch) {
+            for wt_path in worktrees_with_branch {
+                // Don't fail if removal fails - we'll get the error on branch delete or worktree add
+                let _ = remove_worktree_by_path(&repo_root, &wt_path);
+            }
         }
 
         // Delete the branch if it exists (to ensure fresh start from HEAD)
@@ -632,6 +705,15 @@ pub fn cleanup_agent_worktree(
 
     // Optionally delete the branch
     if delete_branch {
+        // Before deleting the branch, remove any worktrees that have it checked out
+        // (this handles multi-team scenarios where another team's worktree uses this branch)
+        let branch = agent_branch_name(initial)
+            .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
+        if let Ok(worktrees_with_branch) = find_worktrees_with_branch(&repo_root, &branch) {
+            for wt_path in worktrees_with_branch {
+                let _ = remove_worktree_by_path(&repo_root, &wt_path);
+            }
+        }
         delete_agent_branch(initial)?;
     }
 
@@ -732,5 +814,86 @@ mod tests {
         let root = Path::new("/tmp/worktrees");
         let path = super::worktree_path(root, 'A', "Aaron");
         assert_eq!(path, Path::new("/tmp/worktrees/agent-A-Aaron"));
+    }
+
+    #[test]
+    fn test_parse_worktrees_with_branch_finds_match() {
+        // Simulated git worktree list --porcelain output
+        let porcelain = "\
+worktree /repo
+HEAD abc123
+branch refs/heads/main
+
+worktree /repo/.swarm-hug/greenfield/worktrees/agent-D-Diana
+HEAD def456
+branch refs/heads/agent/diana
+
+worktree /repo/.swarm-hug/phase-one/worktrees/agent-A-Aaron
+HEAD ghi789
+branch refs/heads/agent/aaron
+
+";
+        let result = super::parse_worktrees_with_branch(porcelain, "agent/diana");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "/repo/.swarm-hug/greenfield/worktrees/agent-D-Diana");
+    }
+
+    #[test]
+    fn test_parse_worktrees_with_branch_no_match() {
+        let porcelain = "\
+worktree /repo
+HEAD abc123
+branch refs/heads/main
+
+worktree /repo/.swarm-hug/team/worktrees/agent-A-Aaron
+HEAD def456
+branch refs/heads/agent/aaron
+
+";
+        let result = super::parse_worktrees_with_branch(porcelain, "agent/diana");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_worktrees_with_branch_multiple_matches() {
+        // Scenario: same branch checked out in multiple worktrees (shouldn't happen but test anyway)
+        let porcelain = "\
+worktree /repo/.swarm-hug/team1/worktrees/agent-D-Diana
+HEAD abc123
+branch refs/heads/agent/diana
+
+worktree /repo/.swarm-hug/team2/worktrees/agent-D-Diana
+HEAD abc123
+branch refs/heads/agent/diana
+
+";
+        let result = super::parse_worktrees_with_branch(porcelain, "agent/diana");
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&"/repo/.swarm-hug/team1/worktrees/agent-D-Diana".to_string()));
+        assert!(result.contains(&"/repo/.swarm-hug/team2/worktrees/agent-D-Diana".to_string()));
+    }
+
+    #[test]
+    fn test_parse_worktrees_with_branch_detached_head() {
+        // Worktrees can be in detached HEAD state (no branch line)
+        let porcelain = "\
+worktree /repo
+HEAD abc123
+branch refs/heads/main
+
+worktree /repo/.swarm-hug/team/worktrees/agent-A-Aaron
+HEAD def456
+detached
+
+";
+        // Should not crash and should return empty for agent/aaron
+        let result = super::parse_worktrees_with_branch(porcelain, "agent/aaron");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_worktrees_with_branch_empty_output() {
+        let result = super::parse_worktrees_with_branch("", "agent/diana");
+        assert!(result.is_empty());
     }
 }
