@@ -568,16 +568,22 @@ fn stub_prd_conversion(prd_content: &str) -> PrdConversionResult {
     let task_count = (word_count / 50).max(3).min(10);
 
     let mut tasks = String::new();
-    tasks.push_str("# Tasks\n\n");
     tasks.push_str("## Implementation\n\n");
 
+    let mut task_num = 1;
     for i in 1..=task_count {
-        tasks.push_str(&format!("- [ ] Implement feature {} from PRD\n", i));
+        tasks.push_str(&format!("- [ ] (#{})", task_num));
+        tasks.push_str(&format!(" Implement feature {} from PRD\n", i));
+        task_num += 1;
     }
 
     tasks.push_str("\n## Testing\n\n");
-    tasks.push_str("- [ ] Write unit tests for new features\n");
-    tasks.push_str("- [ ] Write integration tests\n");
+    // Testing tasks depend on the first implementation task
+    tasks.push_str(&format!("- [ ] (#{})", task_num));
+    tasks.push_str(&format!(" Write unit tests for new features (blocked by #1)\n"));
+    task_num += 1;
+    tasks.push_str(&format!("- [ ] (#{})", task_num));
+    tasks.push_str(&format!(" Write integration tests (blocked by #{})\n", task_num - 1));
 
     // Include first non-empty line from PRD as context in response
     let first_line = lines.iter()
@@ -865,10 +871,11 @@ Summary: Tasks assigned → done!
         let result = stub_prd_conversion(prd);
 
         assert!(result.success);
-        assert!(result.tasks_markdown.contains("# Tasks"));
         assert!(result.tasks_markdown.contains("## Implementation"));
         assert!(result.tasks_markdown.contains("## Testing"));
-        assert!(result.tasks_markdown.contains("- [ ]"));
+        assert!(result.tasks_markdown.contains("- [ ] (#"));
+        // Check that blocking info is present
+        assert!(result.tasks_markdown.contains("(blocked by #"));
     }
 
     #[test]
@@ -877,7 +884,10 @@ Summary: Tasks assigned → done!
         let result = stub_prd_conversion(prd);
 
         assert!(result.success);
-        // Should still generate minimum 3 implementation tasks
+        // Should still generate minimum 3 implementation tasks with numbers
+        assert!(result.tasks_markdown.contains("(#1)"));
+        assert!(result.tasks_markdown.contains("(#2)"));
+        assert!(result.tasks_markdown.contains("(#3)"));
         assert!(result.tasks_markdown.contains("Implement feature 1"));
         assert!(result.tasks_markdown.contains("Implement feature 2"));
         assert!(result.tasks_markdown.contains("Implement feature 3"));

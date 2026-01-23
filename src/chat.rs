@@ -92,6 +92,26 @@ pub fn write_sprint_plan<P: AsRef<Path>>(
     Ok(())
 }
 
+/// Clear a chat file and write a boot message.
+///
+/// This clears the chat.md file and writes the "SWARM HUG BOOTING UP" message.
+pub fn write_boot_message<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    // Truncate the file (clear all contents)
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+
+    // Write the boot banner
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    let banner = format!(
+        "{} | ScrumMaster | AGENT_THINK: 🚀🐝 SWARM HUG BOOTING UP 🐝🚀",
+        timestamp
+    );
+    writeln!(file, "{}", banner)
+}
+
 /// Write a merge status to CHAT.md.
 pub fn write_merge_status<P: AsRef<Path>>(
     path: P,
@@ -253,5 +273,26 @@ mod tests {
 
         let content = std::fs::read_to_string(path).unwrap();
         assert!(content.contains("Merge conflict for Betty"));
+    }
+
+    #[test]
+    fn test_write_boot_message() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        // Write some initial content
+        write_message(path, "Aaron", "Some old message").unwrap();
+
+        // Boot message should clear and write new content
+        write_boot_message(path).unwrap();
+
+        let content = std::fs::read_to_string(path).unwrap();
+        // Should contain the boot banner
+        assert!(content.contains("SWARM HUG BOOTING UP"));
+        assert!(content.contains("ScrumMaster"));
+        // Should NOT contain old content (was cleared)
+        assert!(!content.contains("Some old message"));
+        // Should only have one line
+        assert_eq!(content.lines().count(), 1);
     }
 }

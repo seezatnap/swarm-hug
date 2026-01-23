@@ -259,6 +259,10 @@ fn cmd_run(config: &Config) -> Result<(), String> {
              if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() },
              config.effective_engine().as_str());
 
+    // Clear chat.md and write boot message before the first sprint
+    chat::write_boot_message(&config.files_chat)
+        .map_err(|e| format!("failed to write boot message: {}", e))?;
+
     let mut tail_stop: Option<Arc<AtomicBool>> = None;
     let mut tail_handle: Option<thread::JoinHandle<()>> = None;
 
