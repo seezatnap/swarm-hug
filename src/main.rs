@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use swarm::agent;
 use swarm::chat;
@@ -251,6 +251,9 @@ fn release_assignments_for_team(team_name: &str, initials: &[char]) -> Result<us
 }
 
 /// Run sprints until done or max-sprints reached.
+/// Maximum consecutive sprints where all tasks fail before stopping.
+const MAX_CONSECUTIVE_FAILURES: usize = 3;
+
 fn cmd_run(config: &Config) -> Result<(), String> {
     println!("Running swarm (max_sprints={}, engine={})...",
              if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() },
@@ -274,6 +277,7 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
     let mut sprint_number = 0;
     let mut interrupted = false;
+    let mut consecutive_failures = 0;
 
     loop {
         sprint_number += 1;
@@ -305,11 +309,31 @@ fn cmd_run(config: &Config) -> Result<(), String> {
             break;
         }
 
-        let tasks_assigned = result?;
+        let sprint_result = result?;
 
-        if tasks_assigned == 0 {
+        if sprint_result.tasks_assigned == 0 {
             println!("No tasks to assign, sprints complete.");
             break;
+        }
+
+        // Track consecutive failures (sprints where all tasks failed)
+        if sprint_result.all_failed() {
+            consecutive_failures += 1;
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                println!();
+                println!("⚠️  WARNING: {} consecutive sprints with all tasks failing.", consecutive_failures);
+                println!("   This usually indicates a configuration or authentication issue.");
+                println!("   Please check:");
+                println!("     - CLI authentication (run 'claude' or 'codex login' to authenticate)");
+                println!("     - Engine configuration (--engine flag or swarm.toml)");
+                println!("     - File permissions in worktrees directory");
+                println!();
+                println!("Stopping to prevent further failed sprints.");
+                break;
+            }
+        } else {
+            // Reset consecutive failure count on any successful task
+            consecutive_failures = 0;
         }
 
         // Small delay between sprints
@@ -333,7 +357,13 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 /// Run exactly one sprint.
 fn cmd_sprint(config: &Config) -> Result<(), String> {
     println!("Running single sprint (engine={})...", config.effective_engine().as_str());
-    run_sprint(config, 1)?;
+    let result = run_sprint(config, 1)?;
+    if result.all_failed() {
+        println!();
+        println!("⚠️  WARNING: All {} task(s) failed in this sprint.", result.tasks_failed);
+        println!("   This usually indicates a configuration or authentication issue.");
+        println!("   Please check CLI authentication (run 'claude' or 'codex login').");
+    }
     Ok(())
 }
 
@@ -942,11 +972,108 @@ fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -
     Ok(())
 }
 
+/// Print a banner for starting a sprint.
+fn print_sprint_start_banner(team_name: &str, sprint_number: usize) {
+    println!();
+    println!("=== 🚀 STARTING SPRINT: {} Sprint {} ===", team_name, sprint_number);
+    println!();
+}
+
+/// Print a team status banner after sprint completion.
+fn print_team_status_banner(
+    team_name: &str,
+    sprint_number: usize,
+    completed_this_sprint: usize,
+    failed_this_sprint: usize,
+    remaining_tasks: usize,
+    total_tasks: usize,
+    task_durations: &[Duration],
+    max_sprints: usize,
+) {
+    println!();
+    println!("=== 📊 TEAM STATUS ===");
+    println!();
+    println!("  🏷️  Team: {}", team_name);
+    println!("  🔢 Sprint: {}", sprint_number);
+    println!();
+    println!("  ✅ Completed this sprint: {}", completed_this_sprint);
+    println!("  ❌ Failed this sprint: {}", failed_this_sprint);
+    println!("  📋 Remaining tasks: {}", remaining_tasks);
+    println!("  📦 Total tasks: {}", total_tasks);
+    println!();
+
+    // Calculate timing stats
+    if !task_durations.is_empty() {
+        let total_secs: f64 = task_durations.iter().map(|d| d.as_secs_f64()).sum();
+        let avg_secs = total_secs / task_durations.len() as f64;
+        let avg_duration = Duration::from_secs_f64(avg_secs);
+
+        println!("  ⏱️  Agent Performance:");
+        println!("     Tasks completed: {}", task_durations.len());
+        println!("     Avg task duration: {}", format_duration(avg_duration));
+
+        // Estimate time remaining
+        if remaining_tasks > 0 {
+            // Use min of: remaining tasks OR (max_sprints * tasks_per_sprint) if max_sprints is set
+            let implied_remaining = if max_sprints > 0 {
+                // Rough estimate: assume similar task count per sprint
+                let tasks_this_sprint = completed_this_sprint + failed_this_sprint;
+                let sprints_remaining = max_sprints.saturating_sub(1); // current sprint counts as 1
+                let implied = sprints_remaining * tasks_this_sprint.max(1);
+                remaining_tasks.min(implied.max(remaining_tasks))
+            } else {
+                remaining_tasks
+            };
+
+            let estimated_secs = avg_secs * implied_remaining as f64;
+            let estimated_duration = Duration::from_secs_f64(estimated_secs);
+            println!("     Est. time remaining: {} ({} tasks)", format_duration(estimated_duration), implied_remaining);
+        }
+    }
+    println!();
+    println!("======================");
+    println!();
+}
+
+/// Result of a single sprint execution.
+#[derive(Debug, Clone)]
+struct SprintResult {
+    /// Number of tasks assigned in this sprint.
+    tasks_assigned: usize,
+    /// Number of tasks completed successfully.
+    tasks_completed: usize,
+    /// Number of tasks that failed.
+    tasks_failed: usize,
+}
+
+impl SprintResult {
+    /// Returns true if all assigned tasks failed.
+    fn all_failed(&self) -> bool {
+        self.tasks_assigned > 0 && self.tasks_completed == 0 && self.tasks_failed > 0
+    }
+}
+
+/// Format a duration in human-readable form.
+fn format_duration(d: Duration) -> String {
+    let total_secs = d.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
+}
+
 /// Run a single sprint.
 ///
 /// The `session_sprint_number` is the sprint number within this run session (1, 2, 3...).
 /// The historical sprint number (used in commits) is loaded from sprint-history.json.
-fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, String> {
+fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintResult, String> {
     // Load tasks
     let content = fs::read_to_string(&config.files_tasks)
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
@@ -967,7 +1094,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     // Determine how many agents to spawn
     let assignable = task_list.assignable_count();
     if assignable == 0 {
-        return Ok(0);
+        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
     let team_name = team_name_for_config(config);
@@ -979,7 +1106,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     let initials = assignments_state.available_for_team(&team_name, agent_cap);
     if initials.is_empty() {
         println!("No available agents for team '{}'.", team_name);
-        return Ok(0);
+        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
     let agent_count = initials.len();
 
@@ -1014,13 +1141,16 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     };
 
     if assigned == 0 {
-        return Ok(0);
+        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
     // Increment and save sprint history now that we have tasks assigned
     let historical_sprint = sprint_history.next_sprint();
     let formatted_team = sprint_history.formatted_team_name();
     sprint_history.save()?;
+
+    // Print sprint start banner
+    print_sprint_start_banner(&formatted_team, historical_sprint);
 
     // Write updated tasks
     fs::write(&config.files_tasks, task_list.to_string())
@@ -1140,7 +1270,8 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     }
 
     // Execute agents in parallel, each agent processes their tasks sequentially
-    let mut handles: Vec<thread::JoinHandle<Vec<(char, String, bool, Option<String>)>>> = Vec::new();
+    // Return type includes: (initial, description, success, error, duration)
+    let mut handles: Vec<thread::JoinHandle<Vec<(char, String, bool, Option<String>, Option<Duration>)>>> = Vec::new();
 
     // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
     let team_dir: Option<String> = Path::new(&config.files_tasks)
@@ -1161,7 +1292,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
-            let mut task_results: Vec<(char, String, bool, Option<String>)> = Vec::new();
+            let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> = Vec::new();
 
             // Create agent logger
             let logger = AgentLogger::new(Path::new(&log_dir), initial, agent_name);
@@ -1182,7 +1313,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
                         eprintln!("warning: failed to write log: {}", e);
                     }
                     // Mark remaining tasks as not completed (they stay assigned)
-                    task_results.push((initial, description.clone(), false, Some("Shutdown requested".to_string())));
+                    task_results.push((initial, description.clone(), false, Some("Shutdown requested".to_string()), None));
                     continue;
                 }
 
@@ -1210,6 +1341,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
+                let task_start = Instant::now();
                 let result = engine.execute(
                     agent_name,
                     &description,
@@ -1217,6 +1349,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
                     session_sprint_number,
                     team_dir.as_deref(),
                 );
+                let task_duration = task_start.elapsed();
 
                 // Log engine output for debugging (truncated if very long)
                 let output_preview = if result.output.len() > 500 {
@@ -1293,7 +1426,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                task_results.push((initial, description, success, error));
+                task_results.push((initial, description, success, error, Some(task_duration)));
             }
 
             task_results
@@ -1303,7 +1436,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
     }
 
     // Wait for all agents to complete and collect results
-    let mut results: Vec<(char, String, bool, Option<String>)> = Vec::new();
+    let mut results: Vec<(char, String, bool, Option<String>, Option<Duration>)> = Vec::new();
     let shutdown_in_progress = shutdown::requested();
     let total_agents = handles.len();
     if shutdown_in_progress {
@@ -1323,8 +1456,20 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
         println!("All agents finished. Cleaning up sprint...");
     }
 
+    // Collect task durations for successful tasks
+    let task_durations: Vec<Duration> = results
+        .iter()
+        .filter_map(|(_, _, success, _, duration)| {
+            if *success { duration.as_ref().copied() } else { None }
+        })
+        .collect();
+
+    // Count successes and failures for this sprint
+    let completed_this_sprint = results.iter().filter(|(_, _, s, _, _)| *s).count();
+    let failed_this_sprint = results.iter().filter(|(_, _, s, _, _)| !*s).count();
+
     // Update task list based on results
-    for (initial, description, success, _error) in &results {
+    for (initial, description, success, _error, _duration) in &results {
         if *success {
             for task in &mut task_list.tasks {
                 if let swarm::task::TaskStatus::Assigned(i) = task.status {
@@ -1384,7 +1529,30 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<usize, St
         run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
     }
 
-    Ok(assigned)
+    // Reload task list to get latest counts (post-sprint review may have added tasks)
+    let final_content = fs::read_to_string(&config.files_tasks)
+        .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
+    let final_task_list = TaskList::parse(&final_content);
+    let remaining_tasks = final_task_list.unassigned_count() + final_task_list.assigned_count();
+    let total_tasks = final_task_list.tasks.len();
+
+    // Print team status banner
+    print_team_status_banner(
+        &formatted_team,
+        historical_sprint,
+        completed_this_sprint,
+        failed_this_sprint,
+        remaining_tasks,
+        total_tasks,
+        &task_durations,
+        config.sprints_max,
+    );
+
+    Ok(SprintResult {
+        tasks_assigned: assigned,
+        tasks_completed: completed_this_sprint,
+        tasks_failed: failed_this_sprint,
+    })
 }
 
 /// Get the current git commit hash.
@@ -1546,5 +1714,86 @@ fn commit_agent_work(worktree_path: &Path, agent_name: &str, task_description: &
             }
         }
         Err(e) => Err(format!("git commit failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_duration_seconds_only() {
+        let d = Duration::from_secs(45);
+        assert_eq!(format_duration(d), "45s");
+    }
+
+    #[test]
+    fn test_format_duration_minutes_and_seconds() {
+        let d = Duration::from_secs(125); // 2m 5s
+        assert_eq!(format_duration(d), "2m 5s");
+    }
+
+    #[test]
+    fn test_format_duration_hours_minutes_seconds() {
+        let d = Duration::from_secs(3725); // 1h 2m 5s
+        assert_eq!(format_duration(d), "1h 2m 5s");
+    }
+
+    #[test]
+    fn test_format_duration_zero() {
+        let d = Duration::from_secs(0);
+        assert_eq!(format_duration(d), "0s");
+    }
+
+    #[test]
+    fn test_format_duration_exact_minute() {
+        let d = Duration::from_secs(60);
+        assert_eq!(format_duration(d), "1m 0s");
+    }
+
+    #[test]
+    fn test_format_duration_exact_hour() {
+        let d = Duration::from_secs(3600);
+        assert_eq!(format_duration(d), "1h 0m 0s");
+    }
+
+    #[test]
+    fn test_sprint_result_all_failed_true() {
+        let result = SprintResult {
+            tasks_assigned: 3,
+            tasks_completed: 0,
+            tasks_failed: 3,
+        };
+        assert!(result.all_failed());
+    }
+
+    #[test]
+    fn test_sprint_result_all_failed_false_with_success() {
+        let result = SprintResult {
+            tasks_assigned: 3,
+            tasks_completed: 1,
+            tasks_failed: 2,
+        };
+        assert!(!result.all_failed());
+    }
+
+    #[test]
+    fn test_sprint_result_all_failed_false_no_tasks() {
+        let result = SprintResult {
+            tasks_assigned: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+        };
+        assert!(!result.all_failed());
+    }
+
+    #[test]
+    fn test_sprint_result_all_failed_false_all_success() {
+        let result = SprintResult {
+            tasks_assigned: 2,
+            tasks_completed: 2,
+            tasks_failed: 0,
+        };
+        assert!(!result.all_failed());
     }
 }
