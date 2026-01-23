@@ -87,6 +87,7 @@ COMMANDS:
     agents            List agent names and initials
     teams             List all teams and their assigned agents
     team init <name>  Initialize a new team
+                      Use --with-prd <file> to auto-generate tasks from a PRD
     worktrees         List active git worktrees
     worktrees-branch  List worktree branches
     cleanup           Remove worktrees and branches
@@ -749,7 +750,7 @@ fn cmd_teams(_config: &Config) -> Result<(), String> {
 }
 
 /// Initialize a new team.
-fn cmd_team_init(_config: &Config, cli: &config::CliArgs) -> Result<(), String> {
+fn cmd_team_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
     let team_name = cli.team_arg.as_ref()
         .ok_or("Usage: swarm team init <name>")?;
 
@@ -770,7 +771,52 @@ fn cmd_team_init(_config: &Config, cli: &config::CliArgs) -> Result<(), String> 
     team.init()?;
     println!("Created team: {}", team_name);
     println!("  Directory: {}", team.root.display());
-    println!("  Tasks:     {}", team.tasks_path().display());
+
+    // Handle --with-prd flag
+    if let Some(ref prd_path) = cli.prd_file_arg {
+        println!("\nProcessing PRD file: {}", prd_path);
+
+        // Read the PRD file
+        let prd_content = fs::read_to_string(prd_path)
+            .map_err(|e| format!("Failed to read PRD file '{}': {}", prd_path, e))?;
+
+        // Write the PRD content to specs.md
+        let specs_content = format!(
+            "# Specifications: {}\n\n{}\n",
+            team_name,
+            prd_content
+        );
+        fs::write(team.specs_path(), &specs_content)
+            .map_err(|e| format!("Failed to write specs.md: {}", e))?;
+        println!("  Specs:     {} (from PRD)", team.specs_path().display());
+
+        // Convert PRD to tasks using the engine
+        let log_dir = team.loop_dir();
+        let engine = engine::create_engine(config.effective_engine(), log_dir.to_str().unwrap_or(""));
+
+        println!("  Converting PRD to tasks (engine={})...", config.effective_engine().as_str());
+        let result = planning::convert_prd_to_tasks(engine.as_ref(), &prd_content, &log_dir);
+
+        if result.success {
+            // Write tasks to tasks.md
+            let tasks_content = format!("# Tasks\n\n{}\n", result.tasks_markdown);
+            fs::write(team.tasks_path(), &tasks_content)
+                .map_err(|e| format!("Failed to write tasks.md: {}", e))?;
+
+            // Count tasks generated
+            let task_count = result.tasks_markdown.matches("- [ ]").count();
+            println!("  Tasks:     {} ({} tasks generated)", team.tasks_path().display(), task_count);
+        } else {
+            let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
+            eprintln!("  Warning: PRD conversion failed: {}", error);
+            eprintln!("  Using default tasks.md instead.");
+            println!("  Tasks:     {}", team.tasks_path().display());
+        }
+    } else {
+        println!("  Tasks:     {}", team.tasks_path().display());
+        println!("  Specs:     {}", team.specs_path().display());
+    }
+
     println!("  Chat:      {}", team.chat_path().display());
     println!("  Logs:      {}", team.loop_dir().display());
     println!("  Worktrees: {}", team.worktrees_dir().display());

@@ -366,6 +366,8 @@ pub struct CliArgs {
     pub team_arg: Option<String>,
     /// Email for set-email command (positional arg).
     pub email_arg: Option<String>,
+    /// Path to PRD file for team init --with-prd.
+    pub prd_file_arg: Option<String>,
 }
 
 /// Swarm subcommands.
@@ -477,6 +479,7 @@ where
             "--stub" => cli.stub = true,
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
             "--no-tail" => cli.no_tail = true,
+            "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() => {
                 cli.command = Command::from_str(&arg);
                 // For "team init <name>", capture the next arg as team_arg
@@ -721,5 +724,54 @@ max = 5
         assert_eq!(config.sprints_max, 10);
         assert!(config.engine_stub_mode);
         assert_eq!(config.effective_engine(), EngineType::Stub);
+    }
+
+    #[test]
+    fn test_parse_args_with_prd() {
+        let args = vec![
+            "swarm".to_string(),
+            "team".to_string(),
+            "init".to_string(),
+            "myteam".to_string(),
+            "--with-prd".to_string(),
+            "specs/prd.md".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::TeamInit));
+        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.prd_file_arg, Some("specs/prd.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_with_prd_before_team_name() {
+        // Test that --with-prd can appear before the team name
+        let args = vec![
+            "swarm".to_string(),
+            "--with-prd".to_string(),
+            "prd.md".to_string(),
+            "team".to_string(),
+            "init".to_string(),
+            "myteam".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::TeamInit));
+        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.prd_file_arg, Some("prd.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_with_prd_no_value() {
+        // If --with-prd is at the end with no value, prd_file_arg should be None
+        let args = vec![
+            "swarm".to_string(),
+            "team".to_string(),
+            "init".to_string(),
+            "myteam".to_string(),
+            "--with-prd".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::TeamInit));
+        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.prd_file_arg, None);
     }
 }

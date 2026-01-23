@@ -12,10 +12,11 @@ pub mod embedded {
     pub const AGENT: &str = include_str!("../prompts/agent.md");
     pub const SCRUM_MASTER: &str = include_str!("../prompts/scrum_master.md");
     pub const REVIEW: &str = include_str!("../prompts/review.md");
+    pub const PRD_TO_TASKS: &str = include_str!("../prompts/prd_to_tasks.md");
 }
 
 /// All available prompt names.
-pub const PROMPT_NAMES: &[&str] = &["agent", "scrum_master", "review"];
+pub const PROMPT_NAMES: &[&str] = &["agent", "scrum_master", "review", "prd_to_tasks"];
 
 /// Get the embedded prompt content by name.
 pub fn get_embedded(name: &str) -> Option<&'static str> {
@@ -23,6 +24,7 @@ pub fn get_embedded(name: &str) -> Option<&'static str> {
         "agent" => Some(embedded::AGENT),
         "scrum_master" => Some(embedded::SCRUM_MASTER),
         "review" => Some(embedded::REVIEW),
+        "prd_to_tasks" => Some(embedded::PRD_TO_TASKS),
         _ => None,
     }
 }
@@ -175,6 +177,7 @@ mod tests {
         assert!(get_embedded("agent").is_some());
         assert!(get_embedded("scrum_master").is_some());
         assert!(get_embedded("review").is_some());
+        assert!(get_embedded("prd_to_tasks").is_some());
     }
 
     #[test]
