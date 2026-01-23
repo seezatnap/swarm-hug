@@ -163,9 +163,10 @@ RUN corepack enable pnpm
 # Latest CLIs
 RUN npm install -g @openai/codex
 
-# Install Claude Code via native installer and symlink to /usr/local/bin
+# Install Claude Code via native installer and copy to /usr/local/bin (accessible to all users)
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-  && ln -s /root/.local/bin/claude /usr/local/bin/claude
+  && cp /root/.local/bin/claude /usr/local/bin/claude \
+  && chmod +x /usr/local/bin/claude
 
 # Install Rust (system-wide via rustup)
 ENV RUSTUP_HOME=/usr/local/rustup

@@ -28,6 +28,23 @@ fn read_coauthor_email() -> Option<String> {
         .filter(|s| !s.is_empty() && s.contains('@'))
 }
 
+/// Resolve the full path to a CLI binary using `which`.
+/// Returns None if the binary is not found.
+fn resolve_cli_path(name: &str) -> Option<String> {
+    let output = Command::new("which")
+        .arg(name)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Generate the co-author line for commits if email is configured.
 fn generate_coauthor_line() -> String {
     match read_coauthor_email() {
@@ -174,10 +191,10 @@ pub struct ClaudeEngine {
 
 impl ClaudeEngine {
     /// Create a new Claude engine.
+    /// Resolves the full path to claude using `which` for better portability.
     pub fn new() -> Self {
-        Self {
-            cli_path: "claude".to_string(),
-        }
+        let cli_path = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
+        Self { cli_path }
     }
 
     /// Create with custom CLI path.
@@ -254,16 +271,25 @@ impl Engine for ClaudeEngine {
 
         // Use stdin for prompt to avoid "Argument list too long" (E2BIG) errors
         // when prompts exceed the OS argument size limit (~256KB on macOS)
-        let mut child = match Command::new(&self.cli_path)
-            .arg("--dangerously-skip-permissions")
+        let mut cmd = Command::new(&self.cli_path);
+        cmd.arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg("-p")
             .arg("-")  // Read prompt from stdin
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+
+        // Set CLAUDE_CODE_TASK_LIST_ID to team name when team_dir is provided
+        // team_dir is like ".swarm-hug/greenfield", extract just "greenfield"
+        if let Some(dir) = team_dir {
+            if let Some(team_name) = Path::new(dir).file_name().and_then(|n| n.to_str()) {
+                cmd.env("CLAUDE_CODE_TASK_LIST_ID", team_name);
+            }
+        }
+
+        let mut child = match cmd.spawn()
         {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn claude: {}", e), 1),
@@ -318,10 +344,10 @@ pub struct CodexEngine {
 
 impl CodexEngine {
     /// Create a new Codex engine.
+    /// Resolves the full path to codex using `which` for better portability.
     pub fn new() -> Self {
-        Self {
-            cli_path: "codex".to_string(),
-        }
+        let cli_path = resolve_cli_path("codex").unwrap_or_else(|| "codex".to_string());
+        Self { cli_path }
     }
 
     /// Create with custom CLI path.
