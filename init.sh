@@ -161,7 +161,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN corepack enable pnpm
 
 # Latest CLIs
-RUN npm install -g @openai/codex @anthropic-ai/claude-code
+RUN npm install -g @openai/codex
+
+# Install Claude Code via native installer
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Install Rust (system-wide via rustup)
 ENV RUSTUP_HOME=/usr/local/rustup
