@@ -330,6 +330,10 @@ echo "  codex login"
 echo "  claude"
 echo ""
 
+# Build swarm binary
+echo "[+] Building swarm..."
+docker --context "$CTX" exec "$CONTAINER_NAME" bash -lc "cd /opt/swarm-hug && cargo build"
+
 if [[ "$DO_AUTH" == "1" ]]; then
   echo "[+] Dropping you into the container now for auth (exit when done)..."
   docker --context "$CTX" exec -it "$CONTAINER_NAME" bash -l
