@@ -163,8 +163,9 @@ RUN corepack enable pnpm
 # Latest CLIs
 RUN npm install -g @openai/codex
 
-# Install Claude Code via native installer
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Install Claude Code via native installer and symlink to /usr/local/bin
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+  && ln -s /root/.claude/local/bin/claude /usr/local/bin/claude
 
 # Install Rust (system-wide via rustup)
 ENV RUSTUP_HOME=/usr/local/rustup
@@ -323,12 +324,6 @@ echo ""
 echo "Host dev-server access from inside the container/VM:"
 echo "  Use: http://host.lima.internal:<port>"
 echo "  Ports you said you care about: ${HOST_PORTS}"
-echo ""
-echo "VM access:"
-echo "  limactl shell \"$VM_NAME\""
-if [[ -n "${SSHCONF}" ]]; then
-  echo "  ssh -F \"${SSHCONF}\" \"${LIMA_HOST}\""
-fi
 echo ""
 echo "One-time authentication (run inside the container):"
 echo "  codex login"
