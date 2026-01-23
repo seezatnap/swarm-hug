@@ -989,6 +989,7 @@ fn print_team_status_banner(
     total_tasks: usize,
     task_durations: &[Duration],
     max_sprints: usize,
+    agent_count: usize,
 ) {
     println!();
     println!("=== 📊 TEAM STATUS ===");
@@ -1012,8 +1013,8 @@ fn print_team_status_banner(
         println!("     Tasks completed: {}", task_durations.len());
         println!("     Avg task duration: {}", format_duration(avg_duration));
 
-        // Estimate time remaining
-        if remaining_tasks > 0 {
+        // Estimate time remaining (accounting for parallel agents)
+        if remaining_tasks > 0 && agent_count > 0 {
             // Use min of: remaining tasks OR (max_sprints * tasks_per_sprint) if max_sprints is set
             let implied_remaining = if max_sprints > 0 {
                 // Rough estimate: assume similar task count per sprint
@@ -1025,9 +1026,10 @@ fn print_team_status_banner(
                 remaining_tasks
             };
 
-            let estimated_secs = avg_secs * implied_remaining as f64;
+            // Divide by agent count since agents work in parallel
+            let estimated_secs = (avg_secs * implied_remaining as f64) / agent_count as f64;
             let estimated_duration = Duration::from_secs_f64(estimated_secs);
-            println!("     Est. time remaining: {} ({} tasks)", format_duration(estimated_duration), implied_remaining);
+            println!("     Est. time remaining: {} ({} tasks, {} agents)", format_duration(estimated_duration), implied_remaining, agent_count);
         }
     }
     println!();
@@ -1526,7 +1528,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     if shutdown::requested() {
         println!("  Skipping post-sprint review due to shutdown.");
     } else {
-        run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list)?;
+        run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list, &formatted_team, historical_sprint)?;
     }
 
     // Reload task list to get latest counts (post-sprint review may have added tasks)
@@ -1546,6 +1548,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
         total_tasks,
         &task_durations,
         config.sprints_max,
+        agent_count,
     );
 
     Ok(SprintResult {
@@ -1591,6 +1594,8 @@ fn run_post_sprint_review(
     engine: &dyn engine::Engine,
     sprint_start_commit: &str,
     task_list: &TaskList,
+    team_name: &str,
+    sprint_number: usize,
 ) -> Result<(), String> {
     // Get git log from sprint start to now
     let git_log = get_git_log_range(sprint_start_commit, "HEAD")?;
@@ -1637,6 +1642,12 @@ fn run_post_sprint_review(
                 let msg = format!("Sprint review added {} follow-up task(s)", follow_ups.len());
                 if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &msg) {
                     eprintln!("  warning: failed to write chat: {}", e);
+                }
+
+                // Commit follow-up tasks so next planning phase sees them
+                let commit_msg = format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
+                if let Ok(true) = commit_files(&[&config.files_tasks, &config.files_chat], &commit_msg) {
+                    println!("  Committed follow-up tasks to git.");
                 }
             }
         }
