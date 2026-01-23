@@ -142,20 +142,39 @@ pub fn parse_llm_assignments(response: &str) -> Vec<(usize, char)> {
     let mut assignments = Vec::new();
     let mut search_from = 0;
 
-    while let Some(agent_pos) = single_line[search_from..].find(r#""agent":"#) {
+    while search_from < single_line.len() {
+        // Ensure search_from is on a character boundary
+        search_from = ceil_char_boundary(&single_line, search_from);
+        if search_from >= single_line.len() {
+            break;
+        }
+
+        let search_slice = &single_line[search_from..];
+        let Some(agent_pos) = search_slice.find(r#""agent":"#) else {
+            break;
+        };
+
         let abs_pos = search_from + agent_pos;
-        let after_agent = &single_line[abs_pos + 9..]; // skip "agent":"
+        let after_key_pos = abs_pos + r#""agent":"#.len();
+        let after_key_pos = ceil_char_boundary(&single_line, after_key_pos);
+
+        if after_key_pos >= single_line.len() {
+            break;
+        }
+
+        let after_agent = &single_line[after_key_pos..];
 
         // Get the agent letter
         if let Some(agent_char) = after_agent.chars().next() {
             if agent_char.is_ascii_uppercase() {
-                // Look for "line": in the surrounding context (within 100 chars)
-                let context_start = abs_pos.saturating_sub(50);
-                let context_end = (abs_pos + 100).min(single_line.len());
+                // Look for "line": in the surrounding context (within 100 bytes)
+                let context_start = floor_char_boundary(&single_line, abs_pos.saturating_sub(50));
+                let context_end = ceil_char_boundary(&single_line, (abs_pos + 100).min(single_line.len()));
                 let context = &single_line[context_start..context_end];
 
                 if let Some(line_pos) = context.find(r#""line":"#) {
-                    let line_value_start = context_start + line_pos + 8;
+                    let line_value_start = context_start + line_pos + r#""line":"#.len();
+                    let line_value_start = ceil_char_boundary(&single_line, line_value_start);
                     if line_value_start < single_line.len() {
                         if let Some(line_num) = parse_number_at(&single_line[line_value_start..]) {
                             assignments.push((line_num, agent_char));
@@ -165,31 +184,53 @@ pub fn parse_llm_assignments(response: &str) -> Vec<(usize, char)> {
             }
         }
 
-        search_from = abs_pos + 10;
-        if search_from >= single_line.len() {
-            break;
-        }
+        // Move past this match
+        search_from = ceil_char_boundary(&single_line, abs_pos + 1);
     }
 
     assignments
 }
 
-/// Find the position of the matching closing brace.
+/// Find the byte position of the matching closing brace.
 fn find_matching_brace(s: &str) -> Option<usize> {
     let mut depth = 0;
-    for (i, c) in s.chars().enumerate() {
+    for (byte_pos, c) in s.char_indices() {
         match c {
             '{' => depth += 1,
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(i);
+                    return Some(byte_pos);
                 }
             }
             _ => {}
         }
     }
     None
+}
+
+/// Find the nearest valid character boundary at or before the given byte index.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Find the nearest valid character boundary at or after the given byte index.
+fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 /// Parse a number from the start of a string.
@@ -536,5 +577,89 @@ mod tests {
         assert_eq!(parse_number_at("42"), Some(42));
         assert_eq!(parse_number_at("abc"), None);
         assert_eq!(parse_number_at(""), None);
+    }
+
+    #[test]
+    fn test_find_matching_brace_with_utf8() {
+        // Multi-byte characters: '→' is 3 bytes (E2 86 92), '日' etc are 3 bytes each
+        // {→} = { (0) → (1-3) } (4) = closing brace at byte 4
+        assert_eq!(find_matching_brace("{→}"), Some(4));
+        // {日本語} = { (0) 日 (1-3) 本 (4-6) 語 (7-9) } (10) = closing brace at byte 10
+        assert_eq!(find_matching_brace("{日本語}"), Some(10));
+        // {a→b} = { (0) a (1) → (2-4) b (5) } (6) = closing brace at byte 6
+        assert_eq!(find_matching_brace("{a→b}"), Some(6));
+    }
+
+    #[test]
+    fn test_floor_char_boundary() {
+        let s = "a→b"; // bytes: a(1) →(3) b(1) = 5 bytes total
+        assert_eq!(floor_char_boundary(s, 0), 0); // 'a' boundary
+        assert_eq!(floor_char_boundary(s, 1), 1); // '→' boundary
+        assert_eq!(floor_char_boundary(s, 2), 1); // inside '→', floor to 1
+        assert_eq!(floor_char_boundary(s, 3), 1); // inside '→', floor to 1
+        assert_eq!(floor_char_boundary(s, 4), 4); // 'b' boundary
+        assert_eq!(floor_char_boundary(s, 5), 5); // end
+        assert_eq!(floor_char_boundary(s, 100), 5); // past end
+    }
+
+    #[test]
+    fn test_ceil_char_boundary() {
+        let s = "a→b"; // bytes: a(1) →(3) b(1) = 5 bytes total
+        assert_eq!(ceil_char_boundary(s, 0), 0); // 'a' boundary
+        assert_eq!(ceil_char_boundary(s, 1), 1); // '→' boundary
+        assert_eq!(ceil_char_boundary(s, 2), 4); // inside '→', ceil to 4 ('b')
+        assert_eq!(ceil_char_boundary(s, 3), 4); // inside '→', ceil to 4
+        assert_eq!(ceil_char_boundary(s, 4), 4); // 'b' boundary
+        assert_eq!(ceil_char_boundary(s, 5), 5); // end
+        assert_eq!(ceil_char_boundary(s, 100), 5); // past end
+    }
+
+    #[test]
+    fn test_parse_llm_assignments_with_utf8_content() {
+        // Simulate the actual failing case: LLM response with arrows and other UTF-8
+        let response = r#"
+Based on my analysis → here are the assignments:
+
+{"assignments": [
+    {"line": 5, "agent": "A"},
+    {"line": 10, "agent": "B"}
+]}
+
+Summary: Tasks assigned → done!
+"#;
+        let assignments = parse_llm_assignments(response);
+        assert_eq!(assignments.len(), 2);
+        assert!(assignments.contains(&(5, 'A')));
+        assert!(assignments.contains(&(10, 'B')));
+    }
+
+    #[test]
+    fn test_parse_llm_assignments_with_unicode_heavy_response() {
+        // Response with lots of multi-byte characters that could cause slicing issues
+        let response = r#"
+分析完了 → 結果：
+{"assignments":[{"line":1,"agent":"A"},{"line":2,"agent":"B"}]}
+タスク完了！🎉
+"#;
+        let assignments = parse_llm_assignments(response);
+        assert_eq!(assignments.len(), 2);
+        assert!(assignments.contains(&(1, 'A')));
+        assert!(assignments.contains(&(2, 'B')));
+    }
+
+    #[test]
+    fn test_parse_llm_assignments_utf8_no_panic() {
+        // Ensure no panic with various UTF-8 edge cases
+        let responses = [
+            "→→→ no assignments here →→→",
+            r#"{"agent":"A"} → missing line"#,
+            "日本語だけ",
+            "",
+            "🎉🎉🎉",
+        ];
+        for response in responses {
+            // Should not panic, may return empty
+            let _ = parse_llm_assignments(response);
+        }
     }
 }
