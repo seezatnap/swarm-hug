@@ -43,14 +43,42 @@ impl Task {
         }
     }
 
-    /// Check if this task is blocked.
+    /// Check if this task has blocking references.
     ///
-    /// Blocked detection recognizes: `BLOCKED`, `blocked`, `Blocked by:`.
-    pub fn is_blocked(&self) -> bool {
+    /// Returns true if the task has `(blocked by #N)` in its description.
+    /// Use `TaskList::is_task_blocked()` to check if blockers are actually incomplete.
+    pub fn has_blockers(&self) -> bool {
+        !self.blocking_task_numbers().is_empty()
+    }
+
+    /// Extract blocking task numbers from the description.
+    ///
+    /// Parses patterns like `(blocked by #1)` or `(blocked by #1, #2, #3)`.
+    /// Returns a vector of task numbers that this task depends on.
+    pub fn blocking_task_numbers(&self) -> Vec<usize> {
         let desc = &self.description;
-        desc.contains("BLOCKED")
-            || desc.contains("blocked")
-            || desc.contains("Blocked by:")
+
+        // Look for "(blocked by #N)" or "(blocked by #N, #M, ...)" pattern
+        if let Some(start) = desc.find("(blocked by ") {
+            let after_prefix = &desc[start + 12..]; // skip "(blocked by "
+            if let Some(end) = after_prefix.find(')') {
+                let refs = &after_prefix[..end];
+                // Parse comma-separated #N references
+                return refs
+                    .split(',')
+                    .filter_map(|part| {
+                        let trimmed = part.trim();
+                        if trimmed.starts_with('#') {
+                            trimmed[1..].parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        Vec::new()
     }
 
     /// Assign this task to an agent.
@@ -73,9 +101,12 @@ impl Task {
         self.status = TaskStatus::Completed(initial.to_ascii_uppercase());
     }
 
-    /// Check if this task is assignable (unassigned and not blocked).
+    /// Check if this task is assignable based on status alone.
+    ///
+    /// Note: For full blocking checks, use `TaskList::is_task_assignable()` which
+    /// checks both status and whether blocking dependencies are complete.
     pub fn is_assignable(&self) -> bool {
-        matches!(self.status, TaskStatus::Unassigned) && !self.is_blocked()
+        matches!(self.status, TaskStatus::Unassigned)
     }
 
     /// Format this task as a TASKS.md line.
@@ -194,7 +225,64 @@ impl TaskList {
 
     /// Get count of assignable tasks (unassigned and not blocked).
     pub fn assignable_count(&self) -> usize {
-        self.tasks.iter().filter(|t| t.is_assignable()).count()
+        (0..self.tasks.len())
+            .filter(|&i| self.is_task_assignable(i))
+            .count()
+    }
+
+    /// Check if a task at the given index is blocked.
+    ///
+    /// A task is blocked if it has `(blocked by #N)` references where any
+    /// referenced task is not yet completed.
+    pub fn is_task_blocked(&self, task_index: usize) -> bool {
+        let task = match self.tasks.get(task_index) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // Get blocking task numbers from "(blocked by #N)" references
+        let blocking_numbers = task.blocking_task_numbers();
+        if blocking_numbers.is_empty() {
+            return false;
+        }
+
+        // Check if any blocking task is NOT completed
+        for blocking_num in blocking_numbers {
+            // Task numbers in "(blocked by #N)" are 1-indexed from the PRD format
+            // We need to find the task with that number in its description
+            let blocker_completed = self.is_task_number_completed(blocking_num);
+            if !blocker_completed {
+                return true; // Still blocked by an incomplete task
+            }
+        }
+
+        false // All blockers are completed
+    }
+
+    /// Check if a task with the given number (from #N format) is completed.
+    ///
+    /// Looks for tasks with `(#N)` in their description.
+    fn is_task_number_completed(&self, task_num: usize) -> bool {
+        let pattern = format!("(#{})", task_num);
+        for task in &self.tasks {
+            if task.description.contains(&pattern) {
+                return matches!(task.status, TaskStatus::Completed(_));
+            }
+        }
+        // If we can't find the task, assume it's not completed (conservative)
+        false
+    }
+
+    /// Check if a task at the given index is assignable.
+    ///
+    /// A task is assignable if it's unassigned and not blocked.
+    pub fn is_task_assignable(&self, task_index: usize) -> bool {
+        let task = match self.tasks.get(task_index) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        matches!(task.status, TaskStatus::Unassigned) && !self.is_task_blocked(task_index)
     }
 
     /// Get tasks assigned to a specific agent.
@@ -212,8 +300,8 @@ impl TaskList {
         let mut assigned = 0;
         let mut agent_task_count: std::collections::HashMap<char, usize> = std::collections::HashMap::new();
 
-        for task in &mut self.tasks {
-            if !task.is_assignable() {
+        for task_idx in 0..self.tasks.len() {
+            if !self.is_task_assignable(task_idx) {
                 continue;
             }
 
@@ -221,7 +309,7 @@ impl TaskList {
             for &initial in agent_initials {
                 let count = agent_task_count.entry(initial).or_insert(0);
                 if *count < tasks_per_agent {
-                    task.assign(initial);
+                    self.tasks[task_idx].assign(initial);
                     *count += 1;
                     assigned += 1;
                     break;
@@ -344,18 +432,43 @@ mod tests {
     }
 
     #[test]
-    fn test_task_is_blocked() {
-        let mut task = Task::new("Fix the BLOCKED feature");
-        assert!(task.is_blocked());
+    fn test_task_has_blockers() {
+        let task = Task::new("(#2) Task (blocked by #1)");
+        assert!(task.has_blockers());
 
-        task.description = "This is blocked by something".to_string();
-        assert!(task.is_blocked());
+        let task2 = Task::new("(#1) Normal task");
+        assert!(!task2.has_blockers());
 
-        task.description = "Blocked by: issue #123".to_string();
-        assert!(task.is_blocked());
+        let task3 = Task::new("(#3) Complex (blocked by #1, #2)");
+        assert!(task3.has_blockers());
+    }
 
-        task.description = "Normal task".to_string();
-        assert!(!task.is_blocked());
+    #[test]
+    fn test_blocking_task_numbers_single() {
+        let task = Task::new("(#2) My task (blocked by #1)");
+        let blockers = task.blocking_task_numbers();
+        assert_eq!(blockers, vec![1]);
+    }
+
+    #[test]
+    fn test_blocking_task_numbers_multiple() {
+        let task = Task::new("(#5) Complex task (blocked by #1, #2, #3)");
+        let blockers = task.blocking_task_numbers();
+        assert_eq!(blockers, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_blocking_task_numbers_none() {
+        let task = Task::new("(#1) Simple task with no blockers");
+        let blockers = task.blocking_task_numbers();
+        assert!(blockers.is_empty());
+    }
+
+    #[test]
+    fn test_blocking_task_numbers_with_spaces() {
+        let task = Task::new("(#4) Task (blocked by #1, #2)");
+        let blockers = task.blocking_task_numbers();
+        assert_eq!(blockers, vec![1, 2]);
     }
 
     #[test]
@@ -412,9 +525,10 @@ mod tests {
 
     #[test]
     fn test_tasklist_assignable_count() {
-        let content = "- [ ] Task 1\n- [ ] Task 2 BLOCKED\n- [A] Task 3\n";
+        let content = "- [ ] (#1) Task 1\n- [ ] (#2) Task 2 (blocked by #1)\n- [A] (#3) Task 3\n";
         let list = TaskList::parse(content);
 
+        // Only #1 is assignable: #2 is blocked, #3 is already assigned
         assert_eq!(list.assignable_count(), 1);
     }
 
@@ -447,15 +561,104 @@ mod tests {
 
     #[test]
     fn test_tasklist_assign_sprint_skips_blocked() {
-        let content = "- [ ] Task 1 BLOCKED\n- [ ] Task 2\n- [ ] Task 3\n";
+        // Task 1 is blocked by incomplete task 3
+        let content = "- [ ] (#1) Task 1 (blocked by #3)\n- [ ] (#2) Task 2\n- [ ] (#3) Task 3\n";
         let mut list = TaskList::parse(content);
 
         let assigned = list.assign_sprint(&['A'], 2);
         assert_eq!(assigned, 2);
 
-        assert_eq!(list.tasks[0].status, TaskStatus::Unassigned); // still blocked
+        assert_eq!(list.tasks[0].status, TaskStatus::Unassigned); // still blocked by #3
         assert_eq!(list.tasks[1].status, TaskStatus::Assigned('A'));
         assert_eq!(list.tasks[2].status, TaskStatus::Assigned('A'));
+    }
+
+    #[test]
+    fn test_tasklist_is_task_blocked_dynamic() {
+        // Task #2 is blocked by #1, which is not completed
+        let content = "- [ ] (#1) First task\n- [ ] (#2) Second task (blocked by #1)\n";
+        let list = TaskList::parse(content);
+
+        assert!(!list.is_task_blocked(0)); // #1 is not blocked
+        assert!(list.is_task_blocked(1));  // #2 is blocked by incomplete #1
+    }
+
+    #[test]
+    fn test_tasklist_is_task_blocked_dynamic_completed() {
+        // Task #2 is blocked by #1, which IS completed
+        let content = "- [x] (#1) First task (A)\n- [ ] (#2) Second task (blocked by #1)\n";
+        let list = TaskList::parse(content);
+
+        assert!(!list.is_task_blocked(0)); // #1 is completed, not blocked
+        assert!(!list.is_task_blocked(1)); // #2 is now unblocked because #1 is done
+    }
+
+    #[test]
+    fn test_tasklist_is_task_blocked_multiple_blockers() {
+        // Task #3 is blocked by #1 and #2
+        let content = "- [x] (#1) First task (A)\n- [ ] (#2) Second task\n- [ ] (#3) Third task (blocked by #1, #2)\n";
+        let list = TaskList::parse(content);
+
+        assert!(list.is_task_blocked(2)); // #3 is blocked because #2 is not complete
+
+        // Now with both completed
+        let content2 = "- [x] (#1) First task (A)\n- [x] (#2) Second task (B)\n- [ ] (#3) Third task (blocked by #1, #2)\n";
+        let list2 = TaskList::parse(content2);
+
+        assert!(!list2.is_task_blocked(2)); // #3 is unblocked because both #1 and #2 are done
+    }
+
+    #[test]
+    fn test_tasklist_is_task_assignable_with_blockers() {
+        let content = "- [x] (#1) First task (A)\n- [ ] (#2) Second task (blocked by #1)\n";
+        let list = TaskList::parse(content);
+
+        assert!(!list.is_task_assignable(0)); // #1 is completed, not assignable
+        assert!(list.is_task_assignable(1));  // #2 is unblocked and unassigned, so assignable
+    }
+
+    #[test]
+    fn test_tasklist_assignable_count_with_dynamic_blocking() {
+        // #1 incomplete, #2 blocked by #1
+        let content = "- [ ] (#1) First task\n- [ ] (#2) Second task (blocked by #1)\n";
+        let list = TaskList::parse(content);
+
+        assert_eq!(list.assignable_count(), 1); // Only #1 is assignable
+
+        // #1 complete, #2 now unblocked
+        let content2 = "- [x] (#1) First task (A)\n- [ ] (#2) Second task (blocked by #1)\n";
+        let list2 = TaskList::parse(content2);
+
+        assert_eq!(list2.assignable_count(), 1); // Only #2 is assignable now (#1 is done)
+    }
+
+    #[test]
+    fn test_tasklist_assign_sprint_respects_dynamic_blocking() {
+        // Initially #2 is blocked by incomplete #1
+        let content = "- [ ] (#1) First task\n- [ ] (#2) Second task (blocked by #1)\n";
+        let mut list = TaskList::parse(content);
+
+        let assigned = list.assign_sprint(&['A'], 2);
+        assert_eq!(assigned, 1); // Only #1 can be assigned
+
+        assert_eq!(list.tasks[0].status, TaskStatus::Assigned('A'));
+        assert_eq!(list.tasks[1].status, TaskStatus::Unassigned); // Still blocked
+    }
+
+    #[test]
+    fn test_real_world_blocked_task_scenario() {
+        // This is the exact scenario from the user's bug report
+        let content = r#"## Frontend - Location Array Input
+
+- [x] (#8) Create reusable array input component with add/remove buttons for individual items (C)
+- [ ] (#9) Replace location text input with array input component in job form/edit (blocked by #8)
+"#;
+        let list = TaskList::parse(content);
+
+        // #8 is completed, so #9 should be unblocked and assignable
+        assert!(!list.is_task_blocked(1)); // #9 is NOT blocked anymore
+        assert!(list.is_task_assignable(1)); // #9 should be assignable
+        assert_eq!(list.assignable_count(), 1); // Only #9 is assignable
     }
 
     #[test]

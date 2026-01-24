@@ -100,7 +100,7 @@ pub fn generate_scrum_master_prompt(
         .iter()
         .enumerate()
         .filter_map(|(idx, t)| {
-            if matches!(t.status, crate::task::TaskStatus::Unassigned) && !t.is_blocked() {
+            if task_list.is_task_assignable(idx) {
                 Some((idx + 1, t.description.as_str())) // 1-indexed line numbers
             } else {
                 None
@@ -377,8 +377,8 @@ fn stub_assignment(
         .tasks
         .iter()
         .enumerate()
-        .filter_map(|(idx, t)| {
-            if matches!(t.status, crate::task::TaskStatus::Unassigned) && !t.is_blocked() {
+        .filter_map(|(idx, _t)| {
+            if task_list.is_task_assignable(idx) {
                 Some(idx + 1) // 1-indexed
             } else {
                 None
@@ -629,7 +629,8 @@ mod tests {
 
     #[test]
     fn test_generate_scrum_master_prompt_skips_blocked() {
-        let content = "# Tasks\n- [ ] Task one\n- [ ] BLOCKED: Task two\n- [ ] Task three\n";
+        // Task #2 is blocked by incomplete #1
+        let content = "# Tasks\n- [ ] (#1) Task one\n- [ ] (#2) Task two (blocked by #1)\n- [ ] (#3) Task three\n";
         let task_list = TaskList::parse(content);
         let result = generate_scrum_master_prompt(&task_list, &['A'], 2);
         // If prompts dir not found, this will be an error - that's fine for CI
@@ -637,6 +638,18 @@ mod tests {
             assert!(prompt.contains("Task one"));
             assert!(!prompt.contains("Task two")); // Blocked task excluded
             assert!(prompt.contains("Task three"));
+        }
+    }
+
+    #[test]
+    fn test_generate_scrum_master_prompt_includes_unblocked() {
+        // Task #2 blocked by #1, but #1 is complete - so #2 should be included
+        let content = "# Tasks\n- [x] (#1) Task one (A)\n- [ ] (#2) Task two (blocked by #1)\n";
+        let task_list = TaskList::parse(content);
+        let result = generate_scrum_master_prompt(&task_list, &['A'], 2);
+        if let Ok(Some(prompt)) = result {
+            assert!(!prompt.contains("Task one")); // Completed, not included
+            assert!(prompt.contains("Task two")); // Unblocked, should be included
         }
     }
 

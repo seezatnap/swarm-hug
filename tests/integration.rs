@@ -230,7 +230,7 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
 
     let team_root = repo_path.join(".swarm-hug").join(team_name);
     let tasks_path = team_root.join("tasks.md");
-    let tasks_content = "# Tasks\n\n- [ ] Task one\n- [A] Task two\n- [x] Task three (A)\n- [ ] BLOCKED: Task four\n";
+    let tasks_content = "# Tasks\n\n- [ ] (#1) Task one\n- [A] (#2) Task two\n- [x] (#3) Task three (A)\n- [ ] (#4) Task four (blocked by #1)\n";
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
 
     let chat_path = team_root.join("chat.md");
