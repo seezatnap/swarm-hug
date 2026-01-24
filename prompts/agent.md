@@ -28,6 +28,7 @@ Understanding the broader context will help you complete your task correctly.
 - Do not add new dependencies unless required by your task.
 - Do not commit secrets. Do not print tokens. Do not modify lockfiles unless necessary.
 - Complete ONE task fully, then stop. Do not work on other tasks.
+- **Test everything you add.** If you write code, write tests for it. Run build and test to confirm validity.
 
 ## First steps (orientation)
 Before writing code, understand the codebase:
@@ -57,9 +58,12 @@ Common patterns:
 
 ## Validation gate (run before committing)
 Before committing, run the repository's equivalent of:
+- Build (must succeed)
 - Lint
 - Type check (if applicable)
-- Tests (targeted to your changes when possible)
+- Tests (targeted to your changes when possible, but full test suite is preferred)
+
+**If you added new functionality, you MUST add tests for it.** Untested code is incomplete code.
 
 If something fails:
 - Read the error carefully
@@ -72,9 +76,24 @@ If something fails:
 Run the validation gate. Do not commit if tests or lint fail.
 
 ### Step 2: Commit your changes
+Use **Conventional Commits** format: `type(scope): description`
+- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+- Example: `feat(auth): add login validation`
+
 ```bash
+# First, check what you're about to commit - avoid committing artifacts!
 git add -A
-git commit -m "{{task_short}}{{co_author}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
+git diff --stat --cached
+
+# Review the --stat output. Remove any files that shouldn't be versioned:
+# - Build artifacts (dist/, build/, target/, *.o, *.pyc)
+# - Dependencies (node_modules/, vendor/)
+# - IDE files (.idea/, .vscode/ unless project config)
+# - Secrets or credentials
+# If you see unwanted files, use: git reset HEAD <file>
+
+# Then commit with conventional commit format
+git commit -m "type(scope): {{task_short}}{{co_author}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
 ```
 
 ### Step 3: Find the main repository path
