@@ -6,7 +6,7 @@
 - Preserve the core behavior of the current system (multi-agent sprints, tasks.md, chat.md, git worktrees, merge flow) while removing GridTUI.
 - Provide a simple, tail-based UI that streams chat.md to the operator.
 - Support limiting the number of sprints for deterministic tests and short runs.
-- Provide a VM bootstrap script (init.sh) that provisions a Lima VM and exposes the `swarm` command inside it.
+- Provide a VM bootstrap script (init_lima.sh) that provisions a Lima VM and exposes the `swarm` command inside it.
 - **Multi-team support**: Multiple teams can work on the same repo simultaneously with isolated artifacts.
 
 ## Non-goals
@@ -19,7 +19,7 @@
 
 ### CLI and entrypoints
 - Primary executable: `swarm` (Rust binary).
-- Provide a `./init.sh` that spins up a Lima VM and container environment where `swarm` is on PATH.
+- Provide a `./init_lima.sh` that spins up a Lima VM and container environment where `swarm` is on PATH.
 - CLI supports (at minimum):
   - `swarm init` (create default config, TASKS.md, CHAT.md, log dir)
   - `swarm run` (run sprints until done or until max-sprints is reached)
@@ -126,7 +126,7 @@
 - Per-agent log files under `loop/agent-<initial>.log`.
 - Log rotation when size exceeds a safe threshold (line-based or size-based).
 
-### init.sh (Lima VM bootstrap)
+### init_lima.sh (Lima VM bootstrap)
 - Script similar to ralph-bash-v2, adapted for swarm-hug.
 - Provisions a Lima VM with Docker and installs:
   - git, bash, Rust toolchain, and required CLIs (claude/codex).

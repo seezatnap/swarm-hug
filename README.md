@@ -10,7 +10,7 @@ As such, you should only run this in a sandbox. This script will set up a [Lima]
 
 ```bash
 # Wherever you checked this out:
-../my-repos/swarm-hug/init.sh --name my-project ~/Sites/my-project ~/some-other-folder
+../my-repos/swarm-hug/init_lima.sh --name my-project ~/Sites/my-project ~/some-other-folder
 ```
 
 ## CLI Usage
@@ -72,7 +72,7 @@ An agent working on one team cannot be assigned to another until released.
 Assignments are claimed during planning/run and released on `swarm cleanup` or `swarm merge`.
 
 
-## Requirements for init.sh
+## Requirements for init_lima.sh
 
 - Lima (`limactl`) and Docker installed on the host
 

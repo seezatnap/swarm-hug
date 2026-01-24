@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# init.sh — Lima VM + Docker + agent container for swarm-hug
+# init_lima.sh — Lima VM + Docker + agent container for swarm-hug
 #
 # Usage:
-#   ./init.sh [--name VM] [--container NAME] [--ports 3000,5173] [--no-auth] <folder1> <folder2> ...
+#   ./init_lima.sh [--name VM] [--container NAME] [--ports 3000,5173] [--no-auth] <folder1> <folder2> ...
 #
 # Example:
-#   ./init.sh --ports 3000,5173 ~/code/swarm-hug
+#   ./init_lima.sh --ports 3000,5173 ~/code/swarm-hug
 #
 # Notes:
 #  - Uses Lima template://docker and --mount-only so the VM only sees the folders you pass.
@@ -22,7 +22,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 usage() {
   cat <<'USAGE'
 Usage:
-  ./init.sh [--name VM] [--container NAME] [--ports 3000,5173] [--no-auth] <folder1> <folder2> ...
+  ./init_lima.sh [--name VM] [--container NAME] [--ports 3000,5173] [--no-auth] <folder1> <folder2> ...
 
 Options:
   --name VM            Lima instance name (default: swarmbox)
@@ -64,7 +64,7 @@ have docker  || die "Missing docker CLI. Install Docker Desktop (or: brew instal
 have python3 || die "Missing python3 (used for path normalization)."
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "${SCRIPT_DIR}/Cargo.toml" ]] || die "Expected Cargo.toml next to init.sh"
+[[ -f "${SCRIPT_DIR}/Cargo.toml" ]] || die "Expected Cargo.toml next to init_lima.sh"
 
 abs_path() {
   python3 - "$1" <<'PY'
@@ -153,7 +153,7 @@ cat > "${TMPDIR}/Dockerfile" <<'DOCKERFILE'
 FROM node:20-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl git jq openssh-client tini \
+    bash ca-certificates curl git htop jq openssh-client tini \
     build-essential pkg-config libssl-dev \
   && rm -rf /var/lib/apt/lists/*
 
