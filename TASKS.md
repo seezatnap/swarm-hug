@@ -7,3 +7,4 @@
 - [x] Update scrum master prompt to distribute tasks across agents (not all to one)
 - [x] Add --agent-timeout option (default: 3600s/1hr), show defaults in CLI help
 - [x] Change default max-agents from 4 to 3
+- [x] Stream Codex output to debug file for real-time visibility

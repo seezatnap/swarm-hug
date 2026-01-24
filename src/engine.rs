@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
@@ -421,17 +421,36 @@ impl Engine for CodexEngine {
             Err(e) => return EngineResult::failure(e, 1),
         };
 
+        // Create debug file for streaming JSONL output
+        let debug_file = team_dir.and_then(|dir| {
+            let debug_path = Path::new(dir).join("loop").join(format!("codex-debug-{}.jsonl", agent_name));
+            match File::create(&debug_path) {
+                Ok(f) => {
+                    eprintln!("[{}] Debug output: {}", agent_name, debug_path.display());
+                    Some(f)
+                }
+                Err(e) => {
+                    eprintln!("[{}] Warning: could not create debug file {}: {}", agent_name, debug_path.display(), e);
+                    None
+                }
+            }
+        });
+
         // Codex uses "exec" subcommand with stdin for prompts
-        let mut child = match Command::new(&self.cli_path)
-            .arg("exec")
-            .arg("--dangerously-bypass-approvals-and-sandbox")
+        // Add --json flag for JSONL streaming output when debug file is available
+        let mut cmd = Command::new(&self.cli_path);
+        cmd.arg("exec");
+        if debug_file.is_some() {
+            cmd.arg("--json");  // Stream JSONL events for debugging
+        }
+        cmd.arg("--dangerously-bypass-approvals-and-sandbox")
             .arg("-")  // Read prompt from stdin
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn codex: {}", e), 1),
         };
@@ -442,6 +461,54 @@ impl Engine for CodexEngine {
         }
 
         let pid = child.id();
+
+        // Take stdout and stderr for streaming
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        // Spawn thread to stream stdout to both debug file and buffer
+        let stdout_handle = thread::spawn(move || {
+            let mut output = String::new();
+            if let Some(stdout) = stdout {
+                let reader = BufReader::new(stdout);
+                let mut debug_file = debug_file;
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            // Write to debug file if available
+                            if let Some(ref mut f) = debug_file {
+                                let _ = writeln!(f, "{}", line);
+                                let _ = f.flush();
+                            }
+                            // Accumulate for result
+                            output.push_str(&line);
+                            output.push('\n');
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            output
+        });
+
+        // Spawn thread to capture stderr
+        let stderr_handle = thread::spawn(move || {
+            let mut output = String::new();
+            if let Some(stderr) = stderr {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            output.push_str(&line);
+                            output.push('\n');
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            output
+        });
+
         let start = std::time::Instant::now();
         let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
         let mut next_log = log_interval;
@@ -454,10 +521,16 @@ impl Engine for CodexEngine {
         // Wait for completion, logging periodically
         loop {
             match child.try_wait() {
-                Ok(Some(_status)) => {
-                    match child.wait_with_output() {
-                        Ok(output) => return output_to_result(output),
-                        Err(e) => return EngineResult::failure(format!("failed to get output: {}", e), 1),
+                Ok(Some(status)) => {
+                    // Process exited, collect output from threads
+                    let stdout_output = stdout_handle.join().unwrap_or_default();
+                    let stderr_output = stderr_handle.join().unwrap_or_default();
+                    let exit_code = status.code().unwrap_or(1);
+
+                    if status.success() {
+                        return EngineResult::success(stdout_output);
+                    } else {
+                        return EngineResult::failure(stderr_output, exit_code);
                     }
                 }
                 Ok(None) => {
