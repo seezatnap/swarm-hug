@@ -187,21 +187,30 @@ const WAIT_LOG_INTERVAL_SECS: u64 = 300;
 pub struct ClaudeEngine {
     /// Path to claude CLI binary.
     cli_path: String,
+    /// Timeout in seconds (0 = no timeout).
+    timeout_secs: u64,
 }
 
 impl ClaudeEngine {
-    /// Create a new Claude engine.
+    /// Create a new Claude engine with default timeout.
     /// Resolves the full path to claude using `which` for better portability.
     pub fn new() -> Self {
         let cli_path = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
-        Self { cli_path }
+        Self { cli_path, timeout_secs: 0 }
     }
 
     /// Create with custom CLI path.
     pub fn with_path(cli_path: impl Into<String>) -> Self {
         Self {
             cli_path: cli_path.into(),
+            timeout_secs: 0,
         }
+    }
+
+    /// Create with timeout.
+    pub fn with_timeout(timeout_secs: u64) -> Self {
+        let cli_path = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
+        Self { cli_path, timeout_secs }
     }
 }
 
@@ -304,6 +313,11 @@ impl Engine for ClaudeEngine {
         let start = std::time::Instant::now();
         let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
         let mut next_log = log_interval;
+        let timeout = if self.timeout_secs > 0 {
+            Some(Duration::from_secs(self.timeout_secs))
+        } else {
+            None
+        };
 
         // Wait for completion, logging periodically
         loop {
@@ -317,9 +331,27 @@ impl Engine for ClaudeEngine {
                 Ok(None) => {
                     // Process still running
                     let elapsed = start.elapsed();
+
+                    // Check for timeout
+                    if let Some(timeout_duration) = timeout {
+                        if elapsed >= timeout_duration {
+                            let _ = child.kill();
+                            let mins = elapsed.as_secs() / 60;
+                            return EngineResult::failure(
+                                format!("agent timed out after {} minutes (pid {})", mins, pid),
+                                124, // Standard timeout exit code
+                            );
+                        }
+                    }
+
                     if elapsed >= next_log {
                         let mins = elapsed.as_secs() / 60;
-                        eprintln!("[{}] Still executing... ({} min elapsed, pid {})", agent_name, mins, pid);
+                        let timeout_msg = if let Some(t) = timeout {
+                            format!(", timeout in {} min", (t.as_secs() - elapsed.as_secs()) / 60)
+                        } else {
+                            String::new()
+                        };
+                        eprintln!("[{}] Still executing... ({} min elapsed, pid {}{})", agent_name, mins, pid, timeout_msg);
                         next_log += log_interval;
                     }
                     thread::sleep(Duration::from_millis(100));
@@ -340,21 +372,30 @@ impl Engine for ClaudeEngine {
 pub struct CodexEngine {
     /// Path to codex CLI binary.
     cli_path: String,
+    /// Timeout in seconds (0 = no timeout).
+    timeout_secs: u64,
 }
 
 impl CodexEngine {
-    /// Create a new Codex engine.
+    /// Create a new Codex engine with default timeout.
     /// Resolves the full path to codex using `which` for better portability.
     pub fn new() -> Self {
         let cli_path = resolve_cli_path("codex").unwrap_or_else(|| "codex".to_string());
-        Self { cli_path }
+        Self { cli_path, timeout_secs: 0 }
     }
 
     /// Create with custom CLI path.
     pub fn with_path(cli_path: impl Into<String>) -> Self {
         Self {
             cli_path: cli_path.into(),
+            timeout_secs: 0,
         }
+    }
+
+    /// Create with timeout.
+    pub fn with_timeout(timeout_secs: u64) -> Self {
+        let cli_path = resolve_cli_path("codex").unwrap_or_else(|| "codex".to_string());
+        Self { cli_path, timeout_secs }
     }
 }
 
@@ -404,6 +445,11 @@ impl Engine for CodexEngine {
         let start = std::time::Instant::now();
         let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
         let mut next_log = log_interval;
+        let timeout = if self.timeout_secs > 0 {
+            Some(Duration::from_secs(self.timeout_secs))
+        } else {
+            None
+        };
 
         // Wait for completion, logging periodically
         loop {
@@ -416,9 +462,27 @@ impl Engine for CodexEngine {
                 }
                 Ok(None) => {
                     let elapsed = start.elapsed();
+
+                    // Check for timeout
+                    if let Some(timeout_duration) = timeout {
+                        if elapsed >= timeout_duration {
+                            let _ = child.kill();
+                            let mins = elapsed.as_secs() / 60;
+                            return EngineResult::failure(
+                                format!("agent timed out after {} minutes (pid {})", mins, pid),
+                                124, // Standard timeout exit code
+                            );
+                        }
+                    }
+
                     if elapsed >= next_log {
                         let mins = elapsed.as_secs() / 60;
-                        eprintln!("[{}] Still executing... ({} min elapsed, pid {})", agent_name, mins, pid);
+                        let timeout_msg = if let Some(t) = timeout {
+                            format!(", timeout in {} min", (t.as_secs() - elapsed.as_secs()) / 60)
+                        } else {
+                            String::new()
+                        };
+                        eprintln!("[{}] Still executing... ({} min elapsed, pid {}{})", agent_name, mins, pid, timeout_msg);
                         next_log += log_interval;
                     }
                     thread::sleep(Duration::from_millis(100));
@@ -450,10 +514,10 @@ fn output_to_result(output: Output) -> EngineResult {
 
 /// Create an engine from config.
 /// Returns Arc for thread-safe sharing across parallel agent execution.
-pub fn create_engine(engine_type: EngineType, output_dir: &str) -> Arc<dyn Engine> {
+pub fn create_engine(engine_type: EngineType, output_dir: &str, timeout_secs: u64) -> Arc<dyn Engine> {
     match engine_type {
-        EngineType::Claude => Arc::new(ClaudeEngine::new()),
-        EngineType::Codex => Arc::new(CodexEngine::new()),
+        EngineType::Claude => Arc::new(ClaudeEngine::with_timeout(timeout_secs)),
+        EngineType::Codex => Arc::new(CodexEngine::with_timeout(timeout_secs)),
         EngineType::Stub => Arc::new(StubEngine::new(output_dir)),
     }
 }
@@ -542,19 +606,33 @@ mod tests {
 
     #[test]
     fn test_create_engine_stub() {
-        let engine = create_engine(EngineType::Stub, "loop");
+        let engine = create_engine(EngineType::Stub, "loop", 0);
         assert_eq!(engine.engine_type(), EngineType::Stub);
     }
 
     #[test]
     fn test_create_engine_claude() {
-        let engine = create_engine(EngineType::Claude, "loop");
+        let engine = create_engine(EngineType::Claude, "loop", 3600);
         assert_eq!(engine.engine_type(), EngineType::Claude);
     }
 
     #[test]
     fn test_create_engine_codex() {
-        let engine = create_engine(EngineType::Codex, "loop");
+        let engine = create_engine(EngineType::Codex, "loop", 3600);
+        assert_eq!(engine.engine_type(), EngineType::Codex);
+    }
+
+    #[test]
+    fn test_claude_engine_with_timeout() {
+        let engine = ClaudeEngine::with_timeout(1800);
+        assert_eq!(engine.timeout_secs, 1800);
+        assert_eq!(engine.engine_type(), EngineType::Claude);
+    }
+
+    #[test]
+    fn test_codex_engine_with_timeout() {
+        let engine = CodexEngine::with_timeout(1800);
+        assert_eq!(engine.timeout_secs, 1800);
         assert_eq!(engine.engine_type(), EngineType::Codex);
     }
 

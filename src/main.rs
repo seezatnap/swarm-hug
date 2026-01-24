@@ -95,19 +95,20 @@ COMMANDS:
     set-email <email> Set co-author email for commits (stored in .swarm-hug/email.txt)
 
 OPTIONS:
-    -h, --help              Show this help message
-    -V, --version           Show version
-    -c, --config <PATH>     Path to config file (default: swarm.toml)
-    -t, --team <NAME>       Team to operate on (uses .swarm-hug/<team>/)
-    --max-agents <N>        Maximum number of agents to spawn
-    --tasks-per-agent <N>   Tasks to assign per agent per sprint
-    --tasks-file <PATH>     Path to tasks file (default: tasks.md in team dir)
-    --chat-file <PATH>      Path to chat file (default: chat.md in team dir)
-    --log-dir <PATH>        Path to log directory (default: loop/ in team dir)
-    --engine <TYPE>         Engine type: claude, codex, stub
-    --stub                  Enable stub mode for testing
-    --max-sprints <N>       Maximum sprints to run (0 = unlimited)
-    --no-tail               Don't tail chat.md during run
+    -h, --help                Show this help message
+    -V, --version             Show version
+    -c, --config <PATH>       Path to config file [default: swarm.toml]
+    -t, --team <NAME>         Team to operate on (uses .swarm-hug/<team>/)
+    --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
+    --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
+    --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
+    --tasks-file <PATH>       Path to tasks file [default: <team>/tasks.md]
+    --chat-file <PATH>        Path to chat file [default: <team>/chat.md]
+    --log-dir <PATH>          Path to log directory [default: <team>/loop/]
+    --engine <TYPE>           Engine type: claude, codex, stub [default: claude]
+    --stub                    Enable stub mode for testing [default: false]
+    --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
+    --no-tail                 Don't tail chat.md during run [default: false]
 
 MULTI-TEAM MODE:
     All config and artifacts live in .swarm-hug/:
@@ -124,7 +125,10 @@ EXAMPLES:
     swarm teams                       List all teams
     swarm --team authentication run   Run sprints for authentication team
     swarm -t payments status          Show status for payments team
-"#
+"#,
+        max_agents = 3,
+        tasks_per_agent = 2,
+        timeout = config::DEFAULT_AGENT_TIMEOUT_SECS,
     );
 }
 
@@ -826,7 +830,7 @@ fn cmd_team_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
 
         // Convert PRD to tasks using the engine
         let log_dir = team.loop_dir();
-        let engine = engine::create_engine(config.effective_engine(), log_dir.to_str().unwrap_or(""));
+        let engine = engine::create_engine(config.effective_engine(), log_dir.to_str().unwrap_or(""), config.agent_timeout_secs);
 
         println!("  Converting PRD to tasks (engine={})...", config.effective_engine().as_str());
         let result = planning::convert_prd_to_tasks(engine.as_ref(), &prd_content, &log_dir);
@@ -1117,7 +1121,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     let agent_count = initials.len();
 
     // Assign tasks via LLM planning (with fallback to algorithmic)
-    let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir);
+    let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir, config.agent_timeout_secs);
     let log_dir = Path::new(&config.files_log_dir);
 
     let plan_result = planning::run_llm_assignment(
@@ -1261,7 +1265,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     }
 
     // Create engine (wrapped for thread-safe sharing)
-    let engine: Arc<dyn engine::Engine> = engine::create_engine(config.effective_engine(), &config.files_log_dir);
+    let engine: Arc<dyn engine::Engine> = engine::create_engine(config.effective_engine(), &config.files_log_dir, config.agent_timeout_secs);
 
     // Rotate any large logs before starting
     let log_dir_path = config.files_log_dir.clone();

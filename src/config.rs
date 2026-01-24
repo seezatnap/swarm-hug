@@ -40,6 +40,9 @@ impl EngineType {
     }
 }
 
+/// Default agent timeout in seconds (60 minutes).
+pub const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 3600;
+
 /// Swarm configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -47,6 +50,8 @@ pub struct Config {
     pub agents_max_count: usize,
     /// Number of tasks to assign per agent per sprint.
     pub agents_tasks_per_agent: usize,
+    /// Agent execution timeout in seconds.
+    pub agent_timeout_secs: u64,
     /// Path to TASKS.md file.
     pub files_tasks: String,
     /// Path to CHAT.md file.
@@ -70,8 +75,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            agents_max_count: 4,
+            agents_max_count: 3,
             agents_tasks_per_agent: 2,
+            agent_timeout_secs: DEFAULT_AGENT_TIMEOUT_SECS,
             files_tasks: ".swarm-hug/default/tasks.md".to_string(),
             files_chat: ".swarm-hug/default/chat.md".to_string(),
             files_log_dir: ".swarm-hug/default/loop".to_string(),
@@ -186,6 +192,10 @@ impl Config {
                         config.agents_tasks_per_agent = value.parse()
                             .map_err(|_| ConfigError::Parse(format!("invalid agents.tasks_per_agent: {}", value)))?;
                     }
+                    "agents.timeout" => {
+                        config.agent_timeout_secs = value.parse()
+                            .map_err(|_| ConfigError::Parse(format!("invalid agents.timeout: {}", value)))?;
+                    }
                     "files.tasks" => {
                         config.files_tasks = value.trim_matches('"').to_string();
                     }
@@ -227,6 +237,11 @@ impl Config {
                 self.agents_tasks_per_agent = n;
             }
         }
+        if let Ok(val) = env::var("SWARM_AGENT_TIMEOUT") {
+            if let Ok(n) = val.parse() {
+                self.agent_timeout_secs = n;
+            }
+        }
         if let Ok(val) = env::var("SWARM_FILES_TASKS") {
             self.files_tasks = val;
         }
@@ -258,6 +273,9 @@ impl Config {
         }
         if let Some(n) = args.tasks_per_agent {
             self.agents_tasks_per_agent = n;
+        }
+        if let Some(n) = args.agent_timeout {
+            self.agent_timeout_secs = n;
         }
         if let Some(ref path) = args.tasks_file {
             self.files_tasks = path.clone();
@@ -291,6 +309,7 @@ impl Config {
     fn merge_from(&mut self, other: &Self) {
         self.agents_max_count = other.agents_max_count;
         self.agents_tasks_per_agent = other.agents_tasks_per_agent;
+        self.agent_timeout_secs = other.agent_timeout_secs;
         self.files_tasks = other.files_tasks.clone();
         self.files_chat = other.files_chat.clone();
         self.files_log_dir = other.files_log_dir.clone();
@@ -301,11 +320,12 @@ impl Config {
 
     /// Generate default swarm.toml content.
     pub fn default_toml() -> String {
-        r#"# Swarm configuration
+        format!(r#"# Swarm configuration
 
 [agents]
-max_count = 4
+max_count = 3
 tasks_per_agent = 2
+timeout = {}  # seconds (60 minutes)
 
 [files]
 tasks = ".swarm-hug/default/tasks.md"
@@ -318,7 +338,7 @@ stub_mode = false
 
 [sprints]
 max = 0
-"#.to_string()
+"#, DEFAULT_AGENT_TIMEOUT_SECS)
     }
 
     /// Get the effective engine type (considering stub_mode).
@@ -342,6 +362,8 @@ pub struct CliArgs {
     pub max_agents: Option<usize>,
     /// Tasks per agent per sprint.
     pub tasks_per_agent: Option<usize>,
+    /// Agent timeout in seconds.
+    pub agent_timeout: Option<u64>,
     /// Path to tasks file.
     pub tasks_file: Option<String>,
     /// Path to chat file.
@@ -472,6 +494,7 @@ where
             "-t" | "--team" => cli.team = args.next(),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
+            "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),
             "--tasks-file" => cli.tasks_file = args.next(),
             "--chat-file" => cli.chat_file = args.next(),
             "--log-dir" => cli.log_dir = args.next(),
@@ -534,8 +557,9 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.agents_max_count, 4);
+        assert_eq!(config.agents_max_count, 3);
         assert_eq!(config.agents_tasks_per_agent, 2);
+        assert_eq!(config.agent_timeout_secs, DEFAULT_AGENT_TIMEOUT_SECS);
         assert_eq!(config.files_tasks, ".swarm-hug/default/tasks.md");
         assert_eq!(config.files_chat, ".swarm-hug/default/chat.md");
         assert_eq!(config.files_log_dir, ".swarm-hug/default/loop");
@@ -707,7 +731,7 @@ max = 5
     #[test]
     fn test_default_toml() {
         let toml = Config::default_toml();
-        assert!(toml.contains("max_count = 4"));
+        assert!(toml.contains("max_count = 3"));
         assert!(toml.contains("tasks_per_agent = 2"));
         assert!(toml.contains("tasks = \".swarm-hug/default/tasks.md\""));
         assert!(toml.contains("chat = \".swarm-hug/default/chat.md\""));
@@ -773,5 +797,45 @@ max = 5
         assert_eq!(cli.command, Some(Command::TeamInit));
         assert_eq!(cli.team_arg, Some("myteam".to_string()));
         assert_eq!(cli.prd_file_arg, None);
+    }
+
+    #[test]
+    fn test_parse_args_agent_timeout() {
+        let args = vec![
+            "swarm".to_string(),
+            "--agent-timeout".to_string(),
+            "1800".to_string(),
+            "run".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.command, Some(Command::Run));
+        assert_eq!(cli.agent_timeout, Some(1800));
+    }
+
+    #[test]
+    fn test_config_with_agent_timeout_cli() {
+        let mut cli = CliArgs::default();
+        cli.agent_timeout = Some(900);
+
+        let config = Config::load(&cli);
+        assert_eq!(config.agent_timeout_secs, 900);
+    }
+
+    #[test]
+    fn test_config_parse_toml_with_timeout() {
+        let toml = r#"
+[agents]
+max_count = 4
+tasks_per_agent = 2
+timeout = 1800
+"#;
+        let config = Config::parse_toml(toml).unwrap();
+        assert_eq!(config.agent_timeout_secs, 1800);
+    }
+
+    #[test]
+    fn test_default_toml_includes_timeout() {
+        let toml = Config::default_toml();
+        assert!(toml.contains("timeout = 3600"));
     }
 }
