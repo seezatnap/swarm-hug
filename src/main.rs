@@ -261,7 +261,7 @@ const MAX_CONSECUTIVE_FAILURES: usize = 3;
 fn cmd_run(config: &Config) -> Result<(), String> {
     println!("Running swarm (max_sprints={}, engine={})...",
              if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() },
-             config.effective_engine().as_str());
+             config.engines_display());
 
     // Clear chat.md and write boot message before the first sprint
     chat::write_boot_message(&config.files_chat)
@@ -364,7 +364,7 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
 /// Run exactly one sprint.
 fn cmd_sprint(config: &Config) -> Result<(), String> {
-    println!("Running single sprint (engine={})...", config.effective_engine().as_str());
+    println!("Running single sprint (engine={})...", config.engines_display());
     let result = run_sprint(config, 1)?;
     if result.all_failed() {
         println!();
@@ -1264,8 +1264,10 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
         tracker.lock().unwrap().register(*initial, agent_name, description, &wt_path);
     }
 
-    // Create engine (wrapped for thread-safe sharing)
-    let engine: Arc<dyn engine::Engine> = engine::create_engine(config.effective_engine(), &config.files_log_dir, config.agent_timeout_secs);
+    // Prepare engine configuration for per-agent random selection
+    let engine_types = config.engine_types.clone();
+    let engine_stub_mode = config.engine_stub_mode;
+    let agent_timeout_secs = config.agent_timeout_secs;
 
     // Rotate any large logs before starting
     let log_dir_path = config.files_log_dir.clone();
@@ -1293,16 +1295,36 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
             .get(&initial)
             .cloned()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let engine = Arc::clone(&engine);
         let tracker = Arc::clone(&tracker);
         let chat_path = config.files_chat.clone();
         let log_dir = log_dir_path.clone();
-        let engine_type_str = config.effective_engine().as_str().to_string();
         let team_dir = team_dir.clone();
+        // Clone engine config for this thread
+        let thread_engine_types = engine_types.clone();
+        let thread_engine_stub_mode = engine_stub_mode;
+        let thread_agent_timeout = agent_timeout_secs;
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
             let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> = Vec::new();
+
+            // Select random engine for this agent
+            let selected_engine_type = if thread_engine_stub_mode {
+                config::EngineType::Stub
+            } else if thread_engine_types.is_empty() {
+                config::EngineType::Claude
+            } else if thread_engine_types.len() == 1 {
+                thread_engine_types[0]
+            } else {
+                use rand::seq::SliceRandom;
+                *thread_engine_types.choose(&mut rand::thread_rng()).unwrap()
+            };
+            let engine_type_str = selected_engine_type.as_str().to_string();
+            let engine: Arc<dyn engine::Engine> = engine::create_engine(
+                selected_engine_type,
+                &log_dir,
+                thread_agent_timeout,
+            );
 
             // Create agent logger
             let logger = AgentLogger::new(Path::new(&log_dir), initial, agent_name);

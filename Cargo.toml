@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 ctrlc = "3.4"
+rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

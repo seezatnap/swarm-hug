@@ -38,6 +38,27 @@ impl EngineType {
             Self::Stub => "stub",
         }
     }
+
+    /// Parse a comma-separated list of engine types.
+    /// Returns None if any engine type is invalid or the list is empty.
+    /// Duplicates are allowed (e.g., "codex,codex,claude" for weighted selection).
+    pub fn parse_list(s: &str) -> Option<Vec<Self>> {
+        let engines: Vec<Self> = s
+            .split(',')
+            .map(|part| Self::from_str(part.trim()))
+            .collect::<Option<Vec<_>>>()?;
+
+        if engines.is_empty() {
+            None
+        } else {
+            Some(engines)
+        }
+    }
+
+    /// Format a list of engine types as a comma-separated string.
+    pub fn list_to_string(engines: &[Self]) -> String {
+        engines.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(",")
+    }
 }
 
 /// Default agent timeout in seconds (60 minutes).
@@ -60,9 +81,10 @@ pub struct Config {
     pub files_log_dir: String,
     /// Path to worktrees directory.
     pub files_worktrees_dir: String,
-    /// Engine type for agent execution.
-    pub engine_type: EngineType,
-    /// Enable stub mode for testing (overrides engine_type to Stub).
+    /// Engine types for agent execution (supports weighted random selection).
+    /// When multiple engines are specified, one is randomly selected per agent.
+    pub engine_types: Vec<EngineType>,
+    /// Enable stub mode for testing (overrides engine_types to Stub).
     pub engine_stub_mode: bool,
     /// Maximum sprints to run (0 means unlimited).
     pub sprints_max: usize,
@@ -82,7 +104,7 @@ impl Default for Config {
             files_chat: ".swarm-hug/default/chat.md".to_string(),
             files_log_dir: ".swarm-hug/default/loop".to_string(),
             files_worktrees_dir: ".swarm-hug/default/worktrees".to_string(),
-            engine_type: EngineType::Claude,
+            engine_types: vec![EngineType::Claude],
             engine_stub_mode: false,
             sprints_max: 0,
             no_tail: false,
@@ -118,9 +140,9 @@ impl Config {
         // Apply CLI args (highest precedence)
         config.apply_cli(cli_args);
 
-        // Stub mode overrides engine type
+        // Stub mode overrides engine types
         if config.engine_stub_mode {
-            config.engine_type = EngineType::Stub;
+            config.engine_types = vec![EngineType::Stub];
         }
 
         // Apply team-based path resolution if team is set and paths weren't explicitly overridden
@@ -207,7 +229,7 @@ impl Config {
                     }
                     "engine.type" => {
                         let engine_str = value.trim_matches('"');
-                        config.engine_type = EngineType::from_str(engine_str)
+                        config.engine_types = EngineType::parse_list(engine_str)
                             .ok_or_else(|| ConfigError::Parse(format!("invalid engine.type: {}", engine_str)))?;
                     }
                     "engine.stub_mode" => {
@@ -252,8 +274,8 @@ impl Config {
             self.files_log_dir = val;
         }
         if let Ok(val) = env::var("SWARM_ENGINE_TYPE") {
-            if let Some(engine) = EngineType::from_str(&val) {
-                self.engine_type = engine;
+            if let Some(engines) = EngineType::parse_list(&val) {
+                self.engine_types = engines;
             }
         }
         if let Ok(val) = env::var("SWARM_ENGINE_STUB_MODE") {
@@ -287,8 +309,8 @@ impl Config {
             self.files_log_dir = path.clone();
         }
         if let Some(ref engine) = args.engine {
-            if let Some(e) = EngineType::from_str(engine) {
-                self.engine_type = e;
+            if let Some(engines) = EngineType::parse_list(engine) {
+                self.engine_types = engines;
             }
         }
         if args.stub {
@@ -313,7 +335,7 @@ impl Config {
         self.files_tasks = other.files_tasks.clone();
         self.files_chat = other.files_chat.clone();
         self.files_log_dir = other.files_log_dir.clone();
-        self.engine_type = other.engine_type;
+        self.engine_types = other.engine_types.clone();
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
     }
@@ -342,12 +364,41 @@ max = 0
     }
 
     /// Get the effective engine type (considering stub_mode).
+    /// Get the primary engine type (first in list, considering stub_mode).
+    /// Use this for deterministic operations like PRD conversion.
     pub fn effective_engine(&self) -> EngineType {
         if self.engine_stub_mode {
             EngineType::Stub
         } else {
-            self.engine_type
+            self.engine_types.first().copied().unwrap_or(EngineType::Claude)
         }
+    }
+
+    /// Select a random engine from the configured list.
+    /// Use this for agent execution to enable weighted random selection.
+    /// If stub_mode is enabled, always returns Stub.
+    pub fn select_random_engine(&self) -> EngineType {
+        if self.engine_stub_mode {
+            return EngineType::Stub;
+        }
+        if self.engine_types.is_empty() {
+            return EngineType::Claude;
+        }
+        if self.engine_types.len() == 1 {
+            return self.engine_types[0];
+        }
+        // Use thread_rng for random selection
+        use rand::seq::SliceRandom;
+        *self.engine_types.choose(&mut rand::thread_rng()).unwrap()
+    }
+
+    /// Get a display string for the configured engines.
+    /// Shows all engines if multiple are configured.
+    pub fn engines_display(&self) -> String {
+        if self.engine_stub_mode {
+            return "stub".to_string();
+        }
+        EngineType::list_to_string(&self.engine_types)
     }
 }
 
@@ -555,6 +606,161 @@ mod tests {
     }
 
     #[test]
+    fn test_engine_type_parse_list_single() {
+        assert_eq!(EngineType::parse_list("claude"), Some(vec![EngineType::Claude]));
+        assert_eq!(EngineType::parse_list("codex"), Some(vec![EngineType::Codex]));
+        assert_eq!(EngineType::parse_list("stub"), Some(vec![EngineType::Stub]));
+    }
+
+    #[test]
+    fn test_engine_type_parse_list_multiple() {
+        assert_eq!(
+            EngineType::parse_list("claude,codex"),
+            Some(vec![EngineType::Claude, EngineType::Codex])
+        );
+        assert_eq!(
+            EngineType::parse_list("codex,claude,stub"),
+            Some(vec![EngineType::Codex, EngineType::Claude, EngineType::Stub])
+        );
+    }
+
+    #[test]
+    fn test_engine_type_parse_list_weighted() {
+        // Test weighted selection format (codex,codex,claude = 2/3 codex, 1/3 claude)
+        assert_eq!(
+            EngineType::parse_list("codex,codex,claude"),
+            Some(vec![EngineType::Codex, EngineType::Codex, EngineType::Claude])
+        );
+    }
+
+    #[test]
+    fn test_engine_type_parse_list_with_spaces() {
+        assert_eq!(
+            EngineType::parse_list("claude, codex"),
+            Some(vec![EngineType::Claude, EngineType::Codex])
+        );
+        assert_eq!(
+            EngineType::parse_list(" codex , claude "),
+            Some(vec![EngineType::Codex, EngineType::Claude])
+        );
+    }
+
+    #[test]
+    fn test_engine_type_parse_list_case_insensitive() {
+        assert_eq!(
+            EngineType::parse_list("CLAUDE,Codex"),
+            Some(vec![EngineType::Claude, EngineType::Codex])
+        );
+    }
+
+    #[test]
+    fn test_engine_type_parse_list_invalid() {
+        assert_eq!(EngineType::parse_list("unknown"), None);
+        assert_eq!(EngineType::parse_list("claude,unknown"), None);
+        assert_eq!(EngineType::parse_list(""), None);
+    }
+
+    #[test]
+    fn test_engine_type_list_to_string() {
+        assert_eq!(EngineType::list_to_string(&[EngineType::Claude]), "claude");
+        assert_eq!(
+            EngineType::list_to_string(&[EngineType::Claude, EngineType::Codex]),
+            "claude,codex"
+        );
+        assert_eq!(
+            EngineType::list_to_string(&[EngineType::Codex, EngineType::Codex, EngineType::Claude]),
+            "codex,codex,claude"
+        );
+    }
+
+    #[test]
+    fn test_config_select_random_engine_single() {
+        let mut config = Config::default();
+        config.engine_types = vec![EngineType::Codex];
+        // With single engine, should always return that engine
+        for _ in 0..10 {
+            assert_eq!(config.select_random_engine(), EngineType::Codex);
+        }
+    }
+
+    #[test]
+    fn test_config_select_random_engine_stub_mode_override() {
+        let mut config = Config::default();
+        config.engine_types = vec![EngineType::Claude, EngineType::Codex];
+        config.engine_stub_mode = true;
+        // Stub mode should always return Stub regardless of engine_types
+        for _ in 0..10 {
+            assert_eq!(config.select_random_engine(), EngineType::Stub);
+        }
+    }
+
+    #[test]
+    fn test_config_select_random_engine_empty_fallback() {
+        let mut config = Config::default();
+        config.engine_types = vec![];
+        // Empty list should fall back to Claude
+        assert_eq!(config.select_random_engine(), EngineType::Claude);
+    }
+
+    #[test]
+    fn test_config_select_random_engine_distribution() {
+        let mut config = Config::default();
+        config.engine_types = vec![EngineType::Codex, EngineType::Claude];
+
+        // Run many iterations and verify both engines are selected
+        let mut claude_count = 0;
+        let mut codex_count = 0;
+        for _ in 0..100 {
+            match config.select_random_engine() {
+                EngineType::Claude => claude_count += 1,
+                EngineType::Codex => codex_count += 1,
+                _ => panic!("unexpected engine type"),
+            }
+        }
+        // Both should be selected at least once (very unlikely to fail with 100 iterations)
+        assert!(claude_count > 0, "Claude should be selected at least once");
+        assert!(codex_count > 0, "Codex should be selected at least once");
+    }
+
+    #[test]
+    fn test_config_engines_display() {
+        let mut config = Config::default();
+        config.engine_types = vec![EngineType::Claude];
+        assert_eq!(config.engines_display(), "claude");
+
+        config.engine_types = vec![EngineType::Claude, EngineType::Codex];
+        assert_eq!(config.engines_display(), "claude,codex");
+
+        config.engine_types = vec![EngineType::Codex, EngineType::Codex, EngineType::Claude];
+        assert_eq!(config.engines_display(), "codex,codex,claude");
+
+        // Stub mode overrides display
+        config.engine_stub_mode = true;
+        assert_eq!(config.engines_display(), "stub");
+    }
+
+    #[test]
+    fn test_config_effective_engine_with_multiple() {
+        let mut config = Config::default();
+        config.engine_types = vec![EngineType::Codex, EngineType::Claude];
+        // effective_engine returns first in list
+        assert_eq!(config.effective_engine(), EngineType::Codex);
+    }
+
+    #[test]
+    fn test_config_parse_toml_with_engine_list() {
+        let toml = r#"
+[engine]
+type = "codex,codex,claude"
+"#;
+        let config = Config::parse_toml(toml).unwrap();
+        assert_eq!(
+            config.engine_types,
+            vec![EngineType::Codex, EngineType::Codex, EngineType::Claude]
+        );
+    }
+
+    #[test]
     fn test_config_default() {
         let config = Config::default();
         assert_eq!(config.agents_max_count, 3);
@@ -564,7 +770,7 @@ mod tests {
         assert_eq!(config.files_chat, ".swarm-hug/default/chat.md");
         assert_eq!(config.files_log_dir, ".swarm-hug/default/loop");
         assert_eq!(config.files_worktrees_dir, ".swarm-hug/default/worktrees");
-        assert_eq!(config.engine_type, EngineType::Claude);
+        assert_eq!(config.engine_types, vec![EngineType::Claude]);
         assert!(!config.engine_stub_mode);
         assert_eq!(config.sprints_max, 0);
     }
@@ -594,7 +800,7 @@ max = 5
         assert_eq!(config.files_tasks, "MY_TASKS.md");
         assert_eq!(config.files_chat, "MY_CHAT.md");
         assert_eq!(config.files_log_dir, "logs");
-        assert_eq!(config.engine_type, EngineType::Codex);
+        assert_eq!(config.engine_types, vec![EngineType::Codex]);
         assert!(config.engine_stub_mode);
         assert_eq!(config.sprints_max, 5);
     }
@@ -602,7 +808,7 @@ max = 5
     #[test]
     fn test_config_effective_engine() {
         let mut config = Config::default();
-        config.engine_type = EngineType::Claude;
+        config.engine_types = vec![EngineType::Claude];
         assert_eq!(config.effective_engine(), EngineType::Claude);
 
         config.engine_stub_mode = true;
@@ -638,6 +844,29 @@ max = 5
         assert_eq!(cli.max_sprints, Some(3));
         assert!(cli.stub);
         assert!(cli.no_tail);
+    }
+
+    #[test]
+    fn test_parse_args_engine_list() {
+        let args = vec![
+            "swarm".to_string(),
+            "--engine".to_string(),
+            "codex,codex,claude".to_string(),
+            "run".to_string(),
+        ];
+        let cli = parse_args(args);
+        assert_eq!(cli.engine, Some("codex,codex,claude".to_string()));
+    }
+
+    #[test]
+    fn test_config_apply_cli_engine_list() {
+        let mut config = Config::default();
+        let cli = CliArgs {
+            engine: Some("codex,claude".to_string()),
+            ..Default::default()
+        };
+        config.apply_cli(&cli);
+        assert_eq!(config.engine_types, vec![EngineType::Codex, EngineType::Claude]);
     }
 
     #[test]
