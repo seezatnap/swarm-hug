@@ -244,8 +244,8 @@ fn build_agent_prompt(
         None => return Ok(None), // Not a valid agent, use raw prompt
     };
 
-    let task_short = if task_description.len() > 50 {
-        format!("{}...", &task_description[..47])
+    let task_short = if task_description.chars().count() > 50 {
+        format!("{}...", task_description.chars().take(47).collect::<String>())
     } else {
         task_description.to_string()
     };
@@ -747,6 +747,26 @@ mod tests {
         let text = prompt.unwrap();
         assert!(text.contains("Aaron"));
         assert!(text.contains("Test task"));
+    }
+
+    #[test]
+    fn test_build_agent_prompt_with_utf8_task() {
+        // Task with UTF-8 characters (arrows, emojis, etc.) should not panic
+        let task = "(#21) Implement schema migration from v1→v2→v3 (blocked by #20)";
+        let result = super::build_agent_prompt("Aaron", task, None);
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.is_some());
+    }
+
+    #[test]
+    fn test_build_agent_prompt_with_long_utf8_task() {
+        // Long task with UTF-8 should truncate safely without panicking
+        let task = "🚀 Implement feature with émojis and spëcial çharacters that is very long and needs truncation";
+        let result = super::build_agent_prompt("Aaron", task, None);
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.is_some());
     }
 
     #[test]
