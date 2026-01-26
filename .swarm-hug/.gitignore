@@ -1,0 +1,11 @@
+# Swarm-hug ignored files
+# These are transient/local files that shouldn't be committed
+
+# Agent worktrees (recreated each sprint)
+*/worktrees/
+
+# Agent logs (local debugging)
+*/loop/
+
+# Chat logs (local coordination)
+*/chat.md
