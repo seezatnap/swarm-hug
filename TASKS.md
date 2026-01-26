@@ -14,7 +14,7 @@
 
 ## Config module split
 - [x] (#5) Create `src/config` module with `mod.rs`, `types.rs`, `cli.rs`, `env.rs`, `toml.rs`, `tests.rs`; move code and preserve public exports
-- [ ] (#6) Verify `Config::load` and `parse_args` behavior remains identical after split; update imports as needed (blocked by #5)
+- [x] (#6) Verify `Config::load` and `parse_args` behavior remains identical after split; update imports as needed (blocked by #5)
 
 ## TUI module split
 - [ ] (#7) Create `src/tui` module with `app.rs`, `message.rs`, `render.rs`, `ansi.rs`, `process.rs`, `tail.rs`, `run.rs`, and `mod.rs`; move code preserving behavior

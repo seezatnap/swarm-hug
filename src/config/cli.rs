@@ -86,7 +86,7 @@ impl Command {
             "worktrees-branch" => Some(Self::WorktreesBranch),
             "cleanup" => Some(Self::Cleanup),
             "projects" => Some(Self::Projects),
-            "project" | "team" => Some(Self::ProjectInit),
+            "project" => Some(Self::ProjectInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
             "set-email" => Some(Self::SetEmail),
             _ => None,
@@ -110,7 +110,7 @@ where
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
             "-c" | "--config" => cli.config = args.next(),
-            "-p" | "--project" | "--team" => cli.project = args.next(),
+            "-p" | "--project" => cli.project = args.next(),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),
@@ -120,10 +120,7 @@ where
             "--engine" => cli.engine = args.next(),
             "--stub" => cli.stub = true,
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
-            "--no-tail" => {
-                cli.no_tail = true;
-                cli.no_tui = true;
-            }
+            "--no-tail" => cli.no_tail = true,
             "--no-tui" => cli.no_tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() => {
