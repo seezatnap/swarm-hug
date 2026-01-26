@@ -4,9 +4,9 @@ A sprint analogy for agent orchestration, in a cli interface.
 
 ## Quick Start
 
-`swarm` will spawn agents that run in "full automatic" mode; they will run arbitrary commands, and might make catastrophic mistakes, like deleting your home folder. Who knows! 
+`swarm` will spawn agents that run in "automatic" mode (they will take actions without any confirmation); they will run arbitrary commands, and might make catastrophic mistakes, like deleting your home folder. Who knows! 
 
-As such, you should only run this in a sandbox. This script will set up a [Lima](https://github.com/lima-vm/lima) VM and mount your target folders, then set up the `swarm` alias for you to use within:
+As such, you should only run this in a sandbox. This script will set up a [Lima](https://github.com/lima-vm/lima) VM with [Docker](https://www.docker.com/products/docker-desktop/) and mount the provided folders, then set up the `swarm` alias for you to use within:
 
 ```bash
 # Wherever you checked this out:
@@ -24,53 +24,38 @@ USAGE:
     swarm [OPTIONS] [COMMAND]
 
 COMMANDS:
-    init              Initialize a new swarm project (creates .swarm-hug/)
-    run               Run sprints until done or max-sprints reached (default)
-    sprint            Run exactly one sprint
-    plan              Run sprint planning only (assign tasks)
-    status            Show task counts and recent chat lines
-    agents            List agent names and initials
-    teams             List all teams and their assigned agents
-    team init <name>  Initialize a new team
-    worktrees         List active git worktrees
-    worktrees-branch  List worktree branches
-    cleanup           Remove worktrees and branches
-    customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
+    init                  Initialize a new swarm repo (creates .swarm-hug/)
+    run                   Run sprints until done or max-sprints reached (default)
+    sprint                Run exactly one sprint
+    plan                  Run sprint planning only (assign tasks)
+    status                Show task counts and recent chat lines
+    agents                List agent names and initials
+    projects              List all projects and their assigned agents
+    project init <name>   Initialize a new project
+                          Use --with-prd <file> to auto-generate tasks from a PRD
+    worktrees             List active git worktrees
+    worktrees-branch      List worktree branches
+    cleanup               Remove worktrees and branches
+    customize-prompts     Copy prompts to .swarm-hug/prompts/ for customization
+    set-email <email>     Set co-author email for commits (stored in .swarm-hug/email.txt)
 
 OPTIONS:
-    -h, --help              Show this help message
-    -V, --version           Show version
-    -c, --config <PATH>     Path to config file (default: swarm.toml)
-    -t, --team <NAME>       Team to operate on (uses .swarm-hug/<team>/)
-    --max-agents <N>        Maximum number of agents to spawn
-    --tasks-per-agent <N>   Tasks to assign per agent per sprint
-    --tasks-file <PATH>     Path to tasks file (default: tasks.md in team dir)
-    --chat-file <PATH>      Path to chat file (default: chat.md in team dir)
-    --log-dir <PATH>        Path to log directory (default: loop/ in team dir)
-    --engine <TYPE>         Engine type: claude, codex, stub
-    --stub                  Enable stub mode for testing
-    --max-sprints <N>       Maximum sprints to run (0 = unlimited)
-    --no-tail               Don't tail chat.md during run
+    -h, --help                Show this help message
+    -V, --version             Show version
+    -c, --config <PATH>       Path to config file [default: swarm.toml]
+    -p, --project <NAME>      Project to operate on (uses .swarm-hug/<project>/)
+    --max-agents <N>          Maximum number of agents to spawn [default: 3]
+    --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: 2]
+    --agent-timeout <SECS>    Agent execution timeout in seconds [default: 3600]
+    --tasks-file <PATH>       Path to tasks file [default: <project>/tasks.md]
+    --chat-file <PATH>        Path to chat file [default: <project>/chat.md]
+    --log-dir <PATH>          Path to log directory [default: <project>/loop/]
+    --engine <TYPE>           Engine type: claude, codex, stub [default: claude]
+    --stub                    Enable stub mode for testing [default: false]
+    --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
+    --no-tail                 Don't tail chat.md during run [default: false]
+    --no-tui                  Disable TUI mode (use plain text output) [default: false]
 ```
-
-## Agent Assignments
-
-Agents are assigned alphabetically (Aaron, Betty, Carlos, etc.) and tracked in `.swarm-hug/assignments.toml`:
-
-```toml
-# Agent Assignments
-# An agent can only be assigned to one team at a time.
-
-[agents]
-A = "authentication"
-B = "authentication"
-C = "payments"
-D = "payments"
-```
-
-An agent working on one team cannot be assigned to another until released.
-Assignments are claimed during planning/run and released on `swarm cleanup` or `swarm merge`.
-
 
 ## Requirements for init_lima.sh
 
@@ -78,7 +63,7 @@ Assignments are claimed during planning/run and released on `swarm cleanup` or `
 
 ## Development
 
-Within the vm, you can rebuild `swarm` with this command:
+If you change the source files, you can rebuild `swarm` inside the VM using:
 
 ```bash
 rebuild-swarm    # Alias that rebuilds and reports success
