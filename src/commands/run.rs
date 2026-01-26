@@ -15,7 +15,7 @@ use swarm::task::{TaskList, TaskStatus};
 use swarm::team::{self, Assignments};
 
 use crate::git::commit_task_assignments;
-use crate::project_name_for_config;
+use crate::project::project_name_for_config;
 use crate::tail::tail_follow;
 use crate::runner::run_sprint;
 

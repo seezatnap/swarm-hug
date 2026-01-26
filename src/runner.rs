@@ -22,7 +22,7 @@ use crate::git::{
     get_current_commit, get_git_log_range,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
-use crate::{project_name_for_config, release_assignments_for_project};
+use crate::project::{project_name_for_config, release_assignments_for_project};
 
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]

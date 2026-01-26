@@ -5,7 +5,7 @@ use swarm::config::Config;
 use swarm::team::Assignments;
 use swarm::worktree;
 
-use crate::{project_name_for_config, release_assignments_for_project};
+use crate::project::{project_name_for_config, release_assignments_for_project};
 
 /// List active worktrees.
 pub fn cmd_worktrees(config: &Config) -> Result<(), String> {
