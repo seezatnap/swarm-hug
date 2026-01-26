@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use swarm::agent;
 use swarm::chat;
+use swarm::color::{self, emoji};
 use swarm::config::{self, Command, Config};
 use swarm::engine;
 use swarm::lifecycle::LifecycleTracker;
@@ -259,9 +260,11 @@ fn release_assignments_for_team(team_name: &str, initials: &[char]) -> Result<us
 const MAX_CONSECUTIVE_FAILURES: usize = 3;
 
 fn cmd_run(config: &Config) -> Result<(), String> {
-    println!("Running swarm (max_sprints={}, engine={})...",
-             if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() },
-             config.engines_display());
+    println!("{} {} (max_sprints={}, engine={})...",
+             emoji::ROCKET,
+             color::label("Running swarm"),
+             color::number(if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() }),
+             color::info(&config.engines_display()));
 
     // Clear chat.md and write boot message before the first sprint
     chat::write_boot_message(&config.files_chat)
@@ -292,7 +295,7 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
         // Check for shutdown request before starting new sprint
         if shutdown::requested() {
-            println!("Shutdown requested, not starting new sprint.");
+            println!("{} Shutdown requested, not starting new sprint.", emoji::STOP);
             interrupted = true;
             break;
         }
@@ -320,7 +323,7 @@ fn cmd_run(config: &Config) -> Result<(), String> {
         let sprint_result = result?;
 
         if sprint_result.tasks_assigned == 0 {
-            println!("No tasks to assign, sprints complete.");
+            println!("{} No tasks to assign, sprints complete.", emoji::PARTY);
             break;
         }
 
@@ -329,14 +332,17 @@ fn cmd_run(config: &Config) -> Result<(), String> {
             consecutive_failures += 1;
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                 println!();
-                println!("⚠️  WARNING: {} consecutive sprints with all tasks failing.", consecutive_failures);
+                println!("{} {}: {} consecutive sprints with all tasks failing.",
+                         emoji::WARNING,
+                         color::warning("WARNING"),
+                         color::failed(&consecutive_failures.to_string()));
                 println!("   This usually indicates a configuration or authentication issue.");
                 println!("   Please check:");
                 println!("     - CLI authentication (run 'claude' or 'codex login' to authenticate)");
                 println!("     - Engine configuration (--engine flag or swarm.toml)");
                 println!("     - File permissions in worktrees directory");
                 println!();
-                println!("Stopping to prevent further failed sprints.");
+                println!("{} Stopping to prevent further failed sprints.", emoji::STOP);
                 break;
             }
         } else {
@@ -349,7 +355,7 @@ fn cmd_run(config: &Config) -> Result<(), String> {
     }
 
     if interrupted {
-        println!("Graceful shutdown complete.");
+        println!("{} Graceful shutdown complete.", emoji::WAVE);
     }
 
     if let Some(stop) = tail_stop {
@@ -364,11 +370,17 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 
 /// Run exactly one sprint.
 fn cmd_sprint(config: &Config) -> Result<(), String> {
-    println!("Running single sprint (engine={})...", config.engines_display());
+    println!("{} {} (engine={})...",
+             emoji::SPRINT,
+             color::label("Running single sprint"),
+             color::info(&config.engines_display()));
     let result = run_sprint(config, 1)?;
     if result.all_failed() {
         println!();
-        println!("⚠️  WARNING: All {} task(s) failed in this sprint.", result.tasks_failed);
+        println!("{} {}: All {} task(s) failed in this sprint.",
+                 emoji::WARNING,
+                 color::warning("WARNING"),
+                 color::failed(&result.tasks_failed.to_string()));
         println!("   This usually indicates a configuration or authentication issue.");
         println!("   Please check CLI authentication (run 'claude' or 'codex login').");
     }
@@ -387,7 +399,7 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
     // Determine how many agents to spawn based on assignable tasks
     let assignable = task_list.assignable_count();
     if assignable == 0 {
-        println!("No assignable tasks found.");
+        println!("{} No assignable tasks found.", emoji::CHECK);
         return Ok(());
     }
 
@@ -463,11 +475,15 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
         historical_sprint,
     )?;
 
-    println!("{} Sprint {}: assigned {} task(s) to {} agent(s).",
-             formatted_team, historical_sprint, assigned, agent_count);
+    println!("{} {} Sprint {}: assigned {} task(s) to {} agent(s).",
+             emoji::SPRINT,
+             color::info(&formatted_team),
+             color::number(historical_sprint),
+             color::number(assigned),
+             color::number(agent_count));
     for (initial, desc) in &assignments {
         let name = agent::name_from_initial(*initial).unwrap_or("Unknown");
-        println!("  {} ({}): {}", name, initial, desc);
+        println!("  {} {}: {}", emoji::ROBOT, color::agent(name), desc);
     }
 
     Ok(())
@@ -585,15 +601,15 @@ fn cmd_status(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
     let task_list = TaskList::parse(&content);
 
-    println!("Task Status ({}):", config.files_tasks);
-    println!("  Unassigned: {}", task_list.unassigned_count());
-    println!("  Assigned:   {}", task_list.assigned_count());
-    println!("  Completed:  {}", task_list.completed_count());
-    println!("  Assignable: {}", task_list.assignable_count());
-    println!("  Total:      {}", task_list.tasks.len());
+    println!("{} {} ({}):", emoji::TASK, color::label("Task Status"), config.files_tasks);
+    println!("  Unassigned: {}", color::number(task_list.unassigned_count()));
+    println!("  Assigned:   {}", color::warning(&task_list.assigned_count().to_string()));
+    println!("  Completed:  {}", color::completed(&task_list.completed_count().to_string()));
+    println!("  Assignable: {}", color::number(task_list.assignable_count()));
+    println!("  Total:      {}", color::number(task_list.tasks.len()));
 
     // Show recent chat lines
-    println!("\nRecent Chat ({}):", config.files_chat);
+    println!("\n{} {} ({}):", emoji::THINKING, color::label("Recent Chat"), config.files_chat);
     if Path::new(&config.files_chat).exists() {
         match chat::read_recent(&config.files_chat, 5) {
             Ok(lines) => {
@@ -601,7 +617,7 @@ fn cmd_status(config: &Config) -> Result<(), String> {
                     println!("  (no messages)");
                 } else {
                     for line in lines {
-                        println!("  {}", line);
+                        println!("  {}", color::chat_line(&line));
                     }
                 }
             }
@@ -969,7 +985,10 @@ fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -
             .map_err(|e| format!("failed to read {}: {}", path, e))?;
 
         if bytes > 0 {
-            print!("{}", buffer);
+            // Colorize each line of the chat output
+            for line in buffer.lines() {
+                println!("{}", color::chat_line(line));
+            }
             let _ = io::stdout().flush();
             offset += bytes as u64;
         }
@@ -983,7 +1002,11 @@ fn tail_follow(path: &str, allow_missing: bool, stop: Option<Arc<AtomicBool>>) -
 /// Print a banner for starting a sprint.
 fn print_sprint_start_banner(team_name: &str, sprint_number: usize) {
     println!();
-    println!("=== 🚀 STARTING SPRINT: {} Sprint {} ===", team_name, sprint_number);
+    println!("=== {} {}: {} Sprint {} ===",
+             emoji::ROCKET,
+             color::label("STARTING SPRINT"),
+             color::info(team_name),
+             color::number(sprint_number));
     println!();
 }
 
@@ -1000,15 +1023,15 @@ fn print_team_status_banner(
     agent_count: usize,
 ) {
     println!();
-    println!("=== 📊 TEAM STATUS ===");
+    println!("=== {} {} ===", emoji::SPARKLES, color::label("TEAM STATUS"));
     println!();
-    println!("  🏷️  Team: {}", team_name);
-    println!("  🔢 Sprint: {}", sprint_number);
+    println!("  {} Team: {}", emoji::TEAM, color::info(team_name));
+    println!("  {} Sprint: {}", emoji::NUMBER, color::number(sprint_number));
     println!();
-    println!("  ✅ Completed this sprint: {}", completed_this_sprint);
-    println!("  ❌ Failed this sprint: {}", failed_this_sprint);
-    println!("  📋 Remaining tasks: {}", remaining_tasks);
-    println!("  📦 Total tasks: {}", total_tasks);
+    println!("  {} {}: {}", emoji::CHECK, color::completed("Completed this sprint"), color::number(completed_this_sprint));
+    println!("  {} {}: {}", emoji::CROSS, color::failed("Failed this sprint"), color::number(failed_this_sprint));
+    println!("  {} Remaining tasks: {}", emoji::TASK, color::number(remaining_tasks));
+    println!("  {} Total tasks: {}", emoji::PACKAGE, color::number(total_tasks));
     println!();
 
     // Calculate timing stats
@@ -1017,9 +1040,9 @@ fn print_team_status_banner(
         let avg_secs = total_secs / task_durations.len() as f64;
         let avg_duration = Duration::from_secs_f64(avg_secs);
 
-        println!("  ⏱️  Agent Performance:");
-        println!("     Tasks completed: {}", task_durations.len());
-        println!("     Avg task duration: {}", format_duration(avg_duration));
+        println!("  {} {}:", emoji::CLOCK, color::label("Agent Performance"));
+        println!("     Tasks completed: {}", color::number(task_durations.len()));
+        println!("     Avg task duration: {}", color::info(&format_duration(avg_duration)));
 
         // Estimate time remaining (accounting for parallel agents)
         if remaining_tasks > 0 && agent_count > 0 {
@@ -1037,11 +1060,15 @@ fn print_team_status_banner(
             // Divide by agent count since agents work in parallel
             let estimated_secs = (avg_secs * implied_remaining as f64) / agent_count as f64;
             let estimated_duration = Duration::from_secs_f64(estimated_secs);
-            println!("     Est. time remaining: {} ({} tasks, {} agents)", format_duration(estimated_duration), implied_remaining, agent_count);
+            println!("     {} Est. time remaining: {} ({} tasks, {} agents)",
+                     emoji::HOURGLASS,
+                     color::info(&format_duration(estimated_duration)),
+                     color::number(implied_remaining),
+                     color::number(agent_count));
         }
     }
     println!();
-    println!("======================");
+    println!("==========================");
     println!();
 }
 
@@ -1222,8 +1249,12 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     // This will be used to determine git range for post-sprint review
     let sprint_start_commit = get_current_commit().unwrap_or_else(|| "HEAD".to_string());
 
-    println!("{} Sprint {}: assigned {} task(s) to {} agent(s)",
-             formatted_team, historical_sprint, assigned, agent_count);
+    println!("{} {} Sprint {}: assigned {} task(s) to {} agent(s)",
+             emoji::SPRINT,
+             color::info(&formatted_team),
+             color::number(historical_sprint),
+             color::number(assigned),
+             color::number(agent_count));
 
     // Clean up any existing worktrees for assigned agents before creating new ones
     // This ensures a clean slate from master for each sprint
@@ -1517,8 +1548,13 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     // Log lifecycle summary
     let tracker_guard = tracker.lock().unwrap();
     let (_, _, _, terminated) = tracker_guard.counts();
-    println!("  Lifecycle: {} agents terminated ({} success, {} failed)",
-             terminated, tracker_guard.success_count(), tracker_guard.failure_count());
+    println!("  {} Lifecycle: {} agents terminated ({} {}, {} {})",
+             emoji::ROBOT,
+             color::number(terminated),
+             color::completed(&tracker_guard.success_count().to_string()),
+             color::success("success"),
+             color::failed(&tracker_guard.failure_count().to_string()),
+             color::error("failed"));
     drop(tracker_guard);
 
     // Write final task state

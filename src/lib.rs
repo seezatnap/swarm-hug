@@ -15,6 +15,7 @@
 
 pub mod agent;
 pub mod chat;
+pub mod color;
 pub mod config;
 pub mod engine;
 pub mod lifecycle;

@@ -6,6 +6,26 @@ use tempfile::TempDir;
 
 use swarm::task::{TaskList, TaskStatus};
 
+/// Strip ANSI escape codes from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip until we hit a letter (which ends the escape sequence)
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 fn run_success(cmd: &mut Command) -> Output {
     let output = cmd.output().expect("failed to run command");
     assert!(
@@ -248,7 +268,7 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
         .args(["--team", team_name, "status"])
         .current_dir(repo_path);
     let output = run_success(&mut status_cmd);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
 
     assert!(stdout.contains("Unassigned: 2"));
     assert!(stdout.contains("Assigned:   1"));
@@ -305,7 +325,7 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
         ])
         .current_dir(repo_path);
     let output = run_success(&mut run_cmd);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
 
     // Verify all 3 sprints were executed
     assert!(
