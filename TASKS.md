@@ -20,4 +20,4 @@
 - [x] (#11) Add test verifying follow-up tickets match prd-to-task formatting and numbering (blocked by #6)
 
 ## Documentation
-- [ ] (#12) Update README/runbook to document chat persistence, sprint status output, heartbeat logs, and follow-up ticket format (blocked by #2, #3, #6)
+- [x] (#12) Update README/runbook to document chat persistence, sprint status output, heartbeat logs, and follow-up ticket format (blocked by #2, #3, #6)

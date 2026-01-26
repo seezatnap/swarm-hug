@@ -63,6 +63,13 @@ OPTIONS:
     --no-tui                  Disable TUI mode (use plain text output) [default: false]
 ```
 
+## Runbook
+
+- Chat history is cleared once when `swarm run` starts, then preserved across all sprints in that run.
+- After each sprint completes, `SPRINT STATUS` summary lines are appended to `chat.md`.
+- While agents are running, a heartbeat line is appended to `chat.md` roughly every 5 minutes; it stops when agents finish.
+- Sprint follow-up tickets use the prd-to-task format: `- [ ] (#123) description (blocked by #100, #101)`.
+
 ## Requirements for init_lima.sh
 
 - Lima (`limactl`) and Docker installed on the host
