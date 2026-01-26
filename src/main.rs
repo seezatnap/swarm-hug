@@ -7,6 +7,7 @@ use swarm::shutdown;
 mod commands;
 mod git;
 mod output;
+mod project;
 mod runner;
 mod tail;
 
