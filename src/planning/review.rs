@@ -158,6 +158,19 @@ mod tests {
     }
 
     #[test]
+    fn test_follow_up_tasks_use_prd_format_and_sequential_numbers() {
+        let response = "- [ ] Investigate timeouts (blocked by #2, #3)\n- [ ] (#9) Write docs";
+        let follow_ups = parse_review_response(response);
+        let formatted = format_follow_up_tasks(12, &follow_ups);
+        assert_eq!(formatted.len(), 2);
+        assert_eq!(
+            formatted[0],
+            "- [ ] (#12) Investigate timeouts (blocked by #2, #3)"
+        );
+        assert_eq!(formatted[1], "- [ ] (#13) Write docs");
+    }
+
+    #[test]
     fn test_generate_review_prompt() {
         let tasks = "- [x] Done task\n- [ ] Pending task\n";
         let git_log = "commit abc123\nAuthor: Agent Aaron\n\nCompleted task";
