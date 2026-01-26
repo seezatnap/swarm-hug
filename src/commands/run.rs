@@ -14,7 +14,9 @@ use swarm::shutdown;
 use swarm::task::{TaskList, TaskStatus};
 use swarm::team::{self, Assignments};
 
-use crate::{commit_task_assignments, project_name_for_config, tail_follow};
+use crate::git::commit_task_assignments;
+use crate::project_name_for_config;
+use crate::tail::tail_follow;
 use crate::runner::run_sprint;
 
 /// Run sprints until done or max-sprints reached.

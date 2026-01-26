@@ -17,11 +17,12 @@ use swarm::task::TaskList;
 use swarm::team::{self, Assignments};
 use swarm::worktree::{self, Worktree};
 
-use crate::{
+use crate::git::{
     commit_agent_work, commit_files, commit_sprint_completion, commit_task_assignments,
-    get_current_commit, get_git_log_range, print_sprint_start_banner, print_team_status_banner,
-    project_name_for_config, release_assignments_for_project,
+    get_current_commit, get_git_log_range,
 };
+use crate::output::{print_sprint_start_banner, print_team_status_banner};
+use crate::{project_name_for_config, release_assignments_for_project};
 
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
