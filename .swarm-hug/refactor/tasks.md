@@ -19,11 +19,11 @@
 
 ## Preventive splits for near-threshold files
 
-- [A] (#9) Split `src/planning.rs` into `src/planning/{assign.rs,review.rs,prd.rs,parse.rs,mod.rs}` with re-exports and no logic changes
-- [B] (#10) Split `src/engine.rs` into `src/engine/{mod.rs,claude.rs,codex.rs,stub.rs,util.rs}` with re-exports and no logic changes
-- [C] (#11) Split `src/worktree.rs` into `src/worktree/{git.rs,create.rs,cleanup.rs,list.rs}` with re-exports and no logic changes
-- [A] (#12) Split `src/task.rs` into `src/task/{model.rs,parse.rs,assign.rs,tests.rs}` with re-exports and no logic changes
-- [B] (#13) Split `src/team.rs` into `src/team/{team.rs,assignments.rs,sprint_history.rs}` with re-exports and no logic changes
+- [C] (#9) Split `src/planning.rs` into `src/planning/{assign.rs,review.rs,prd.rs,parse.rs,mod.rs}` with re-exports and no logic changes
+- [A] (#10) Split `src/engine.rs` into `src/engine/{mod.rs,claude.rs,codex.rs,stub.rs,util.rs}` with re-exports and no logic changes
+- [B] (#11) Split `src/worktree.rs` into `src/worktree/{git.rs,create.rs,cleanup.rs,list.rs}` with re-exports and no logic changes
+- [B] (#12) Split `src/task.rs` into `src/task/{model.rs,parse.rs,assign.rs,tests.rs}` with re-exports and no logic changes
+- [A] (#13) Split `src/team.rs` into `src/team/{team.rs,assignments.rs,sprint_history.rs}` with re-exports and no logic changes
 - [ ] (#14) Resolve visibility/import issues across new modules and remove unused imports (blocked by #9, #10, #11, #12, #13)
 
 ## Validation
