@@ -17,7 +17,7 @@
 - [x] (#6) Verify `Config::load` and `parse_args` behavior remains identical after split; update imports as needed (blocked by #5)
 
 ## TUI module split
-- [ ] (#7) Create `src/tui` module with `app.rs`, `message.rs`, `render.rs`, `ansi.rs`, `process.rs`, `tail.rs`, `run.rs`, and `mod.rs`; move code preserving behavior
+- [x] (#7) Create `src/tui` module with `app.rs`, `message.rs`, `render.rs`, `ansi.rs`, `process.rs`, `tail.rs`, `run.rs`, and `mod.rs`; move code preserving behavior
 - [ ] (#8) Rewire `run_tui` entrypoint and ensure key handling and subprocess behavior are unchanged (blocked by #7)
 
 ## Preventive splits for near-threshold files
