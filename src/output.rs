@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use swarm::color::{self, emoji};
+use swarm::config;
 
 /// Print a banner for starting a sprint.
 pub(crate) fn print_sprint_start_banner(team_name: &str, sprint_number: usize) {
@@ -73,6 +74,68 @@ pub(crate) fn print_team_status_banner(
     println!();
     println!("==========================");
     println!();
+}
+
+pub(crate) fn print_help() {
+    println!(
+        r#"swarm - multi-agent sprint-based orchestration system
+
+USAGE:
+    swarm [OPTIONS] [COMMAND]
+
+COMMANDS:
+    init                  Initialize a new swarm repo (creates .swarm-hug/)
+    run                   Run sprints until done or max-sprints reached (default)
+    sprint                Run exactly one sprint
+    plan                  Run sprint planning only (assign tasks)
+    status                Show task counts and recent chat lines
+    agents                List agent names and initials
+    projects              List all projects and their assigned agents
+    project init <name>   Initialize a new project
+                          Use --with-prd <file> to auto-generate tasks from a PRD
+    worktrees             List active git worktrees
+    worktrees-branch      List worktree branches
+    cleanup               Remove worktrees and branches
+    customize-prompts     Copy prompts to .swarm-hug/prompts/ for customization
+    set-email <email>     Set co-author email for commits (stored in .swarm-hug/email.txt)
+
+OPTIONS:
+    -h, --help                Show this help message
+    -V, --version             Show version
+    -c, --config <PATH>       Path to config file [default: swarm.toml]
+    -p, --project <NAME>      Project to operate on (uses .swarm-hug/<project>/)
+    --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
+    --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
+    --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
+    --tasks-file <PATH>       Path to tasks file [default: <project>/tasks.md]
+    --chat-file <PATH>        Path to chat file [default: <project>/chat.md]
+    --log-dir <PATH>          Path to log directory [default: <project>/loop/]
+    --engine <TYPE>           Engine type: claude, codex, stub [default: claude]
+    --stub                    Enable stub mode for testing [default: false]
+    --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
+    --no-tail                 Don't tail chat.md during run [default: false]
+    --no-tui                  Disable TUI mode (use plain text output) [default: false]
+
+MULTI-PROJECT MODE:
+    All config and artifacts live in .swarm-hug/:
+      .swarm-hug/assignments.toml       Agent-to-project assignments
+      .swarm-hug/<project>/tasks.md     Project's task list
+      .swarm-hug/<project>/chat.md      Project's chat log
+      .swarm-hug/<project>/loop/        Project's agent logs
+      .swarm-hug/<project>/worktrees/   Project's git worktrees
+
+EXAMPLES:
+    swarm init                            Initialize .swarm-hug/ structure
+    swarm project init authentication     Create a new project
+    swarm project init payments           Create another project
+    swarm projects                        List all projects
+    swarm --project authentication run    Run sprints for authentication project
+    swarm -p payments status              Show status for payments project
+"#,
+        max_agents = 3,
+        tasks_per_agent = 2,
+        timeout = config::DEFAULT_AGENT_TIMEOUT_SECS,
+    );
 }
 
 /// Format a duration in human-readable form.
