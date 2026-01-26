@@ -17,12 +17,12 @@
 
 ## Testing
 
-- [A] (#7) Add regression test for chat history persistence across consecutive sprints in a single run (blocked by #1)
-- [A] (#8) Add regression test asserting sprint status summary is appended to chat after sprint completion (blocked by #2)
-- [B] (#9) Add test covering 5‑minute heartbeat log cadence and shutdown when agents finish (blocked by #3)
-- [B] (#10) Add tests asserting planning and post‑mortem start messages are written to chat (blocked by #4, #5)
-- [B] (#11) Add test verifying follow‑up tickets match prd‑to‑task formatting and numbering (blocked by #6)
+- [x] (#7) Add regression test for chat history persistence across consecutive sprints in a single run (blocked by #1) (A)
+- [x] (#8) Add regression test asserting sprint status summary is appended to chat after sprint completion (blocked by #2) (A)
+- [x] (#9) Add test covering 5‑minute heartbeat log cadence and shutdown when agents finish (blocked by #3) (B)
+- [x] (#10) Add tests asserting planning and post‑mortem start messages are written to chat (blocked by #4, #5) (B)
+- [x] (#11) Add test verifying follow‑up tickets match prd‑to‑task formatting and numbering (blocked by #6) (B)
 
 ## Documentation
 
-- [A] (#12) Update README/runbook to document chat persistence, sprint status output, heartbeat logs, and follow‑up ticket format (blocked by #1, #2, #3, #4, #5, #6)
+- [x] (#12) Update README/runbook to document chat persistence, sprint status output, heartbeat logs, and follow‑up ticket format (blocked by #1, #2, #3, #4, #5, #6) (A)
