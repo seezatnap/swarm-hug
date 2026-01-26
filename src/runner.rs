@@ -95,6 +95,14 @@ pub(crate) fn run_sprint(
     );
     let log_dir = Path::new(&config.files_log_dir);
 
+    if let Err(e) = chat::write_message(
+        &config.files_chat,
+        "ScrumMaster",
+        "Sprint planning started",
+    ) {
+        eprintln!("warning: failed to write chat: {}", e);
+    }
+
     let plan_result = planning::run_llm_assignment(
         engine.as_ref(),
         &task_list,

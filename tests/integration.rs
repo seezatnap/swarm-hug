@@ -134,6 +134,7 @@ fn test_swarm_run_stub_integration() {
     assert_eq!(completed_initials, vec!['A', 'B']);
 
     let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
+    assert!(chat_content.contains("Sprint planning started"));
     assert!(chat_content.contains("Sprint 1 plan: 2 task(s) assigned"));
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
