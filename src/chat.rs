@@ -92,6 +92,48 @@ pub fn write_sprint_plan<P: AsRef<Path>>(
     Ok(())
 }
 
+/// Write a sprint status summary to CHAT.md.
+pub fn write_sprint_status<P: AsRef<Path>>(
+    path: P,
+    team_name: &str,
+    sprint_number: usize,
+    completed_this_sprint: usize,
+    failed_this_sprint: usize,
+    remaining_tasks: usize,
+    total_tasks: usize,
+) -> io::Result<()> {
+    let header = format!(
+        "SPRINT STATUS: {} Sprint {} complete",
+        team_name, sprint_number
+    );
+    write_message(&path, "ScrumMaster", &header)?;
+    write_message(
+        &path,
+        "ScrumMaster",
+        &format!(
+            "SPRINT STATUS: Completed this sprint: {}",
+            completed_this_sprint
+        ),
+    )?;
+    write_message(
+        &path,
+        "ScrumMaster",
+        &format!("SPRINT STATUS: Failed this sprint: {}", failed_this_sprint),
+    )?;
+    write_message(
+        &path,
+        "ScrumMaster",
+        &format!("SPRINT STATUS: Remaining tasks: {}", remaining_tasks),
+    )?;
+    write_message(
+        &path,
+        "ScrumMaster",
+        &format!("SPRINT STATUS: Total tasks: {}", total_tasks),
+    )?;
+
+    Ok(())
+}
+
 /// Clear a chat file and write a boot message.
 ///
 /// This clears the chat.md file and writes the "SWARM HUG BOOTING UP" message.
@@ -251,6 +293,21 @@ mod tests {
         assert!(content.contains("Sprint 1 plan: 2 task(s) assigned"));
         assert!(content.contains("Aaron assigned: Task 1"));
         assert!(content.contains("Betty assigned: Task 2"));
+    }
+
+    #[test]
+    fn test_write_sprint_status() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        write_sprint_status(path, "Alpha", 3, 2, 1, 4, 7).unwrap();
+
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("SPRINT STATUS: Alpha Sprint 3 complete"));
+        assert!(content.contains("SPRINT STATUS: Completed this sprint: 2"));
+        assert!(content.contains("SPRINT STATUS: Failed this sprint: 1"));
+        assert!(content.contains("SPRINT STATUS: Remaining tasks: 4"));
+        assert!(content.contains("SPRINT STATUS: Total tasks: 7"));
     }
 
     #[test]

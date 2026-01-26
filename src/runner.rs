@@ -613,6 +613,18 @@ pub(crate) fn run_sprint(
     let remaining_tasks = final_task_list.unassigned_count() + final_task_list.assigned_count();
     let total_tasks = final_task_list.tasks.len();
 
+    if let Err(e) = chat::write_sprint_status(
+        &config.files_chat,
+        &formatted_team,
+        historical_sprint,
+        completed_this_sprint,
+        failed_this_sprint,
+        remaining_tasks,
+        total_tasks,
+    ) {
+        eprintln!("warning: failed to write chat: {}", e);
+    }
+
     // Print team status banner
     print_team_status_banner(
         &formatted_team,
