@@ -13,7 +13,9 @@ You are the scrum master reviewing the work completed during a sprint. Your job 
 - Don't add tasks for things already in TASKS.md
 - Be specific about what needs to be done
 - Keep task descriptions concise
-- Use the existing checkbox format: `- [ ] Task description`
+- Use the checkbox format: `- [ ] Task description`
+- If a follow-up depends on an existing task, append the dependency list: `(blocked by #N)` or `(blocked by #1, #2)`
+- Do NOT include task numbers like `(#123)`; numbering is added automatically
 - If no follow-ups needed, output "NO_FOLLOWUPS_NEEDED"
 
 ## Git Log (commits and changes from this sprint)
@@ -31,6 +33,7 @@ You are the scrum master reviewing the work completed during a sprint. Your job 
 ## Output Format
 
 If follow-up tasks are needed, output ONLY the new tasks to add (one per line, with `- [ ]` prefix).
+Include `(blocked by #N)` when applicable (referencing task numbers already in TASKS.md).
 If no follow-ups needed, output exactly: NO_FOLLOWUPS_NEEDED
 
 Output now:
