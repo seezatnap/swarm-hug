@@ -8,6 +8,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 
+const HEARTBEAT_PREFIX: &str = "AGENT_ACTIVITY:";
+
 /// Format a chat message for CHAT.md.
 ///
 /// # Examples
@@ -31,6 +33,23 @@ pub fn format_message_with_timestamp(timestamp: &str, agent_name: &str, message:
 pub fn write_message<P: AsRef<Path>>(path: P, agent_name: &str, message: &str) -> io::Result<()> {
     let line = format_message(agent_name, message);
     append_line(path, &line)
+}
+
+/// Append a heartbeat message to CHAT.md.
+pub fn write_heartbeat<P: AsRef<Path>>(
+    path: P,
+    agent_name: &str,
+    message: &str,
+) -> io::Result<()> {
+    let msg = format!("{} {}", HEARTBEAT_PREFIX, message);
+    write_message(path, agent_name, &msg)
+}
+
+/// Check if a chat line is a heartbeat entry.
+pub fn is_heartbeat_line(line: &str) -> bool {
+    parse_line(line)
+        .map(|(_, _, message)| message.trim_start().starts_with(HEARTBEAT_PREFIX))
+        .unwrap_or(false)
 }
 
 /// Append a raw line to a file.
@@ -217,6 +236,28 @@ mod tests {
         assert!(content.contains("Aaron"));
         assert!(content.contains("Betty"));
         assert_eq!(content.lines().count(), 2);
+    }
+
+    #[test]
+    fn test_write_heartbeat_and_detect() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        write_heartbeat(path, "Aaron", "Still working").unwrap();
+
+        let content = std::fs::read_to_string(path).unwrap();
+        let line = content.lines().next().unwrap();
+        assert!(is_heartbeat_line(line));
+    }
+
+    #[test]
+    fn test_is_heartbeat_line_false_for_normal_message() {
+        let line = format_message_with_timestamp(
+            "2024-01-15 10:30:00",
+            "Aaron",
+            "Starting task",
+        );
+        assert!(!is_heartbeat_line(&line));
     }
 
     #[test]

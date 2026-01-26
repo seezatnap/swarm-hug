@@ -3,7 +3,7 @@
 ## Sprint Lifecycle Logging
 - [x] (#1) Move chat reset to `swarm run` initialization so chat persists across sprints within a single run
 - [x] (#2) Append SPRINT STATUS summary lines to chat after each sprint completes (A)
-- [ ] (#3) Restore 5-minute heartbeat/agent-activity chat logs while agents run, not visible in TUI
+- [x] (#3) Restore 5-minute heartbeat/agent-activity chat logs while agents run, not visible in TUI
 
 ## Agent Start Messaging
 - [x] (#4) Emit a "planning started" chat entry when the sprint planning agent begins processing
@@ -15,7 +15,7 @@
 ## Testing
 - [ ] (#7) Add regression test for chat history persistence across consecutive sprints in a single run
 - [x] (#8) Add regression test asserting sprint status summary is appended to chat after sprint completion (blocked by #2) (A)
-- [ ] (#9) Add test covering 5-minute heartbeat log cadence and shutdown when agents finish (blocked by #3)
+- [x] (#9) Add test covering 5-minute heartbeat log cadence and shutdown when agents finish
 - [x] (#10) Add tests asserting planning and post-mortem start messages are written to chat
 - [ ] (#11) Add test verifying follow-up tickets match prd-to-task formatting and numbering (blocked by #6)
 
