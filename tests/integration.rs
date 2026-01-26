@@ -4,6 +4,7 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+use swarm::chat;
 use swarm::task::{TaskList, TaskStatus};
 
 /// Strip ANSI escape codes from a string.
@@ -24,6 +25,14 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     result
+}
+
+fn chat_contains_message(chat_content: &str, agent: &str, message: &str) -> bool {
+    chat_content.lines().any(|line| {
+        chat::parse_line(line)
+            .map(|(_, line_agent, line_message)| line_agent == agent && line_message == message)
+            .unwrap_or(false)
+    })
 }
 
 fn run_success(cmd: &mut Command) -> Output {
@@ -134,8 +143,16 @@ fn test_swarm_run_stub_integration() {
     assert_eq!(completed_initials, vec!['A', 'B']);
 
     let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
-    assert!(chat_content.contains("Sprint planning started"));
-    assert!(chat_content.contains("Post-mortem started"));
+    assert!(chat_contains_message(
+        &chat_content,
+        "ScrumMaster",
+        "Sprint planning started"
+    ));
+    assert!(chat_contains_message(
+        &chat_content,
+        "ScrumMaster",
+        "Post-mortem started"
+    ));
     assert!(chat_content.contains("Sprint 1 plan: 2 task(s) assigned"));
     assert!(chat_content.contains("SPRINT STATUS: Alpha Sprint 1 complete"));
     assert!(chat_content.contains("SPRINT STATUS: Completed this sprint: 2"));
