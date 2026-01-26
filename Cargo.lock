@@ -697,6 +697,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "ctrlc",
+ "libc",
  "rand",
  "ratatui",
  "tempfile",

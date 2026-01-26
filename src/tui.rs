@@ -774,6 +774,38 @@ fn parse_sgr_codes(code: &str, mut style: Style) -> Style {
     style
 }
 
+/// Kill a process and all its children (process group).
+#[cfg(unix)]
+fn kill_process_tree(pid: u32) {
+    use std::process::Command;
+    // First try SIGTERM to the process group (negative PID)
+    let _ = Command::new("kill")
+        .args(["-TERM", "--", &format!("-{}", pid)])
+        .status();
+
+    // Give processes a moment to clean up
+    thread::sleep(Duration::from_millis(100));
+
+    // Then SIGKILL to make sure everything is dead
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", pid)])
+        .status();
+
+    // Also kill direct children that might have escaped
+    let _ = Command::new("pkill")
+        .args(["-KILL", "-P", &pid.to_string()])
+        .status();
+}
+
+#[cfg(not(unix))]
+fn kill_process_tree(pid: u32) {
+    // On Windows, use taskkill /T to kill tree
+    use std::process::Command;
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .status();
+}
+
 /// Run the TUI with a subprocess that does the actual work.
 ///
 /// This spawns the swarm command as a subprocess to avoid stdout corruption.
@@ -795,12 +827,32 @@ pub fn run_tui_with_subprocess(chat_path: &str, args: Vec<String>) -> io::Result
     let proc_handle = thread::spawn(move || {
         thread::sleep(Duration::from_millis(100));
 
-        let mut child = match Command::new(&exe_path)
+        // On Unix, create a new process group so we can kill all children
+        #[cfg(unix)]
+        let child_result = {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                Command::new(&exe_path)
+                    .args(&args)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .pre_exec(|| {
+                        // Create new process group with this process as leader
+                        libc::setpgid(0, 0);
+                        Ok(())
+                    })
+                    .spawn()
+            }
+        };
+
+        #[cfg(not(unix))]
+        let child_result = Command::new(&exe_path)
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()
-        {
+            .spawn();
+
+        let mut child = match child_result {
             Ok(c) => c,
             Err(e) => {
                 let _ = tx_clone.send(TuiMessage::AppendLine(
@@ -811,9 +863,16 @@ pub fn run_tui_with_subprocess(chat_path: &str, args: Vec<String>) -> io::Result
             }
         };
 
+        let child_pid = child.id();
+
         loop {
             if stop_for_proc.load(Ordering::SeqCst) {
+                // Kill the entire process tree
+                kill_process_tree(child_pid);
+                // Also try the normal kill
                 let _ = child.kill();
+                // Wait for it to actually exit
+                let _ = child.wait();
                 break;
             }
 
