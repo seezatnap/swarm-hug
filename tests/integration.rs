@@ -91,7 +91,7 @@ fn test_swarm_run_stub_integration() {
 
     let mut team_init_cmd = Command::new(swarm_bin);
     team_init_cmd
-        .args(["team", "init", team_name])
+        .args(["project", "init", team_name])
         .current_dir(repo_path);
     run_success(&mut team_init_cmd);
 
@@ -103,13 +103,14 @@ fn test_swarm_run_stub_integration() {
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
-            "--team",
+            "--project",
             team_name,
             "--stub",
             "--max-sprints",
             "1",
             "--tasks-per-agent",
             "1",
+            "--no-tui",
             "--no-tail",
             "run",
         ])
@@ -212,7 +213,7 @@ fn test_swarm_plan_writes_chat_summary() {
 
     let mut team_init_cmd = Command::new(swarm_bin);
     team_init_cmd
-        .args(["team", "init", team_name])
+        .args(["project", "init", team_name])
         .current_dir(repo_path);
     run_success(&mut team_init_cmd);
 
@@ -223,7 +224,7 @@ fn test_swarm_plan_writes_chat_summary() {
 
     let mut plan_cmd = Command::new(swarm_bin);
     plan_cmd
-        .args(["--team", team_name, "--tasks-per-agent", "1", "plan"])
+        .args(["--project", team_name, "--tasks-per-agent", "1", "plan"])
         .current_dir(repo_path);
     run_success(&mut plan_cmd);
 
@@ -244,7 +245,7 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
 
     let mut team_init_cmd = Command::new(swarm_bin);
     team_init_cmd
-        .args(["team", "init", team_name])
+        .args(["project", "init", team_name])
         .current_dir(repo_path);
     run_success(&mut team_init_cmd);
 
@@ -265,7 +266,7 @@ fn test_swarm_status_shows_counts_and_recent_chat() {
 
     let mut status_cmd = Command::new(swarm_bin);
     status_cmd
-        .args(["--team", team_name, "status"])
+        .args(["--project", team_name, "status"])
         .current_dir(repo_path);
     let output = run_success(&mut status_cmd);
     let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
@@ -297,7 +298,7 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
     // Initialize team
     let mut team_init_cmd = Command::new(swarm_bin);
     team_init_cmd
-        .args(["team", "init", team_name])
+        .args(["project", "init", team_name])
         .current_dir(repo_path);
     run_success(&mut team_init_cmd);
 
@@ -311,7 +312,7 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
-            "--team",
+            "--project",
             team_name,
             "--stub",
             "--max-sprints",
@@ -320,6 +321,7 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
             "1",
             "--max-agents",
             "2",
+            "--no-tui",
             "--no-tail",
             "run",
         ])
@@ -401,4 +403,3 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
         stdout
     );
 }
-
