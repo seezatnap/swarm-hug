@@ -124,7 +124,12 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn heartbeat_logs_and_stops() {
+    fn default_interval_is_five_minutes() {
+        assert_eq!(default_interval(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn heartbeat_logs_and_stops_on_drop() {
         let tmp = NamedTempFile::new().unwrap();
         let interval = Duration::from_millis(100);
 
@@ -136,7 +141,7 @@ mod tests {
         );
 
         thread::sleep(interval * 4);
-        guard.stop();
+        drop(guard);
 
         let content = fs::read_to_string(tmp.path()).unwrap();
         let heartbeat_count = content

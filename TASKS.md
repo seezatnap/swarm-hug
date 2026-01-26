@@ -13,9 +13,9 @@
 - [x] (#6) Update sprint follow-up ticket generator to output prd-to-task format `- [ ] (#N) description (blocked by #M)` with proper numbering and blocked-by list
 
 ## Testing
+- [x] (#9) Add test covering 5-minute heartbeat log cadence and shutdown when agents finish
 - [ ] (#7) Add regression test for chat history persistence across consecutive sprints in a single run
 - [x] (#8) Add regression test asserting sprint status summary is appended to chat after sprint completion (blocked by #2) (A)
-- [x] (#9) Add test covering 5-minute heartbeat log cadence and shutdown when agents finish
 - [x] (#10) Add tests asserting planning and post-mortem start messages are written to chat
 - [ ] (#11) Add test verifying follow-up tickets match prd-to-task formatting and numbering (blocked by #6)
 
