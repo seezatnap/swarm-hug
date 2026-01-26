@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -31,8 +32,10 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
              color::info(&config.engines_display()));
 
     // Clear chat.md and write boot message before the first sprint
-    chat::write_boot_message(&config.files_chat)
-        .map_err(|e| format!("failed to write boot message: {}", e))?;
+    if should_reset_chat() {
+        chat::write_boot_message(&config.files_chat)
+            .map_err(|e| format!("failed to write boot message: {}", e))?;
+    }
 
     let mut tail_stop: Option<Arc<AtomicBool>> = None;
     let mut tail_handle: Option<thread::JoinHandle<()>> = None;
@@ -138,6 +141,12 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
 pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
     use swarm::tui::run_tui_with_subprocess;
 
+    // Clear chat.md before the TUI starts so we preserve the full session history in one run.
+    if should_reset_chat() {
+        chat::write_boot_message(&config.files_chat)
+            .map_err(|e| format!("failed to write boot message: {}", e))?;
+    }
+
     // Build command-line args to re-run swarm with --no-tui (plain text mode)
     let mut args: Vec<String> = Vec::new();
     args.push("run".to_string());
@@ -164,8 +173,35 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
         args.push("--stub".to_string());
     }
 
-    run_tui_with_subprocess(&config.files_chat, args)
+    run_tui_with_subprocess(&config.files_chat, args, true)
         .map_err(|e| format!("TUI error: {}", e))
+}
+
+fn should_reset_chat() -> bool {
+    env::var("SWARM_SKIP_CHAT_RESET").is_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_reset_chat;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn should_reset_chat_defaults_true() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("SWARM_SKIP_CHAT_RESET");
+        assert!(should_reset_chat());
+    }
+
+    #[test]
+    fn should_reset_chat_skips_when_env_set() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SWARM_SKIP_CHAT_RESET", "1");
+        assert!(!should_reset_chat());
+        std::env::remove_var("SWARM_SKIP_CHAT_RESET");
+    }
 }
 
 /// Run exactly one sprint.

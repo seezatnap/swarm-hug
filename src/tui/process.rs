@@ -44,7 +44,11 @@ fn kill_process_tree(pid: u32) {
 ///
 /// This spawns the swarm command as a subprocess to avoid stdout corruption.
 /// The TUI only shows the chat file content (which the subprocess writes to).
-pub fn run_tui_with_subprocess(chat_path: &str, args: Vec<String>) -> io::Result<()> {
+pub fn run_tui_with_subprocess(
+    chat_path: &str,
+    args: Vec<String>,
+    skip_chat_reset: bool,
+) -> io::Result<()> {
     use std::process::{Command, Stdio};
 
     let (tx, rx) = mpsc::channel();
@@ -65,26 +69,34 @@ pub fn run_tui_with_subprocess(chat_path: &str, args: Vec<String>) -> io::Result
         #[cfg(unix)]
         let child_result = {
             use std::os::unix::process::CommandExt;
+            let mut cmd = Command::new(&exe_path);
+            cmd.args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if skip_chat_reset {
+                cmd.env("SWARM_SKIP_CHAT_RESET", "1");
+            }
             unsafe {
-                Command::new(&exe_path)
-                    .args(&args)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .pre_exec(|| {
-                        // Create new process group with this process as leader
-                        libc::setpgid(0, 0);
-                        Ok(())
-                    })
-                    .spawn()
+                cmd.pre_exec(|| {
+                    // Create new process group with this process as leader
+                    libc::setpgid(0, 0);
+                    Ok(())
+                })
+                .spawn()
             }
         };
 
         #[cfg(not(unix))]
-        let child_result = Command::new(&exe_path)
-            .args(&args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+        let child_result = {
+            let mut cmd = Command::new(&exe_path);
+            cmd.args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if skip_chat_reset {
+                cmd.env("SWARM_SKIP_CHAT_RESET", "1");
+            }
+            cmd.spawn()
+        };
 
         let mut child = match child_result {
             Ok(c) => c,
