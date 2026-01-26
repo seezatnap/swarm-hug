@@ -53,10 +53,10 @@ fn main() {
     let result = match command {
         Command::Init => cmd_init(&config),
         Command::Run => {
-            if cli.tui {
-                cmd_run_tui(&config)
-            } else {
+            if cli.no_tui {
                 cmd_run(&config)
+            } else {
+                cmd_run_tui(&config)
             }
         }
         Command::Sprint => cmd_sprint(&config),
@@ -116,7 +116,7 @@ OPTIONS:
     --stub                    Enable stub mode for testing [default: false]
     --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
     --no-tail                 Don't tail chat.md during run [default: false]
-    --tui                     Enable TUI mode with scrollable output [default: false]
+    --no-tui                  Disable TUI mode (use plain text output) [default: false]
 
 MULTI-TEAM MODE:
     All config and artifacts live in .swarm-hug/:
@@ -381,9 +381,10 @@ fn cmd_run(config: &Config) -> Result<(), String> {
 fn cmd_run_tui(config: &Config) -> Result<(), String> {
     use swarm::tui::run_tui_with_subprocess;
 
-    // Build command-line args to re-run swarm without --tui
+    // Build command-line args to re-run swarm with --no-tui (plain text mode)
     let mut args: Vec<String> = Vec::new();
     args.push("run".to_string());
+    args.push("--no-tui".to_string());  // Subprocess uses plain text mode
     args.push("--no-tail".to_string()); // TUI handles display
 
     if let Some(ref team) = config.team {
