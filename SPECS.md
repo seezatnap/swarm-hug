@@ -1,3 +1,4 @@
+<!-- Note: Leaving this here for reference; this was the script I used to rework my previous harness into swarm hug. -->
 # Specifications: swarm-hug
 
 ## Goals

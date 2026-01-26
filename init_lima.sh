@@ -302,6 +302,10 @@ docker --context "$CTX" run -d "${run_args[@]}" "$IMAGE" sleep infinity >/dev/nu
 SSHCONF="$(limactl ls --format='{{.SSHConfigFile}}' "$VM_NAME" 2>/dev/null || true)"
 LIMA_HOST="lima-${VM_NAME}"
 
+# Build swarm binary
+echo "[+] Building swarm..."
+docker --context "$CTX" exec "$CONTAINER_NAME" bash -lc "cd /opt/swarm-hug && cargo build"
+
 echo ""
 echo "Swarm sandbox is up."
 echo ""
@@ -330,10 +334,6 @@ echo "One-time authentication (run inside the container):"
 echo "  codex login"
 echo "  claude"
 echo ""
-
-# Build swarm binary
-echo "[+] Building swarm..."
-docker --context "$CTX" exec "$CONTAINER_NAME" bash -lc "cd /opt/swarm-hug && cargo build"
 
 if [[ "$DO_AUTH" == "1" ]]; then
   echo "[+] Dropping you into the container now for auth (exit when done)..."
