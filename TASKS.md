@@ -4,7 +4,7 @@
 - [x] Write PRD with findings and refactor plan in `prds/refactor_sweep.md`.
 
 ## Current session
-- [x] (#12) Split `src/task.rs` into `src/task/{model.rs,parse.rs,assign.rs,tests.rs}` with re-exports and no logic changes
+- [x] Fix refactor TASKS.md accuracy for #7/#9 (tui/planning splits not done)
 
 ## Commands and runner split
 - [x] (#1) Create `src/commands` module and move CLI command handlers into `init.rs`, `run.rs`, `status.rs`, `agents.rs`, `worktrees.rs`, `projects.rs`, `misc.rs`; re-export via `src/commands/mod.rs`
