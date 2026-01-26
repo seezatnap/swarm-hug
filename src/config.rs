@@ -90,8 +90,8 @@ pub struct Config {
     pub sprints_max: usize,
     /// Disable tailing CHAT.md during run.
     pub no_tail: bool,
-    /// Team name for multi-team mode.
-    pub team: Option<String>,
+    /// Project name for multi-project mode.
+    pub project: Option<String>,
 }
 
 impl Default for Config {
@@ -108,7 +108,7 @@ impl Default for Config {
             engine_stub_mode: false,
             sprints_max: 0,
             no_tail: false,
-            team: None,
+            project: None,
         }
     }
 }
@@ -145,32 +145,32 @@ impl Config {
             config.engine_types = vec![EngineType::Stub];
         }
 
-        // Apply team-based path resolution if team is set and paths weren't explicitly overridden
-        if config.team.is_some() {
-            let team_name = config.team.clone().unwrap();
-            config.apply_team_paths(&team_name, cli_args);
+        // Apply project-based path resolution if project is set and paths weren't explicitly overridden
+        if config.project.is_some() {
+            let project_name = config.project.clone().unwrap();
+            config.apply_project_paths(&project_name, cli_args);
         }
 
         config
     }
 
-    /// Apply team-based path defaults.
+    /// Apply project-based path defaults.
     /// Only applies if the path wasn't explicitly set via CLI.
-    fn apply_team_paths(&mut self, team_name: &str, cli_args: &CliArgs) {
-        let team_root = format!(".swarm-hug/{}", team_name);
+    fn apply_project_paths(&mut self, project_name: &str, cli_args: &CliArgs) {
+        let project_root = format!(".swarm-hug/{}", project_name);
 
         // Only override if not explicitly set
         if cli_args.tasks_file.is_none() {
-            self.files_tasks = format!("{}/tasks.md", team_root);
+            self.files_tasks = format!("{}/tasks.md", project_root);
         }
         if cli_args.chat_file.is_none() {
-            self.files_chat = format!("{}/chat.md", team_root);
+            self.files_chat = format!("{}/chat.md", project_root);
         }
         if cli_args.log_dir.is_none() {
-            self.files_log_dir = format!("{}/loop", team_root);
+            self.files_log_dir = format!("{}/loop", project_root);
         }
-        // Worktrees always use team path when team is set
-        self.files_worktrees_dir = format!("{}/worktrees", team_root);
+        // Worktrees always use project path when project is set
+        self.files_worktrees_dir = format!("{}/worktrees", project_root);
     }
 
     /// Load configuration from a TOML file.
@@ -322,8 +322,8 @@ impl Config {
         if args.no_tail {
             self.no_tail = true;
         }
-        if let Some(ref team) = args.team {
-            self.team = Some(team.clone());
+        if let Some(ref project) = args.project {
+            self.project = Some(project.clone());
         }
     }
 
@@ -435,13 +435,13 @@ pub struct CliArgs {
     pub help: bool,
     /// Show version.
     pub version: bool,
-    /// Team name for multi-team mode.
-    pub team: Option<String>,
-    /// Team name for team-specific subcommands (positional arg).
-    pub team_arg: Option<String>,
+    /// Project name for multi-project mode.
+    pub project: Option<String>,
+    /// Project name for project-specific subcommands (positional arg).
+    pub project_arg: Option<String>,
     /// Email for set-email command (positional arg).
     pub email_arg: Option<String>,
-    /// Path to PRD file for team init --with-prd.
+    /// Path to PRD file for project init --with-prd.
     pub prd_file_arg: Option<String>,
 }
 
@@ -466,10 +466,10 @@ pub enum Command {
     WorktreesBranch,
     /// Clean up worktrees and branches.
     Cleanup,
-    /// List all teams and their assigned agents.
-    Teams,
-    /// Initialize a new team (use with team name argument).
-    TeamInit,
+    /// List all projects and their assigned agents.
+    Projects,
+    /// Initialize a new project (use with project name argument).
+    ProjectInit,
     /// Copy embedded prompts to .swarm-hug/prompts for customization.
     CustomizePrompts,
     /// Set the co-author email for commits.
@@ -489,8 +489,8 @@ impl Command {
             "worktrees" => Some(Self::Worktrees),
             "worktrees-branch" => Some(Self::WorktreesBranch),
             "cleanup" => Some(Self::Cleanup),
-            "teams" => Some(Self::Teams),
-            "team" => Some(Self::TeamInit),
+            "projects" => Some(Self::Projects),
+            "project" => Some(Self::ProjectInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
             "set-email" => Some(Self::SetEmail),
             _ => None,
@@ -544,7 +544,7 @@ where
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
             "-c" | "--config" => cli.config = args.next(),
-            "-t" | "--team" => cli.team = args.next(),
+            "-p" | "--project" => cli.project = args.next(),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),
@@ -559,16 +559,16 @@ where
             "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() => {
                 cli.command = Command::from_str(&arg);
-                // For "team init <name>", capture the next arg as team_arg
-                if cli.command == Some(Command::TeamInit) {
-                    // Check if next arg is "init" (team init <name> format)
+                // For "project init <name>", capture the next arg as project_arg
+                if cli.command == Some(Command::ProjectInit) {
+                    // Check if next arg is "init" (project init <name> format)
                     if let Some(next) = args.peek() {
                         if next == "init" {
                             args.next(); // consume "init"
-                            cli.team_arg = args.next(); // team name
+                            cli.project_arg = args.next(); // project name
                         } else if !next.starts_with('-') {
-                            // Just "team <name>" - treat as team init
-                            cli.team_arg = args.next();
+                            // Just "project <name>" - treat as project init
+                            cli.project_arg = args.next();
                         }
                     }
                 }
@@ -903,8 +903,8 @@ max = 5
         assert_eq!(Command::from_str("worktrees"), Some(Command::Worktrees));
         assert_eq!(Command::from_str("worktrees-branch"), Some(Command::WorktreesBranch));
         assert_eq!(Command::from_str("cleanup"), Some(Command::Cleanup));
-        assert_eq!(Command::from_str("teams"), Some(Command::Teams));
-        assert_eq!(Command::from_str("team"), Some(Command::TeamInit));
+        assert_eq!(Command::from_str("projects"), Some(Command::Projects));
+        assert_eq!(Command::from_str("project"), Some(Command::ProjectInit));
         assert_eq!(Command::from_str("customize-prompts"), Some(Command::CustomizePrompts));
         assert_eq!(Command::from_str("set-email"), Some(Command::SetEmail));
         assert_eq!(Command::from_str("unknown"), None);
@@ -923,37 +923,37 @@ max = 5
     }
 
     #[test]
-    fn test_parse_args_team() {
+    fn test_parse_args_project() {
         let args = vec![
             "swarm".to_string(),
-            "--team".to_string(),
+            "--project".to_string(),
             "authentication".to_string(),
             "run".to_string(),
         ];
         let cli = parse_args(args);
         assert_eq!(cli.command, Some(Command::Run));
-        assert_eq!(cli.team, Some("authentication".to_string()));
+        assert_eq!(cli.project, Some("authentication".to_string()));
     }
 
     #[test]
-    fn test_parse_args_team_init() {
+    fn test_parse_args_project_init() {
         let args = vec![
             "swarm".to_string(),
-            "team".to_string(),
+            "project".to_string(),
             "init".to_string(),
             "payments".to_string(),
         ];
         let cli = parse_args(args);
-        assert_eq!(cli.command, Some(Command::TeamInit));
-        assert_eq!(cli.team_arg, Some("payments".to_string()));
+        assert_eq!(cli.command, Some(Command::ProjectInit));
+        assert_eq!(cli.project_arg, Some("payments".to_string()));
     }
 
     #[test]
-    fn test_team_path_resolution() {
+    fn test_project_path_resolution() {
         let mut cli = CliArgs::default();
-        cli.team = Some("authentication".to_string());
+        cli.project = Some("authentication".to_string());
         let config = Config::load(&cli);
-        assert_eq!(config.team, Some("authentication".to_string()));
+        assert_eq!(config.project, Some("authentication".to_string()));
         assert_eq!(config.files_tasks, ".swarm-hug/authentication/tasks.md");
         assert_eq!(config.files_chat, ".swarm-hug/authentication/chat.md");
         assert_eq!(config.files_log_dir, ".swarm-hug/authentication/loop");
@@ -986,32 +986,32 @@ max = 5
     fn test_parse_args_with_prd() {
         let args = vec![
             "swarm".to_string(),
-            "team".to_string(),
+            "project".to_string(),
             "init".to_string(),
-            "myteam".to_string(),
+            "myproject".to_string(),
             "--with-prd".to_string(),
             "specs/prd.md".to_string(),
         ];
         let cli = parse_args(args);
-        assert_eq!(cli.command, Some(Command::TeamInit));
-        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.command, Some(Command::ProjectInit));
+        assert_eq!(cli.project_arg, Some("myproject".to_string()));
         assert_eq!(cli.prd_file_arg, Some("specs/prd.md".to_string()));
     }
 
     #[test]
-    fn test_parse_args_with_prd_before_team_name() {
-        // Test that --with-prd can appear before the team name
+    fn test_parse_args_with_prd_before_project_name() {
+        // Test that --with-prd can appear before the project name
         let args = vec![
             "swarm".to_string(),
             "--with-prd".to_string(),
             "prd.md".to_string(),
-            "team".to_string(),
+            "project".to_string(),
             "init".to_string(),
-            "myteam".to_string(),
+            "myproject".to_string(),
         ];
         let cli = parse_args(args);
-        assert_eq!(cli.command, Some(Command::TeamInit));
-        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.command, Some(Command::ProjectInit));
+        assert_eq!(cli.project_arg, Some("myproject".to_string()));
         assert_eq!(cli.prd_file_arg, Some("prd.md".to_string()));
     }
 
@@ -1020,14 +1020,14 @@ max = 5
         // If --with-prd is at the end with no value, prd_file_arg should be None
         let args = vec![
             "swarm".to_string(),
-            "team".to_string(),
+            "project".to_string(),
             "init".to_string(),
-            "myteam".to_string(),
+            "myproject".to_string(),
             "--with-prd".to_string(),
         ];
         let cli = parse_args(args);
-        assert_eq!(cli.command, Some(Command::TeamInit));
-        assert_eq!(cli.team_arg, Some("myteam".to_string()));
+        assert_eq!(cli.command, Some(Command::ProjectInit));
+        assert_eq!(cli.project_arg, Some("myproject".to_string()));
         assert_eq!(cli.prd_file_arg, None);
     }
 

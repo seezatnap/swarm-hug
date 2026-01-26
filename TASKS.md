@@ -10,3 +10,4 @@
 - [x] Stream Codex output to debug file for real-time visibility
 - [x] Support comma-separated engine list for random per-agent selection (e.g., --engine codex,codex,claude)
 - [x] Add colored output and emojis to CLI logging
+- [x] Replace --team argument with --project throughout codebase

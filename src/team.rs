@@ -287,6 +287,28 @@ impl Assignments {
             .copied()
             .collect()
     }
+
+    // Project-based aliases (same as team methods)
+
+    /// Get the project an agent is assigned to (alias for get_team).
+    pub fn get_project(&self, initial: char) -> Option<&str> {
+        self.get_team(initial)
+    }
+
+    /// Release all agents assigned to a specific project (alias for release_team).
+    pub fn release_project(&mut self, project: &str) {
+        self.release_team(project)
+    }
+
+    /// Get all agents assigned to a specific project (alias for team_agents).
+    pub fn project_agents(&self, project: &str) -> Vec<char> {
+        self.team_agents(project)
+    }
+
+    /// Get the next N agents available to a specific project (alias for available_for_team).
+    pub fn available_for_project(&self, project: &str, count: usize) -> Vec<char> {
+        self.available_for_team(project, count)
+    }
 }
 
 /// Sprint history tracking for a team.

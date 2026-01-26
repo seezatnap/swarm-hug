@@ -66,8 +66,8 @@ fn main() {
         Command::Worktrees => cmd_worktrees(&config),
         Command::WorktreesBranch => cmd_worktrees_branch(&config),
         Command::Cleanup => cmd_cleanup(&config),
-        Command::Teams => cmd_teams(&config),
-        Command::TeamInit => cmd_team_init(&config, &cli),
+        Command::Projects => cmd_projects(&config),
+        Command::ProjectInit => cmd_project_init(&config, &cli),
         Command::CustomizePrompts => cmd_customize_prompts(),
         Command::SetEmail => cmd_set_email(&cli),
     };
@@ -86,53 +86,53 @@ USAGE:
     swarm [OPTIONS] [COMMAND]
 
 COMMANDS:
-    init              Initialize a new swarm project (creates .swarm-hug/)
-    run               Run sprints until done or max-sprints reached (default)
-    sprint            Run exactly one sprint
-    plan              Run sprint planning only (assign tasks)
-    status            Show task counts and recent chat lines
-    agents            List agent names and initials
-    teams             List all teams and their assigned agents
-    team init <name>  Initialize a new team
-                      Use --with-prd <file> to auto-generate tasks from a PRD
-    worktrees         List active git worktrees
-    worktrees-branch  List worktree branches
-    cleanup           Remove worktrees and branches
-    customize-prompts Copy prompts to .swarm-hug/prompts/ for customization
-    set-email <email> Set co-author email for commits (stored in .swarm-hug/email.txt)
+    init                  Initialize a new swarm repo (creates .swarm-hug/)
+    run                   Run sprints until done or max-sprints reached (default)
+    sprint                Run exactly one sprint
+    plan                  Run sprint planning only (assign tasks)
+    status                Show task counts and recent chat lines
+    agents                List agent names and initials
+    projects              List all projects and their assigned agents
+    project init <name>   Initialize a new project
+                          Use --with-prd <file> to auto-generate tasks from a PRD
+    worktrees             List active git worktrees
+    worktrees-branch      List worktree branches
+    cleanup               Remove worktrees and branches
+    customize-prompts     Copy prompts to .swarm-hug/prompts/ for customization
+    set-email <email>     Set co-author email for commits (stored in .swarm-hug/email.txt)
 
 OPTIONS:
     -h, --help                Show this help message
     -V, --version             Show version
     -c, --config <PATH>       Path to config file [default: swarm.toml]
-    -t, --team <NAME>         Team to operate on (uses .swarm-hug/<team>/)
+    -p, --project <NAME>      Project to operate on (uses .swarm-hug/<project>/)
     --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
     --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
     --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
-    --tasks-file <PATH>       Path to tasks file [default: <team>/tasks.md]
-    --chat-file <PATH>        Path to chat file [default: <team>/chat.md]
-    --log-dir <PATH>          Path to log directory [default: <team>/loop/]
+    --tasks-file <PATH>       Path to tasks file [default: <project>/tasks.md]
+    --chat-file <PATH>        Path to chat file [default: <project>/chat.md]
+    --log-dir <PATH>          Path to log directory [default: <project>/loop/]
     --engine <TYPE>           Engine type: claude, codex, stub [default: claude]
     --stub                    Enable stub mode for testing [default: false]
     --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
     --no-tail                 Don't tail chat.md during run [default: false]
     --no-tui                  Disable TUI mode (use plain text output) [default: false]
 
-MULTI-TEAM MODE:
+MULTI-PROJECT MODE:
     All config and artifacts live in .swarm-hug/:
-      .swarm-hug/assignments.toml     Agent-to-team assignments
-      .swarm-hug/<team>/tasks.md      Team's task list
-      .swarm-hug/<team>/chat.md       Team's chat log
-      .swarm-hug/<team>/loop/         Team's agent logs
-      .swarm-hug/<team>/worktrees/    Team's git worktrees
+      .swarm-hug/assignments.toml       Agent-to-project assignments
+      .swarm-hug/<project>/tasks.md     Project's task list
+      .swarm-hug/<project>/chat.md      Project's chat log
+      .swarm-hug/<project>/loop/        Project's agent logs
+      .swarm-hug/<project>/worktrees/   Project's git worktrees
 
 EXAMPLES:
-    swarm init                        Initialize .swarm-hug/ structure
-    swarm team init authentication    Create a new team
-    swarm team init payments          Create another team
-    swarm teams                       List all teams
-    swarm --team authentication run   Run sprints for authentication team
-    swarm -t payments status          Show status for payments team
+    swarm init                            Initialize .swarm-hug/ structure
+    swarm project init authentication     Create a new project
+    swarm project init payments           Create another project
+    swarm projects                        List all projects
+    swarm --project authentication run    Run sprints for authentication project
+    swarm -p payments status              Show status for payments project
 "#,
         max_agents = 3,
         tasks_per_agent = 2,
@@ -140,9 +140,9 @@ EXAMPLES:
     );
 }
 
-/// Initialize a new swarm project.
+/// Initialize a new swarm repo.
 fn cmd_init(config: &Config) -> Result<(), String> {
-    println!("Initializing swarm project...");
+    println!("Initializing swarm repo...");
 
     // Create .swarm-hug root directory and assignments file
     team::init_root()?;
@@ -150,22 +150,22 @@ fn cmd_init(config: &Config) -> Result<(), String> {
     println!("  Created .swarm-hug/assignments.toml");
     println!("  Created .swarm-hug/.gitignore");
 
-    // If a team is specified, initialize that team's directory
-    if let Some(ref team_name) = config.team {
-        let team = Team::new(team_name);
-        team.init()?;
-        println!("  Created team: {}", team_name);
-        println!("    - {}", team.tasks_path().display());
-        println!("    - {}", team.chat_path().display());
-        println!("    - {}", team.loop_dir().display());
-        println!("    - {}", team.worktrees_dir().display());
+    // If a project is specified, initialize that project's directory
+    if let Some(ref project_name) = config.project {
+        let project = Team::new(project_name);
+        project.init()?;
+        println!("  Created project: {}", project_name);
+        println!("    - {}", project.tasks_path().display());
+        println!("    - {}", project.chat_path().display());
+        println!("    - {}", project.loop_dir().display());
+        println!("    - {}", project.worktrees_dir().display());
     } else {
         init_default_files(config)?;
     }
 
-    println!("\nSwarm project initialized.");
-    println!("  Use 'swarm team init <name>' to create teams.");
-    println!("  Use 'swarm --team <name> run' to run sprints for a team.");
+    println!("\nSwarm repo initialized.");
+    println!("  Use 'swarm project init <name>' to create projects.");
+    println!("  Use 'swarm --project <name> run' to run sprints for a project.");
     Ok(())
 }
 
@@ -225,17 +225,17 @@ fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn team_name_for_config(config: &Config) -> String {
-    config.team.clone().unwrap_or_else(|| "default".to_string())
+fn project_name_for_config(config: &Config) -> String {
+    config.project.clone().unwrap_or_else(|| "default".to_string())
 }
 
-fn release_assignments_for_team(team_name: &str, initials: &[char]) -> Result<usize, String> {
+fn release_assignments_for_project(project_name: &str, initials: &[char]) -> Result<usize, String> {
     let mut assignments = Assignments::load()?;
 
     if initials.is_empty() {
-        let released = assignments.team_agents(team_name).len();
+        let released = assignments.project_agents(project_name).len();
         if released > 0 {
-            assignments.release_team(team_name);
+            assignments.release_project(project_name);
             assignments.save()?;
         }
         return Ok(released);
@@ -249,7 +249,7 @@ fn release_assignments_for_team(team_name: &str, initials: &[char]) -> Result<us
         if !seen.insert(upper) {
             continue;
         }
-        if assignments.get_team(upper) == Some(team_name) {
+        if assignments.get_project(upper) == Some(project_name) {
             assignments.release(upper);
             released += 1;
         }
@@ -387,9 +387,9 @@ fn cmd_run_tui(config: &Config) -> Result<(), String> {
     args.push("--no-tui".to_string());  // Subprocess uses plain text mode
     args.push("--no-tail".to_string()); // TUI handles display
 
-    if let Some(ref team) = config.team {
-        args.push("--team".to_string());
-        args.push(team.clone());
+    if let Some(ref project) = config.project {
+        args.push("--project".to_string());
+        args.push(project.clone());
     }
     if config.sprints_max > 0 {
         args.push("--max-sprints".to_string());
@@ -446,7 +446,7 @@ fn cmd_plan(config: &Config) -> Result<(), String> {
         return Ok(());
     }
 
-    let team_name = team_name_for_config(config);
+    let team_name = project_name_for_config(config);
     let mut assignments_state = Assignments::load()?;
 
     let tasks_per_agent = config.agents_tasks_per_agent;
@@ -718,7 +718,7 @@ fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
 /// Clean up worktrees and branches.
 fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
-    let team_name = team_name_for_config(config);
+    let team_name = project_name_for_config(config);
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
     let mut errors: Vec<String> = Vec::new();
 
@@ -784,7 +784,7 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
     }
 
     // Release agent assignments for this team
-    match release_assignments_for_team(&team_name, &[]) {
+    match release_assignments_for_project(&team_name, &[]) {
         Ok(released) => {
             if released > 0 {
                 println!("  Released {} agent assignment(s) for team {}", released, team_name);
@@ -800,24 +800,24 @@ fn cmd_cleanup(config: &Config) -> Result<(), String> {
     }
 }
 
-/// List all teams and their assigned agents.
-fn cmd_teams(_config: &Config) -> Result<(), String> {
+/// List all projects and their assigned agents.
+fn cmd_projects(_config: &Config) -> Result<(), String> {
     if !team::root_exists() {
         println!("No .swarm-hug/ directory found. Run 'swarm init' first.");
         return Ok(());
     }
 
-    let teams = team::list_teams()?;
+    let projects = team::list_teams()?;
     let assignments = Assignments::load()?;
 
-    if teams.is_empty() {
-        println!("No teams found. Use 'swarm team init <name>' to create one.");
+    if projects.is_empty() {
+        println!("No projects found. Use 'swarm project init <name>' to create one.");
         return Ok(());
     }
 
-    println!("Teams:");
-    for t in &teams {
-        let agents = assignments.team_agents(&t.name);
+    println!("Projects:");
+    for p in &projects {
+        let agents = assignments.project_agents(&p.name);
         let agent_str = if agents.is_empty() {
             "(no agents assigned)".to_string()
         } else {
@@ -830,7 +830,7 @@ fn cmd_teams(_config: &Config) -> Result<(), String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        println!("  {} - {}", t.name, agent_str);
+        println!("  {} - {}", p.name, agent_str);
     }
 
     // Show available agents
@@ -846,28 +846,28 @@ fn cmd_teams(_config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Initialize a new team.
-fn cmd_team_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
-    let team_name = cli.team_arg.as_ref()
-        .ok_or("Usage: swarm team init <name>")?;
+/// Initialize a new project.
+fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
+    let project_name = cli.project_arg.as_ref()
+        .ok_or("Usage: swarm project init <name>")?;
 
-    // Validate team name (alphanumeric and hyphens only)
-    if !team_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Err("Team name must contain only letters, numbers, hyphens, and underscores".to_string());
+    // Validate project name (alphanumeric and hyphens only)
+    if !project_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err("Project name must contain only letters, numbers, hyphens, and underscores".to_string());
     }
 
     // Initialize root if needed
     team::init_root()?;
 
-    let team = Team::new(team_name);
-    if team.exists() {
-        println!("Team '{}' already exists.", team_name);
+    let project = Team::new(project_name);
+    if project.exists() {
+        println!("Project '{}' already exists.", project_name);
         return Ok(());
     }
 
-    team.init()?;
-    println!("Created team: {}", team_name);
-    println!("  Directory: {}", team.root.display());
+    project.init()?;
+    println!("Created project: {}", project_name);
+    println!("  Directory: {}", project.root.display());
 
     // Handle --with-prd flag
     if let Some(ref prd_path) = cli.prd_file_arg {
@@ -880,15 +880,15 @@ fn cmd_team_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
         // Write the PRD content to specs.md
         let specs_content = format!(
             "# Specifications: {}\n\n{}\n",
-            team_name,
+            project_name,
             prd_content
         );
-        fs::write(team.specs_path(), &specs_content)
+        fs::write(project.specs_path(), &specs_content)
             .map_err(|e| format!("Failed to write specs.md: {}", e))?;
-        println!("  Specs:     {} (from PRD)", team.specs_path().display());
+        println!("  Specs:     {} (from PRD)", project.specs_path().display());
 
         // Convert PRD to tasks using the engine
-        let log_dir = team.loop_dir();
+        let log_dir = project.loop_dir();
         let engine = engine::create_engine(config.effective_engine(), log_dir.to_str().unwrap_or(""), config.agent_timeout_secs);
 
         println!("  Converting PRD to tasks (engine={})...", config.effective_engine().as_str());
@@ -897,29 +897,29 @@ fn cmd_team_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
         if result.success {
             // Write tasks to tasks.md
             let tasks_content = format!("# Tasks\n\n{}\n", result.tasks_markdown);
-            fs::write(team.tasks_path(), &tasks_content)
+            fs::write(project.tasks_path(), &tasks_content)
                 .map_err(|e| format!("Failed to write tasks.md: {}", e))?;
 
             // Count tasks generated
             let task_count = result.tasks_markdown.matches("- [ ]").count();
-            println!("  Tasks:     {} ({} tasks generated)", team.tasks_path().display(), task_count);
+            println!("  Tasks:     {} ({} tasks generated)", project.tasks_path().display(), task_count);
         } else {
             let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
             eprintln!("  Warning: PRD conversion failed: {}", error);
             eprintln!("  Using default tasks.md instead.");
-            println!("  Tasks:     {}", team.tasks_path().display());
+            println!("  Tasks:     {}", project.tasks_path().display());
         }
     } else {
-        println!("  Tasks:     {}", team.tasks_path().display());
-        println!("  Specs:     {}", team.specs_path().display());
+        println!("  Tasks:     {}", project.tasks_path().display());
+        println!("  Specs:     {}", project.specs_path().display());
     }
 
-    println!("  Chat:      {}", team.chat_path().display());
-    println!("  Logs:      {}", team.loop_dir().display());
-    println!("  Worktrees: {}", team.worktrees_dir().display());
-    println!("\nTo work on this team, use:");
-    println!("  swarm --team {} run", team_name);
-    println!("  swarm -t {} status", team_name);
+    println!("  Chat:      {}", project.chat_path().display());
+    println!("  Logs:      {}", project.loop_dir().display());
+    println!("  Worktrees: {}", project.worktrees_dir().display());
+    println!("\nTo work on this project, use:");
+    println!("  swarm --project {} run", project_name);
+    println!("  swarm -p {} status", project_name);
 
     Ok(())
 }
@@ -1160,7 +1160,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
     let mut task_list = TaskList::parse(&content);
 
     // Load sprint history to get historical sprint number
-    let team_name = team_name_for_config(config);
+    let team_name = project_name_for_config(config);
     let mut sprint_history = team::SprintHistory::load(&team_name)?;
 
     // Unassign any incomplete tasks from previous sprints so they can be reassigned fresh
@@ -1177,7 +1177,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
         return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
-    let team_name = team_name_for_config(config);
+    let team_name = project_name_for_config(config);
     let mut assignments_state = Assignments::load()?;
 
     let tasks_per_agent = config.agents_tasks_per_agent;
@@ -1621,7 +1621,7 @@ fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintRes
 
     // Release agent assignments after sprint completes
     // This ensures agents are available for the next sprint or other teams
-    match release_assignments_for_team(&team_name, &assigned_initials) {
+    match release_assignments_for_project(&team_name, &assigned_initials) {
         Ok(released) => {
             if released > 0 {
                 println!("  Released {} agent assignment(s)", released);
