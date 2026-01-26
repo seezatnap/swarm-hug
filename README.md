@@ -13,9 +13,13 @@ As such, you should only run this in a sandbox. This script will set up a [Lima]
 ../my-repos/swarm-hug/init_lima.sh --name my-project ~/Sites/my-project ~/some-other-folder
 ```
 
-## CLI Usage
+## Your First Swarm Project
 
-The idea here is to make a command that can spawn a custom-tailored sprint, or set of sprints, to accomplish specific goals. i.e. you might have a small project where the tickets all block each other, in which case you might just want one agent. Later you might have broader tasks that can be parallelized with several agents.
+* Write a PRD (or have an LLM do it for you). Review it manually + carefully!
+* Start a project: `swarm init project greenfield --with-prd ./prds/greenfield.md`
+* Start swarmin': `swarm run --project greenfield`
+
+## CLI Usage
 
 ```
 swarm - multi-agent sprint-based orchestration system
