@@ -141,6 +141,15 @@ fn test_swarm_run_stub_integration() {
     assert!(chat_content.contains("SPRINT STATUS: Completed this sprint: 2"));
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
+    let chat_lines: Vec<&str> = chat_content.lines().collect();
+    assert!(chat_lines.len() >= 5, "expected at least 5 chat lines");
+    let mut tail: Vec<&str> = chat_lines.iter().rev().take(5).copied().collect();
+    tail.reverse();
+    assert!(tail[0].contains("SPRINT STATUS: Alpha Sprint 1 complete"));
+    assert!(tail[1].contains("SPRINT STATUS: Completed this sprint: 2"));
+    assert!(tail[2].contains("SPRINT STATUS: Failed this sprint: 0"));
+    assert!(tail[3].contains("SPRINT STATUS: Remaining tasks: 0"));
+    assert!(tail[4].contains("SPRINT STATUS: Total tasks: 2"));
 
     // Agents are unassigned after each sprint completes so they are available for next sprint
     let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
