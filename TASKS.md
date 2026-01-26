@@ -5,6 +5,7 @@
 
 ## Current session
 - [x] Fix refactor TASKS.md accuracy for #7/#9 (tui/planning splits not done)
+- [x] (#9) Reopen #9: split `src/planning.rs` into `src/planning/` modules
 
 ## Commands and runner split
 - [x] (#1) Create `src/commands` module and move CLI command handlers into `init.rs`, `run.rs`, `status.rs`, `agents.rs`, `worktrees.rs`, `projects.rs`, `misc.rs`; re-export via `src/commands/mod.rs`
@@ -18,10 +19,9 @@
 
 ## TUI module split
 - [x] (#7) Create `src/tui` module with `app.rs`, `message.rs`, `render.rs`, `ansi.rs`, `process.rs`, `tail.rs`, `run.rs`, and `mod.rs`; move code preserving behavior
-- [ ] (#8) Rewire `run_tui` entrypoint and ensure key handling and subprocess behavior are unchanged (blocked by #7)
+- [x] (#8) Rewire `run_tui` entrypoint and ensure key handling and subprocess behavior are unchanged (blocked by #7)
 
 ## Preventive splits for near-threshold files
-- [ ] (#9) Split `src/planning.rs` into `src/planning/{assign.rs,review.rs,prd.rs,parse.rs,mod.rs}` with re-exports and no logic changes
 - [x] (#10) Split `src/engine.rs` into `src/engine/{mod.rs,claude.rs,codex.rs,stub.rs,util.rs}` with re-exports and no logic changes
 - [x] (#13) Split `src/team.rs` into `src/team/{team.rs,assignments.rs,sprint_history.rs}` with re-exports and no logic changes
 - [ ] (#14) Resolve visibility/import issues across new modules and remove unused imports (blocked by #9, #10, #11, #12, #13)
