@@ -34,12 +34,17 @@ A set of quality-of-life improvements to restore and enhance logging visibility 
 **Current behavior:** The logs that used to appear every 5 minutes while agents are running no longer show up.
 **Desired behavior:** Restore the 5-minute interval logging to chat logs so users can see agents are still active during long-running operations.
 
+### 6) Sprint follow-up tickets should match prd-to-task ticket format
+**Current behavior:** Sprint follow-up tickets may not follow a consistent format.
+**Desired behavior:** Sprint follow-up tickets should match the format used by prd-to-task tickets, i.e. `- [ ] (#123) blah blah (blocked by #100)`
+
 ## Acceptance criteria
 - Chat history persists between sprints until a new `swarm run` is initiated.
 - Sprint status summary is printed to chat after each sprint completes.
 - Sprint planning agent logs a "starting to think" message.
 - Post-mortem logs a "starting to think" message.
 - Periodic (5-minute) activity logs appear in chat while agents are running.
+- Sprint follow-up tickets use the format `- [ ] (#123) description (blocked by #100)`.
 
 ## Risks
 - Preserving chat history may increase memory usage for very long runs.
