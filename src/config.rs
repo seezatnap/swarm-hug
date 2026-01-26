@@ -429,6 +429,8 @@ pub struct CliArgs {
     pub max_sprints: Option<usize>,
     /// Disable tailing.
     pub no_tail: bool,
+    /// Enable TUI mode.
+    pub tui: bool,
     /// Show help.
     pub help: bool,
     /// Show version.
@@ -553,6 +555,7 @@ where
             "--stub" => cli.stub = true,
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
             "--no-tail" => cli.no_tail = true,
+            "--tui" => cli.tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() => {
                 cli.command = Command::from_str(&arg);

@@ -52,7 +52,13 @@ fn main() {
 
     let result = match command {
         Command::Init => cmd_init(&config),
-        Command::Run => cmd_run(&config),
+        Command::Run => {
+            if cli.tui {
+                cmd_run_tui(&config)
+            } else {
+                cmd_run(&config)
+            }
+        }
         Command::Sprint => cmd_sprint(&config),
         Command::Plan => cmd_plan(&config),
         Command::Status => cmd_status(&config),
@@ -110,6 +116,7 @@ OPTIONS:
     --stub                    Enable stub mode for testing [default: false]
     --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
     --no-tail                 Don't tail chat.md during run [default: false]
+    --tui                     Enable TUI mode with scrollable output [default: false]
 
 MULTI-TEAM MODE:
     All config and artifacts live in .swarm-hug/:
@@ -366,6 +373,41 @@ fn cmd_run(config: &Config) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Run sprints with TUI interface.
+///
+/// Runs the sprint as a subprocess to avoid stdout corruption of the TUI.
+fn cmd_run_tui(config: &Config) -> Result<(), String> {
+    use swarm::tui::run_tui_with_subprocess;
+
+    // Build command-line args to re-run swarm without --tui
+    let mut args: Vec<String> = Vec::new();
+    args.push("run".to_string());
+    args.push("--no-tail".to_string()); // TUI handles display
+
+    if let Some(ref team) = config.team {
+        args.push("--team".to_string());
+        args.push(team.clone());
+    }
+    if config.sprints_max > 0 {
+        args.push("--max-sprints".to_string());
+        args.push(config.sprints_max.to_string());
+    }
+    args.push("--max-agents".to_string());
+    args.push(config.agents_max_count.to_string());
+    args.push("--tasks-per-agent".to_string());
+    args.push(config.agents_tasks_per_agent.to_string());
+    args.push("--agent-timeout".to_string());
+    args.push(config.agent_timeout_secs.to_string());
+    args.push("--engine".to_string());
+    args.push(config.engines_display());
+    if config.engine_stub_mode {
+        args.push("--stub".to_string());
+    }
+
+    run_tui_with_subprocess(&config.files_chat, args)
+        .map_err(|e| format!("TUI error: {}", e))
 }
 
 /// Run exactly one sprint.
