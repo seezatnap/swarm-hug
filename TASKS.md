@@ -1,4 +1,3 @@
 # Tasks
 
-- [x] Audit Rust codebase for refactor opportunities, focusing on files >1000 LOC and cleanup targets.
-- [x] Write PRD with findings and refactor plan in `prds/refactor_sweep.md`.
+- [x] (#5) Create `src/config` module with `mod.rs`, `types.rs`, `cli.rs`, `env.rs`, `toml.rs`, `tests.rs`; move code and preserve public exports
