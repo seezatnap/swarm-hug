@@ -137,6 +137,8 @@ fn test_swarm_run_stub_integration() {
     assert!(chat_content.contains("Sprint planning started"));
     assert!(chat_content.contains("Post-mortem started"));
     assert!(chat_content.contains("Sprint 1 plan: 2 task(s) assigned"));
+    assert!(chat_content.contains("SPRINT STATUS: Alpha Sprint 1 complete"));
+    assert!(chat_content.contains("SPRINT STATUS: Completed this sprint: 2"));
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
 
