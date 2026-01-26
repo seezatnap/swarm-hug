@@ -17,7 +17,7 @@
 - [x] (#8) Add regression test asserting sprint status summary is appended to chat after sprint completion (blocked by #2) (A)
 - [x] (#9) Add test covering 5-minute heartbeat log cadence and shutdown when agents finish
 - [x] (#10) Add tests asserting planning and post-mortem start messages are written to chat
-- [ ] (#11) Add test verifying follow-up tickets match prd-to-task formatting and numbering (blocked by #6)
+- [x] (#11) Add test verifying follow-up tickets match prd-to-task formatting and numbering (blocked by #6)
 
 ## Documentation
 - [ ] (#12) Update README/runbook to document chat persistence, sprint status output, heartbeat logs, and follow-up ticket format (blocked by #2, #3, #6)
