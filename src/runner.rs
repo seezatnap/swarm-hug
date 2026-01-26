@@ -654,6 +654,14 @@ fn run_post_sprint_review(
     // Get current tasks content
     let tasks_content = task_list.to_string();
 
+    if let Err(e) = chat::write_message(
+        &config.files_chat,
+        "ScrumMaster",
+        "Post-mortem started",
+    ) {
+        eprintln!("warning: failed to write chat: {}", e);
+    }
+
     // Run the review
     let log_dir = Path::new(&config.files_log_dir);
     match planning::run_sprint_review(engine, &tasks_content, &git_log, log_dir) {
