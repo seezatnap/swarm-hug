@@ -5,7 +5,7 @@
 - [x] (#1) Create `src/commands` module and move CLI command handlers into `init.rs`, `run.rs`, `status.rs`, `agents.rs`, `worktrees.rs`, `projects.rs`, `misc.rs`; re-export via `src/commands/mod.rs` (A)
 - [x] (#2) Move sprint orchestration and result types from `src/main.rs` into `src/runner.rs` and update call sites (blocked by #1) (A)
 - [x] (#3) Move git helpers, output helpers, and tail follow utilities from `src/main.rs` into `src/git.rs`, `src/output.rs`, `src/tail.rs`; update call sites (blocked by #1) (A)
-- [ ] (#4) Reduce `src/main.rs` to a thin CLI dispatcher using new modules; ensure compile success (blocked by #2, #3)
+- [A] (#4) Reduce `src/main.rs` to a thin CLI dispatcher using new modules; ensure compile success (blocked by #2, #3)
 
 ## Config module split
 
@@ -33,3 +33,7 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] Fix TASKS.md accuracy: #7 and #9 are marked done but `src/tui.rs` and `src/planning.rs` are still monolithic (no `src/tui/` or `src/planning/` dirs). (B)
+
+## Follow-up tasks (from sprint review)
+- [A] Reopen #7: split `src/tui.rs` into `src/tui/` modules (no `src/tui/` directory exists; file still monolithic/1000+ LOC).
+- [A] Reopen #9: split `src/planning.rs` into `src/planning/` modules (no `src/planning/` directory exists; file still monolithic).
