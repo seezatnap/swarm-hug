@@ -19,7 +19,7 @@
 
 ## Preventive splits for near-threshold files
 - [ ] (#9) Split `src/planning.rs` into `src/planning/{assign.rs,review.rs,prd.rs,parse.rs,mod.rs}` with re-exports and no logic changes
-- [ ] (#10) Split `src/engine.rs` into `src/engine/{mod.rs,claude.rs,codex.rs,stub.rs,util.rs}` with re-exports and no logic changes
+- [x] (#10) Split `src/engine.rs` into `src/engine/{mod.rs,claude.rs,codex.rs,stub.rs,util.rs}` with re-exports and no logic changes
 - [ ] (#11) Split `src/worktree.rs` into `src/worktree/{git.rs,create.rs,cleanup.rs,list.rs}` with re-exports and no logic changes
 - [ ] (#12) Split `src/task.rs` into `src/task/{model.rs,parse.rs,assign.rs,tests.rs}` with re-exports and no logic changes
 - [ ] (#13) Split `src/team.rs` into `src/team/{team.rs,assignments.rs,sprint_history.rs}` with re-exports and no logic changes
