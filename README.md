@@ -19,6 +19,8 @@ As such, you should only run this in a sandbox. This script will set up a [Lima]
 * Start a project: `swarm init project greenfield --with-prd ./prds/greenfield.md`
 * Start swarmin': `swarm run --project greenfield`
 
+<img width="894" height="573" alt="Screenshot 2026-01-25 at 9 31 44 PM" src="https://github.com/user-attachments/assets/4ebb039f-63b1-4cb2-9e37-9188e29c8fe0" />
+
 ## CLI Usage
 
 ```
