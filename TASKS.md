@@ -28,4 +28,4 @@
 
 ## Validation
 - [ ] (#15) Run `cargo test --lib --tests` and fix any failures (blocked by #4, #6, #8, #14)
-- [ ] (#16) Verify no Rust source file exceeds 1000 LOC and adjust splits if any remain (blocked by #4, #6, #8, #14)
+- [x] (#16) Verify no Rust source file exceeds 1000 LOC and adjust splits if any remain (blocked by #4, #6, #8, #14)
