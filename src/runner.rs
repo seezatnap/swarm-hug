@@ -666,12 +666,15 @@ fn run_post_sprint_review(
     let log_dir = Path::new(&config.files_log_dir);
     match planning::run_sprint_review(engine, &tasks_content, &git_log, log_dir) {
         Ok(follow_ups) => {
-            if follow_ups.is_empty() {
+            let start_number = task_list.max_task_number().saturating_add(1);
+            let formatted_follow_ups = planning::format_follow_up_tasks(start_number, &follow_ups);
+
+            if formatted_follow_ups.is_empty() {
                 println!("  Post-sprint review: no follow-up tasks needed");
             } else {
                 println!(
                     "  Post-sprint review: {} follow-up task(s) identified",
-                    follow_ups.len()
+                    formatted_follow_ups.len()
                 );
 
                 // Append follow-up tasks to TASKS.md
@@ -685,7 +688,7 @@ fn run_post_sprint_review(
 
                 // Add follow-up tasks
                 current_content.push_str("\n## Follow-up tasks (from sprint review)\n");
-                for task in &follow_ups {
+                for task in &formatted_follow_ups {
                     current_content.push_str(task);
                     current_content.push('\n');
                     println!("    {}", task);
@@ -695,8 +698,10 @@ fn run_post_sprint_review(
                     .map_err(|e| format!("failed to write follow-up tasks: {}", e))?;
 
                 // Write to chat
-                let msg =
-                    format!("Sprint review added {} follow-up task(s)", follow_ups.len());
+                let msg = format!(
+                    "Sprint review added {} follow-up task(s)",
+                    formatted_follow_ups.len()
+                );
                 if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &msg) {
                     eprintln!("  warning: failed to write chat: {}", e);
                 }

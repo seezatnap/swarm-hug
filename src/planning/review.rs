@@ -28,12 +28,70 @@ pub fn parse_review_response(response: &str) -> Vec<String> {
         .filter_map(|line| {
             let trimmed = line.trim();
             if trimmed.starts_with("- [ ]") {
-                Some(trimmed.to_string())
+                normalize_follow_up_description(trimmed)
             } else {
                 None
             }
         })
         .collect()
+}
+
+/// Format follow-up tasks in PRD-to-task format with sequential numbering.
+pub fn format_follow_up_tasks(start_number: usize, follow_ups: &[String]) -> Vec<String> {
+    let mut task_number = start_number;
+    let mut formatted = Vec::new();
+
+    for follow_up in follow_ups {
+        if let Some(desc) = normalize_follow_up_description(follow_up) {
+            formatted.push(format!("- [ ] (#{}) {}", task_number, desc));
+            task_number += 1;
+        }
+    }
+
+    formatted
+}
+
+fn normalize_follow_up_description(text: &str) -> Option<String> {
+    let mut rest = text.trim();
+    if rest.starts_with("- [ ]") {
+        rest = rest.trim_start_matches("- [ ]").trim();
+    }
+    let rest = strip_task_number_prefix(rest).trim();
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
+    }
+}
+
+fn strip_task_number_prefix(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let Some(after_prefix) = trimmed.strip_prefix("(#") else {
+        return trimmed;
+    };
+
+    let mut digits_len = 0;
+    for ch in after_prefix.chars() {
+        if ch.is_ascii_digit() {
+            digits_len += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    if digits_len == 0 {
+        return trimmed;
+    }
+
+    let Some(after_digits) = after_prefix.get(digits_len..) else {
+        return trimmed;
+    };
+
+    if let Some(stripped) = after_digits.strip_prefix(')') {
+        return stripped.trim_start();
+    }
+
+    trimmed
 }
 
 /// Run post-sprint review using LLM.
@@ -80,11 +138,23 @@ mod tests {
 
     #[test]
     fn test_parse_review_response_with_tasks() {
-        let response = "Found some issues:\n- [ ] Fix the bug\n- [ ] Add tests\nDone.";
+        let response = "Found some issues:\n- [ ] Fix the bug\n- [ ] (#9) Add tests (blocked by #2)\nDone.";
         let tasks = parse_review_response(response);
         assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0], "- [ ] Fix the bug");
-        assert_eq!(tasks[1], "- [ ] Add tests");
+        assert_eq!(tasks[0], "Fix the bug");
+        assert_eq!(tasks[1], "Add tests (blocked by #2)");
+    }
+
+    #[test]
+    fn test_format_follow_up_tasks_numbers_and_preserves_blockers() {
+        let follow_ups = vec![
+            "Fix the bug".to_string(),
+            "- [ ] (#5) Add tests (blocked by #2)".to_string(),
+        ];
+        let formatted = format_follow_up_tasks(7, &follow_ups);
+        assert_eq!(formatted.len(), 2);
+        assert_eq!(formatted[0], "- [ ] (#7) Fix the bug");
+        assert_eq!(formatted[1], "- [ ] (#8) Add tests (blocked by #2)");
     }
 
     #[test]

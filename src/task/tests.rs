@@ -56,6 +56,28 @@ fn test_task_has_blockers() {
 }
 
 #[test]
+fn test_task_number_parsing() {
+    let task = Task::new("(#12) Implement feature");
+    assert_eq!(task.task_number(), Some(12));
+
+    let task2 = Task::new("No number here");
+    assert_eq!(task2.task_number(), None);
+
+    let task3 = Task::new("   (#7) Leading space");
+    assert_eq!(task3.task_number(), Some(7));
+
+    let task4 = Task::new("(#abc) Invalid");
+    assert_eq!(task4.task_number(), None);
+}
+
+#[test]
+fn test_tasklist_max_task_number() {
+    let content = "- [ ] (#2) Task 2\n- [ ] Task no number\n- [ ] (#10) Task 10\n";
+    let list = TaskList::parse(content);
+    assert_eq!(list.max_task_number(), 10);
+}
+
+#[test]
 fn test_blocking_task_numbers_single() {
     let task = Task::new("(#2) My task (blocked by #1)");
     let blockers = task.blocking_task_numbers();

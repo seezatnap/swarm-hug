@@ -1,6 +1,32 @@
 use super::{Task, TaskList, TaskStatus};
 
 impl Task {
+    /// Extract the task number from a leading "(#N)" prefix.
+    pub fn task_number(&self) -> Option<usize> {
+        let desc = self.description.trim_start();
+        let after_prefix = desc.strip_prefix("(#")?;
+
+        let mut digits_len = 0;
+        for ch in after_prefix.chars() {
+            if ch.is_ascii_digit() {
+                digits_len += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        if digits_len == 0 {
+            return None;
+        }
+
+        let after_digits = after_prefix.get(digits_len..)?;
+        if !after_digits.starts_with(')') {
+            return None;
+        }
+
+        after_prefix[..digits_len].parse::<usize>().ok()
+    }
+
     /// Check if this task has blocking references.
     ///
     /// Returns true if the task has `(blocked by #N)` in its description.
@@ -69,6 +95,15 @@ impl Task {
 }
 
 impl TaskList {
+    /// Get the highest task number in the list, based on "(#N)" prefixes.
+    pub fn max_task_number(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter_map(Task::task_number)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Unassign all currently assigned tasks.
     /// This is used at sprint start to reset incomplete tasks from previous sprints.
     /// Returns the number of tasks that were unassigned.

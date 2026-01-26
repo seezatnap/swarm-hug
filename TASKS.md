@@ -10,7 +10,7 @@
 - [x] (#5) Emit a "post-mortem started" chat entry when the post-mortem agent begins processing
 
 ## Task Generation
-- [ ] (#6) Update sprint follow-up ticket generator to output prd-to-task format `- [ ] (#N) description (blocked by #M)` with proper numbering and blocked-by list
+- [x] (#6) Update sprint follow-up ticket generator to output prd-to-task format `- [ ] (#N) description (blocked by #M)` with proper numbering and blocked-by list
 
 ## Testing
 - [ ] (#7) Add regression test for chat history persistence across consecutive sprints in a single run
