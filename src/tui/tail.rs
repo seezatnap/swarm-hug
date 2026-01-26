@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::message::TuiMessage;
+use crate::chat;
 
 /// Tail a chat file and send lines to the TUI.
 pub(super) fn tail_chat_to_tui(path: &str, tx: Sender<TuiMessage>, stop: Arc<AtomicBool>) {
@@ -48,7 +49,7 @@ pub(super) fn tail_chat_to_tui(path: &str, tx: Sender<TuiMessage>, stop: Arc<Ato
 
         if bytes_read > 0 {
             for line in new_content.lines() {
-                if !line.is_empty() {
+                if !line.is_empty() && !chat::is_heartbeat_line(line) {
                     let colored_line = crate::color::chat_line(line);
                     if tx.send(TuiMessage::AppendLine(colored_line)).is_err() {
                         return;

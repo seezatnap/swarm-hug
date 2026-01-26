@@ -10,6 +10,7 @@ use swarm::chat;
 use swarm::color::{self, emoji};
 use swarm::config::{self, Config};
 use swarm::engine;
+use swarm::heartbeat;
 use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
 use swarm::planning;
@@ -386,6 +387,12 @@ pub(crate) fn run_sprint(
                 }
 
                 let task_start = Instant::now();
+                let heartbeat_guard = heartbeat::HeartbeatGuard::start(
+                    chat_path.as_str(),
+                    agent_name,
+                    &description,
+                    heartbeat::default_interval(),
+                );
                 let result = engine.execute(
                     agent_name,
                     &description,
@@ -393,6 +400,7 @@ pub(crate) fn run_sprint(
                     session_sprint_number,
                     team_dir.as_deref(),
                 );
+                drop(heartbeat_guard);
                 let task_duration = task_start.elapsed();
 
                 // Log engine output for debugging (truncated if very long)
