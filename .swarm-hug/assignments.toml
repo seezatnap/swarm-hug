@@ -3,3 +3,5 @@
 # An agent can only be assigned to one team at a time.
 
 [agents]
+A = "refinements"
+B = "refinements"
