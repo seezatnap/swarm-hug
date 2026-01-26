@@ -407,3 +407,64 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
         stdout
     );
 }
+
+/// Regression test: chat history should persist across consecutive sprints in a single run.
+#[test]
+fn test_chat_history_persists_across_sprints_in_single_run() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n- [ ] Task 4\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+    let chat_path = team_root.join("chat.md");
+    commit_all(repo_path, "init");
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "2",
+            "--tasks-per-agent",
+            "1",
+            "--max-agents",
+            "2",
+            "--no-tui",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
+    let planning_count = chat_content.matches("Sprint planning started").count();
+    assert_eq!(
+        planning_count, 2,
+        "chat should retain planning logs from both sprints"
+    );
+
+    let sprint1_pos = chat_content
+        .find("Sprint 1 plan:")
+        .expect("Sprint 1 plan should be present");
+    let sprint2_pos = chat_content
+        .find("Sprint 2 plan:")
+        .expect("Sprint 2 plan should be present");
+    assert!(
+        sprint1_pos < sprint2_pos,
+        "Sprint 1 plan should appear before Sprint 2 plan in chat history"
+    );
+}
