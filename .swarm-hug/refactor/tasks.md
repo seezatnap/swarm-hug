@@ -28,8 +28,8 @@
 
 ## Validation
 
-- [ ] (#15) Run `cargo test --lib --tests` and fix any failures (blocked by #4, #6, #8, #14)
-- [ ] (#16) Verify no Rust source file exceeds 1000 LOC and adjust splits if any remain (blocked by #4, #6, #8, #14)
+- [A] (#15) Run `cargo test --lib --tests` and fix any failures (blocked by #4, #6, #8, #14)
+- [A] (#16) Verify no Rust source file exceeds 1000 LOC and adjust splits if any remain (blocked by #4, #6, #8, #14)
 
 ## Follow-up tasks (from sprint review)
 - [x] Fix TASKS.md accuracy: #7 and #9 are marked done but `src/tui.rs` and `src/planning.rs` are still monolithic (no `src/tui/` or `src/planning/` dirs). (B)
