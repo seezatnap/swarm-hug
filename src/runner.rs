@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -18,11 +20,50 @@ use swarm::team::{self, Assignments};
 use swarm::worktree::{self, Worktree};
 
 use crate::git::{
-    commit_agent_work, commit_files, commit_sprint_completion, commit_task_assignments,
-    get_current_commit, get_git_log_range,
+    commit_files, commit_sprint_completion, commit_task_assignments, get_current_commit,
+    get_git_log_range,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
-use crate::{project_name_for_config, release_assignments_for_project};
+
+pub(crate) fn project_name_for_config(config: &Config) -> String {
+    config.project.clone().unwrap_or_else(|| "default".to_string())
+}
+
+pub(crate) fn release_assignments_for_project(
+    project_name: &str,
+    initials: &[char],
+) -> Result<usize, String> {
+    let mut assignments = Assignments::load()?;
+
+    if initials.is_empty() {
+        let released = assignments.project_agents(project_name).len();
+        if released > 0 {
+            assignments.release_project(project_name);
+            assignments.save()?;
+        }
+        return Ok(released);
+    }
+
+    let mut released = 0usize;
+    let mut seen = HashSet::new();
+
+    for initial in initials {
+        let upper = initial.to_ascii_uppercase();
+        if !seen.insert(upper) {
+            continue;
+        }
+        if assignments.get_project(upper) == Some(project_name) {
+            assignments.release(upper);
+            released += 1;
+        }
+    }
+
+    if released > 0 {
+        assignments.save()?;
+    }
+
+    Ok(released)
+}
 
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
@@ -46,7 +87,10 @@ impl SprintResult {
 ///
 /// The `session_sprint_number` is the sprint number within this run session (1, 2, 3...).
 /// The historical sprint number (used in commits) is loaded from sprint-history.json.
-pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Result<SprintResult, String> {
+pub(crate) fn run_sprint(
+    config: &Config,
+    session_sprint_number: usize,
+) -> Result<SprintResult, String> {
     // Load tasks
     let content = fs::read_to_string(&config.files_tasks)
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
@@ -84,7 +128,11 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     let agent_count = initials.len();
 
     // Assign tasks via LLM planning (with fallback to algorithmic)
-    let engine = engine::create_engine(config.effective_engine(), &config.files_log_dir, config.agent_timeout_secs);
+    let engine = engine::create_engine(
+        config.effective_engine(),
+        &config.files_log_dir,
+        config.agent_timeout_secs,
+    );
     let log_dir = Path::new(&config.files_log_dir);
 
     let plan_result = planning::run_llm_assignment(
@@ -96,8 +144,10 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     );
 
     let assigned = if !plan_result.success {
-        eprintln!("LLM planning failed: {}, falling back to algorithmic assignment",
-                 plan_result.error.unwrap_or_default());
+        eprintln!(
+            "LLM planning failed: {}, falling back to algorithmic assignment",
+            plan_result.error.unwrap_or_default()
+        );
         task_list.assign_sprint(&initials, tasks_per_agent)
     } else {
         // Apply LLM assignments (line numbers are 1-indexed in the response)
@@ -185,12 +235,14 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     // This will be used to determine git range for post-sprint review
     let sprint_start_commit = get_current_commit().unwrap_or_else(|| "HEAD".to_string());
 
-    println!("{} {} Sprint {}: assigned {} task(s) to {} agent(s)",
-             emoji::SPRINT,
-             color::info(&formatted_team),
-             color::number(historical_sprint),
-             color::number(assigned),
-             color::number(agent_count));
+    println!(
+        "{} {} Sprint {}: assigned {} task(s) to {} agent(s)",
+        emoji::SPRINT,
+        color::info(&formatted_team),
+        color::number(historical_sprint),
+        color::number(assigned),
+        color::number(agent_count)
+    );
 
     // Clean up any existing worktrees for assigned agents before creating new ones
     // This ensures a clean slate from master for each sprint
@@ -201,18 +253,23 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
         true, // Also delete branches so they're recreated fresh from HEAD
     );
     if cleanup_summary.cleaned_count() > 0 {
-        println!("  Pre-sprint cleanup: removed {} worktree(s)", cleanup_summary.cleaned_count());
+        println!(
+            "  Pre-sprint cleanup: removed {} worktree(s)",
+            cleanup_summary.cleaned_count()
+        );
     }
     for (initial, err) in &cleanup_summary.errors {
         let name = agent::name_from_initial(*initial).unwrap_or("?");
-        eprintln!("  warning: pre-sprint cleanup failed for {} ({}): {}", name, initial, err);
+        eprintln!(
+            "  warning: pre-sprint cleanup failed for {} ({}): {}",
+            name, initial, err
+        );
     }
 
     // Create worktrees for assigned agents
-    let worktrees: Vec<Worktree> = worktree::create_worktrees_in(
-        worktrees_dir,
-        &assignments,
-    ).map_err(|e| format!("failed to create worktrees: {}", e))?;
+    let worktrees: Vec<Worktree> =
+        worktree::create_worktrees_in(worktrees_dir, &assignments)
+            .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Build a map from initial to worktree path (owned for thread safety)
     let worktree_map: std::collections::HashMap<char, std::path::PathBuf> = worktrees
@@ -228,7 +285,10 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
             .get(initial)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| ".".to_string());
-        tracker.lock().unwrap().register(*initial, agent_name, description, &wt_path);
+        tracker
+            .lock()
+            .unwrap()
+            .register(*initial, agent_name, description, &wt_path);
     }
 
     // Prepare engine configuration for per-agent random selection
@@ -243,14 +303,20 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     }
 
     // Group assignments by agent (each agent processes their tasks sequentially)
-    let mut agent_tasks: std::collections::HashMap<char, Vec<String>> = std::collections::HashMap::new();
+    let mut agent_tasks: std::collections::HashMap<char, Vec<String>> =
+        std::collections::HashMap::new();
     for (initial, description) in &assignments {
-        agent_tasks.entry(*initial).or_default().push(description.clone());
+        agent_tasks
+            .entry(*initial)
+            .or_default()
+            .push(description.clone());
     }
 
     // Execute agents in parallel, each agent processes their tasks sequentially
     // Return type includes: (initial, description, success, error, duration)
-    let mut handles: Vec<thread::JoinHandle<Vec<(char, String, bool, Option<String>, Option<Duration>)>>> = Vec::new();
+    let mut handles: Vec<
+        thread::JoinHandle<Vec<(char, String, bool, Option<String>, Option<Duration>)>>,
+    > = Vec::new();
 
     // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
     let team_dir: Option<String> = Path::new(&config.files_tasks)
@@ -273,7 +339,8 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
-            let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> = Vec::new();
+            let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> =
+                Vec::new();
 
             // Select random engine for this agent
             let selected_engine_type = if thread_engine_stub_mode {
@@ -284,7 +351,9 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                 thread_engine_types[0]
             } else {
                 use rand::seq::SliceRandom;
-                *thread_engine_types.choose(&mut rand::thread_rng()).unwrap()
+                *thread_engine_types
+                    .choose(&mut rand::thread_rng())
+                    .unwrap()
             };
             let engine_type_str = selected_engine_type.as_str().to_string();
             let engine: Arc<dyn engine::Engine> = engine::create_engine(
@@ -312,7 +381,13 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                         eprintln!("warning: failed to write log: {}", e);
                     }
                     // Mark remaining tasks as not completed (they stay assigned)
-                    task_results.push((initial, description.clone(), false, Some("Shutdown requested".to_string()), None));
+                    task_results.push((
+                        initial,
+                        description.clone(),
+                        false,
+                        Some("Shutdown requested".to_string()),
+                        None,
+                    ));
                     continue;
                 }
 
@@ -331,7 +406,9 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                 }
 
                 // Write agent start to chat
-                if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Starting: {}", description)) {
+                if let Err(e) =
+                    chat::write_message(&chat_path, agent_name, &format!("Starting: {}", description))
+                {
                     eprintln!("warning: failed to write chat: {}", e);
                 }
 
@@ -352,7 +429,11 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
 
                 // Log engine output for debugging (truncated if very long)
                 let output_preview = if result.output.len() > 500 {
-                    format!("{}... [truncated, {} bytes total]", &result.output[..500], result.output.len())
+                    format!(
+                        "{}... [truncated, {} bytes total]",
+                        &result.output[..500],
+                        result.output.len()
+                    )
                 } else {
                     result.output.clone()
                 };
@@ -362,7 +443,9 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                     }
                 }
                 if let Some(ref err) = result.error {
-                    if let Err(e) = logger.log(&format!("Engine error: {} (exit code: {})", err, result.exit_code)) {
+                    if let Err(e) =
+                        logger.log(&format!("Engine error: {} (exit code: {})", err, result.exit_code))
+                    {
                         eprintln!("warning: failed to write log: {}", e);
                     }
                 }
@@ -381,7 +464,9 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
-                    if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Completed: {}", description)) {
+                    if let Err(e) =
+                        chat::write_message(&chat_path, agent_name, &format!("Completed: {}", description))
+                    {
                         eprintln!("warning: failed to write chat: {}", e);
                     }
 
@@ -405,11 +490,16 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
                         let mut t = tracker.lock().unwrap();
                         t.fail(initial, &err);
                     }
-                    if let Err(e) = logger.log(&format!("State: WORKING -> DONE (failed: {})", err)) {
+                    if let Err(e) = logger.log(&format!("State: WORKING -> DONE (failed: {})", err))
+                    {
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
-                    if let Err(e) = chat::write_message(&chat_path, agent_name, &format!("Failed: {} - {}", description, err)) {
+                    if let Err(e) = chat::write_message(
+                        &chat_path,
+                        agent_name,
+                        &format!("Failed: {} - {}", description, err),
+                    ) {
                         eprintln!("warning: failed to write chat: {}", e);
                     }
 
@@ -484,13 +574,15 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     // Log lifecycle summary
     let tracker_guard = tracker.lock().unwrap();
     let (_, _, _, terminated) = tracker_guard.counts();
-    println!("  {} Lifecycle: {} agents terminated ({} {}, {} {})",
-             emoji::ROBOT,
-             color::number(terminated),
-             color::completed(&tracker_guard.success_count().to_string()),
-             color::success("success"),
-             color::failed(&tracker_guard.failure_count().to_string()),
-             color::error("failed"));
+    println!(
+        "  {} Lifecycle: {} agents terminated ({} {}, {} {})",
+        emoji::ROBOT,
+        color::number(terminated),
+        color::completed(&tracker_guard.success_count().to_string()),
+        color::success("success"),
+        color::failed(&tracker_guard.failure_count().to_string()),
+        color::error("failed")
+    );
     drop(tracker_guard);
 
     // Write final task state
@@ -505,11 +597,17 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
         true, // Also delete branches
     );
     if cleanup_summary.cleaned_count() > 0 {
-        println!("  Post-sprint cleanup: removed {} worktree(s)", cleanup_summary.cleaned_count());
+        println!(
+            "  Post-sprint cleanup: removed {} worktree(s)",
+            cleanup_summary.cleaned_count()
+        );
     }
     for (initial, err) in &cleanup_summary.errors {
         let name = agent::name_from_initial(*initial).unwrap_or("?");
-        eprintln!("  warning: post-sprint cleanup failed for {} ({}): {}", name, initial, err);
+        eprintln!(
+            "  warning: post-sprint cleanup failed for {} ({}): {}",
+            name, initial, err
+        );
     }
 
     // Release agent assignments after sprint completes
@@ -530,7 +628,14 @@ pub(crate) fn run_sprint(config: &Config, session_sprint_number: usize) -> Resul
     if shutdown::requested() {
         println!("  Skipping post-sprint review due to shutdown.");
     } else {
-        run_post_sprint_review(config, engine.as_ref(), &sprint_start_commit, &task_list, &formatted_team, historical_sprint)?;
+        run_post_sprint_review(
+            config,
+            engine.as_ref(),
+            &sprint_start_commit,
+            &task_list,
+            &formatted_team,
+            historical_sprint,
+        )?;
     }
 
     // Reload task list to get latest counts (post-sprint review may have added tasks)
@@ -588,7 +693,10 @@ fn run_post_sprint_review(
             if follow_ups.is_empty() {
                 println!("  Post-sprint review: no follow-up tasks needed");
             } else {
-                println!("  Post-sprint review: {} follow-up task(s) identified", follow_ups.len());
+                println!(
+                    "  Post-sprint review: {} follow-up task(s) identified",
+                    follow_ups.len()
+                );
 
                 // Append follow-up tasks to TASKS.md
                 let mut current_content = fs::read_to_string(&config.files_tasks)
@@ -611,14 +719,17 @@ fn run_post_sprint_review(
                     .map_err(|e| format!("failed to write follow-up tasks: {}", e))?;
 
                 // Write to chat
-                let msg = format!("Sprint review added {} follow-up task(s)", follow_ups.len());
+                let msg =
+                    format!("Sprint review added {} follow-up task(s)", follow_ups.len());
                 if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &msg) {
                     eprintln!("  warning: failed to write chat: {}", e);
                 }
 
                 // Commit follow-up tasks so next planning phase sees them
-                let commit_msg = format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
-                if let Ok(true) = commit_files(&[&config.files_tasks, &config.files_chat], &commit_msg) {
+                let commit_msg =
+                    format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
+                if let Ok(true) = commit_files(&[&config.files_tasks, &config.files_chat], &commit_msg)
+                {
                     println!("  Committed follow-up tasks to git.");
                 }
             }
@@ -629,6 +740,79 @@ fn run_post_sprint_review(
     }
 
     Ok(())
+}
+
+/// Commit an agent's work in their worktree.
+/// Each agent makes one commit per task (enforces one task = one commit rule).
+fn commit_agent_work(
+    worktree_path: &Path,
+    agent_name: &str,
+    task_description: &str,
+) -> Result<(), String> {
+    // Stage all changes in the worktree
+    let add_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["add", "-A"])
+        .output();
+
+    match add_result {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // If nothing to add, that's okay
+            if !stderr.contains("Nothing specified") {
+                return Err(format!("git add failed in worktree: {}", stderr));
+            }
+        }
+        Err(e) => return Err(format!("git add failed: {}", e)),
+    }
+
+    // Check if there are staged changes
+    let diff_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["diff", "--cached", "--quiet"])
+        .output();
+
+    let has_changes = match diff_result {
+        Ok(output) => !output.status.success(), // exit code 1 means changes exist
+        Err(_) => false,
+    };
+
+    if !has_changes {
+        return Ok(()); // No changes to commit
+    }
+
+    // Commit with agent attribution
+    let commit_msg = format!("{}: {}", agent_name, task_description);
+    let initial = agent::initial_from_name(agent_name).unwrap_or('?');
+    let commit_result = process::Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["commit", "-m", &commit_msg])
+        .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
+        .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
+        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .output();
+
+    match commit_result {
+        Ok(output) if output.status.success() => {
+            println!("  {} committed: {}", agent_name, task_description);
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Don't fail if there's nothing to commit
+            if stderr.contains("nothing to commit") {
+                Ok(())
+            } else {
+                Err(format!("git commit failed: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("git commit failed: {}", e)),
+    }
 }
 
 #[cfg(test)]

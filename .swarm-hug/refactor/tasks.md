@@ -3,9 +3,9 @@
 ## Commands and runner split
 
 - [x] (#1) Create `src/commands` module and move CLI command handlers into `init.rs`, `run.rs`, `status.rs`, `agents.rs`, `worktrees.rs`, `projects.rs`, `misc.rs`; re-export via `src/commands/mod.rs` (A)
-- [A] (#2) Move sprint orchestration and result types from `src/main.rs` into `src/runner.rs` and update call sites (blocked by #1)
-- [A] (#3) Move git helpers, output helpers, and tail follow utilities from `src/main.rs` into `src/git.rs`, `src/output.rs`, `src/tail.rs`; update call sites (blocked by #1)
-- [ ] (#4) Reduce `src/main.rs` to a thin CLI dispatcher using new modules; ensure compile success (blocked by #2, #3)
+- [x] (#2) Move sprint orchestration and result types from `src/main.rs` into `src/runner.rs` and update call sites (blocked by #1)
+- [x] (#3) Move git helpers, output helpers, and tail follow utilities from `src/main.rs` into `src/git.rs`, `src/output.rs`, `src/tail.rs`; update call sites (blocked by #1)
+- [x] (#4) Reduce `src/main.rs` to a thin CLI dispatcher using new modules; ensure compile success (blocked by #2, #3)
 
 ## Config module split
 

@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::process;
 
-use swarm::agent;
 use swarm::team;
 
 pub(crate) fn commit_files(paths: &[&str], message: &str) -> Result<bool, String> {
@@ -136,78 +135,5 @@ pub(crate) fn get_git_log_range(from: &str, to: &str) -> Result<String, String> 
     } else {
         // If range is invalid (no commits), return empty string
         Ok(String::new())
-    }
-}
-
-/// Commit an agent's work in their worktree.
-/// Each agent makes one commit per task (enforces one task = one commit rule).
-pub(crate) fn commit_agent_work(
-    worktree_path: &Path,
-    agent_name: &str,
-    task_description: &str,
-) -> Result<(), String> {
-    // Stage all changes in the worktree
-    let add_result = process::Command::new("git")
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["add", "-A"])
-        .output();
-
-    match add_result {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // If nothing to add, that's okay
-            if !stderr.contains("Nothing specified") {
-                return Err(format!("git add failed in worktree: {}", stderr));
-            }
-        }
-        Err(e) => return Err(format!("git add failed: {}", e)),
-    }
-
-    // Check if there are staged changes
-    let diff_result = process::Command::new("git")
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["diff", "--cached", "--quiet"])
-        .output();
-
-    let has_changes = match diff_result {
-        Ok(output) => !output.status.success(), // exit code 1 means changes exist
-        Err(_) => false,
-    };
-
-    if !has_changes {
-        return Ok(()); // No changes to commit
-    }
-
-    // Commit with agent attribution
-    let commit_msg = format!("{}: {}", agent_name, task_description);
-    let initial = agent::initial_from_name(agent_name).unwrap_or('?');
-    let commit_result = process::Command::new("git")
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["commit", "-m", &commit_msg])
-        .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
-        .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
-        .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
-        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
-        .output();
-
-    match commit_result {
-        Ok(output) if output.status.success() => {
-            println!("  {} committed: {}", agent_name, task_description);
-            Ok(())
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Don't fail if there's nothing to commit
-            if stderr.contains("nothing to commit") {
-                Ok(())
-            } else {
-                Err(format!("git commit failed: {}", stderr))
-            }
-        }
-        Err(e) => Err(format!("git commit failed: {}", e)),
     }
 }
