@@ -12,7 +12,7 @@
 ## Command Handlers
 
 - [A] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1)
-- [B] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
+- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
 - [A] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
 - [B] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
 - [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?)
