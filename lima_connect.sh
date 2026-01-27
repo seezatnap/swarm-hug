@@ -93,4 +93,66 @@ SELECTED_VM="$(select_vm "${RUNNING_VMS[@]}")"
 DOCKER_CTX="$(ensure_docker_context "$SELECTED_VM")"
 [[ -n "$DOCKER_CTX" ]] || die "Failed to get docker context for VM: $SELECTED_VM"
 
-# TODO: Implement container listing and interactive selection
+# --- Container discovery ---
+# List running container names for a given docker context
+list_running_containers() {
+  local ctx="$1"
+  docker --context "$ctx" ps --format '{{.Names}}' 2>/dev/null
+}
+
+# Get container status info (for menu display)
+# Returns lines of "container_name<TAB>status"
+get_container_status() {
+  local ctx="$1"
+  docker --context "$ctx" ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null
+}
+
+# Discover running containers and their status for menu display
+# Populates two parallel arrays: CONTAINER_NAMES and CONTAINER_STATUSES
+discover_containers() {
+  local ctx="$1"
+  local -a names=()
+  local -a statuses=()
+  local line name status
+
+  # Get all containers with status
+  while IFS=$'\t' read -r name status; do
+    [[ -z "$name" ]] && continue
+    names+=("$name")
+    statuses+=("$status")
+  done < <(get_container_status "$ctx")
+
+  # Export via global arrays (bash limitation for returning arrays)
+  CONTAINER_NAMES=("${names[@]+"${names[@]}"}")
+  CONTAINER_STATUSES=("${statuses[@]+"${statuses[@]}"}")
+}
+
+# Get only running container names (for filtering)
+get_running_container_names() {
+  local ctx="$1"
+  list_running_containers "$ctx"
+}
+
+CONTAINER_NAMES=()
+CONTAINER_STATUSES=()
+discover_containers "$DOCKER_CTX"
+
+# Check if there are any containers at all
+[[ ${#CONTAINER_NAMES[@]} -gt 0 ]] || die "No containers found in VM: $SELECTED_VM (context: $DOCKER_CTX)"
+
+# Filter to only running containers while preserving status info for display
+RUNNING_CONTAINER_NAMES=()
+RUNNING_CONTAINER_DISPLAY=()
+for i in "${!CONTAINER_NAMES[@]}"; do
+  name="${CONTAINER_NAMES[$i]}"
+  status="${CONTAINER_STATUSES[$i]}"
+  # Check if status starts with "Up" (running container)
+  if [[ "$status" == Up* ]]; then
+    RUNNING_CONTAINER_NAMES+=("$name")
+    RUNNING_CONTAINER_DISPLAY+=("$name ($status)")
+  fi
+done
+
+[[ ${#RUNNING_CONTAINER_NAMES[@]} -gt 0 ]] || die "No running containers found in VM: $SELECTED_VM (context: $DOCKER_CTX). Start a container first."
+
+# TODO: Implement container selection menu and exec
