@@ -304,7 +304,7 @@ fn test_parse_args_config() {
 fn test_command_from_str() {
     assert_eq!(Command::from_str("init"), Some(Command::Init));
     assert_eq!(Command::from_str("run"), Some(Command::Run));
-    assert_eq!(Command::from_str("sprint"), Some(Command::Sprint));
+    assert_eq!(Command::from_str("sprint"), None); // sprint command removed
     assert_eq!(Command::from_str("plan"), Some(Command::Plan));
     assert_eq!(Command::from_str("status"), Some(Command::Status));
     assert_eq!(Command::from_str("agents"), Some(Command::Agents));
