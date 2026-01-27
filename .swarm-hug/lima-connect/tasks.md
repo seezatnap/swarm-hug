@@ -8,7 +8,7 @@
 - [x] (#3) Resolve docker socket for chosen VM via `limactl list <vm> --format 'unix://{{.Dir}}/sock/docker.sock'` and ensure `lima-<vm>` context exists (inspect/create) (blocked by #2) (A)
 
 ## Containers
-- [A] (#4) List running containers via `docker --context <ctx> ps` and collect status info (via `ps -a`) for menu display (blocked by #3)
+- [x] (#4) List running containers via `docker --context <ctx> ps` and collect status info (via `ps -a`) for menu display (blocked by #3) (A)
 
 ## Selection UX
 - [x] (#5) Add VM selection menu using bash `select`, auto-select when only one VM (blocked by #2) (A)
