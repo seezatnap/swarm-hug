@@ -1,7 +1,7 @@
 //! CHAT.md writer and reader.
 //!
 //! All communication is appended to CHAT.md with the format:
-//! `YYYY-MM-DD HH:MM:SS | <AgentName> | AGENT_THINK: <message>`
+//! `YYYY-MM-DD HH:MM:SS | <AgentName> | <message>`
 
 use chrono::Local;
 use std::fs::{File, OpenOptions};
@@ -17,16 +17,16 @@ const HEARTBEAT_PREFIX: &str = "AGENT_ACTIVITY:";
 /// use swarm::chat::format_message;
 /// let msg = format_message("Aaron", "Starting task");
 /// assert!(msg.contains("Aaron"));
-/// assert!(msg.contains("AGENT_THINK: Starting task"));
+/// assert!(msg.contains("Starting task"));
 /// ```
 pub fn format_message(agent_name: &str, message: &str) -> String {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-    format!("{} | {} | AGENT_THINK: {}", timestamp, agent_name, message)
+    format!("{} | {} | {}", timestamp, agent_name, message)
 }
 
 /// Format a chat message with a custom timestamp (for testing).
 pub fn format_message_with_timestamp(timestamp: &str, agent_name: &str, message: &str) -> String {
-    format!("{} | {} | AGENT_THINK: {}", timestamp, agent_name, message)
+    format!("{} | {} | {}", timestamp, agent_name, message)
 }
 
 /// Append a message to CHAT.md.
@@ -167,7 +167,7 @@ pub fn write_boot_message<P: AsRef<Path>>(path: P) -> io::Result<()> {
     // Write the boot banner
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
     let banner = format!(
-        "{} | ScrumMaster | AGENT_THINK: 🚀🐝 SWARM HUG BOOTING UP 🐝🚀",
+        "{} | ScrumMaster | 🚀🐝 SWARM HUG BOOTING UP 🐝🚀",
         timestamp
     );
     writeln!(file, "{}", banner)
@@ -187,7 +187,7 @@ pub fn write_merge_status<P: AsRef<Path>>(
 
 /// Parse a chat line into (timestamp, agent_name, message).
 pub fn parse_line(line: &str) -> Option<(&str, &str, &str)> {
-    // Format: YYYY-MM-DD HH:MM:SS | AgentName | AGENT_THINK: message
+    // Format: YYYY-MM-DD HH:MM:SS | AgentName | message
     let parts: Vec<&str> = line.splitn(3, " | ").collect();
     if parts.len() != 3 {
         return None;
@@ -195,10 +195,7 @@ pub fn parse_line(line: &str) -> Option<(&str, &str, &str)> {
 
     let timestamp = parts[0];
     let agent_name = parts[1];
-    let message_part = parts[2];
-
-    // Strip "AGENT_THINK: " prefix if present
-    let message = message_part.strip_prefix("AGENT_THINK: ").unwrap_or(message_part);
+    let message = parts[2];
 
     Some((timestamp, agent_name, message))
 }
@@ -212,7 +209,7 @@ mod tests {
     fn test_format_message() {
         let msg = format_message("Aaron", "Starting task");
         assert!(msg.contains("Aaron"));
-        assert!(msg.contains("AGENT_THINK: Starting task"));
+        assert!(msg.contains("Starting task"));
         // Check timestamp format
         assert!(msg.contains("-"));
         assert!(msg.contains(":"));
@@ -221,7 +218,7 @@ mod tests {
     #[test]
     fn test_format_message_with_timestamp() {
         let msg = format_message_with_timestamp("2024-01-15 10:30:00", "Aaron", "Hello");
-        assert_eq!(msg, "2024-01-15 10:30:00 | Aaron | AGENT_THINK: Hello");
+        assert_eq!(msg, "2024-01-15 10:30:00 | Aaron | Hello");
     }
 
     #[test]
@@ -305,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_parse_line() {
-        let line = "2024-01-15 10:30:00 | Aaron | AGENT_THINK: Starting task";
+        let line = "2024-01-15 10:30:00 | Aaron | Starting task";
         let (timestamp, agent, message) = parse_line(line).unwrap();
         assert_eq!(timestamp, "2024-01-15 10:30:00");
         assert_eq!(agent, "Aaron");

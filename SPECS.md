@@ -105,7 +105,7 @@
 ### Chat and tail-based UI
 - All communication is appended to CHAT.md.
 - Required format per line:
-  - `YYYY-MM-DD HH:MM:SS | <AgentName> | AGENT_THINK: <message>`
+  - `YYYY-MM-DD HH:MM:SS | <AgentName> | <message>`
 - The UI is a simple tail of CHAT.md. No GridTUI.
 - `swarm tail` streams the file and is used by `swarm run` unless disabled.
 

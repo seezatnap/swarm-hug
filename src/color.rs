@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_chat_line_completed() {
-        let line = "2026-01-26 00:01:26 | Aaron | AGENT_THINK: Completed: Task one";
+        let line = "2026-01-26 00:01:26 | Aaron | Completed: Task one";
         let colored = chat_line(line);
         assert!(colored.contains(GREEN), "Completed should be green");
         assert!(colored.contains("Aaron"), "Should contain agent name");
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_chat_line_failed() {
-        let line = "2026-01-26 00:01:26 | Betty | AGENT_THINK: Failed: Task two - error";
+        let line = "2026-01-26 00:01:26 | Betty | Failed: Task two - error";
         let colored = chat_line(line);
         assert!(colored.contains(RED), "Failed should be red");
         assert!(colored.contains("Betty"), "Should contain agent name");
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_chat_line_starting() {
-        let line = "2026-01-26 00:01:26 | Carlos | AGENT_THINK: Starting: Task three";
+        let line = "2026-01-26 00:01:26 | Carlos | Starting: Task three";
         let colored = chat_line(line);
         assert!(colored.contains(CYAN), "Starting should be cyan");
         assert!(colored.contains("Carlos"), "Should contain agent name");
