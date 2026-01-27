@@ -23,4 +23,4 @@
 - [x] (#10) Add explicit errors for missing docker context, no running containers, or invalid provided VM/container names (blocked by #3, #4, #8) (A)
 
 ## Testing
-- [ ] (#11) Run and document manual test scenarios from PRD (single VM+container auto-connect, multiple VMs prompt, no VMs error, VM with no containers error) (blocked by #9, #10)
+- [A] (#11) Run and document manual test scenarios from PRD (single VM+container auto-connect, multiple VMs prompt, no VMs error, VM with no containers error) (blocked by #9, #10)
