@@ -42,7 +42,7 @@
 
 ## Validation
 
-- [A] (#26) Run full test suite and fix any failures (blocked by #25)
+- [x] (#26) Run full test suite and fix any failures (blocked by #25)
 - [ ] (#27) Run cargo clippy and resolve any new warnings (blocked by #26)
 - [ ] (#28) Manual verification that help output matches target format (blocked by #27)
 
