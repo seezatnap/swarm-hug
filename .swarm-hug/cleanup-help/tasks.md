@@ -2,12 +2,12 @@
 
 ## CLI Module
 
-- [A] (#1) Remove `sprint` command enum variant, from_str match arm, and dispatch in main.rs
-- [A] (#2) Remove `plan` command enum variant, from_str match arm, and dispatch in main.rs
-- [A] (#3) Remove `status` command enum variant, from_str match arm, and dispatch in main.rs
-- [B] (#4) Remove `worktrees` command enum variant, from_str match arm, and dispatch in main.rs
-- [B] (#5) Remove `worktrees-branch` command enum variant, from_str match arm, and dispatch in main.rs
-- [B] (#6) Remove `cleanup` command enum variant, from_str match arm, and dispatch in main.rs
+- [x] (#1) Remove `sprint` command enum variant, from_str match arm, and dispatch in main.rs (A)
+- [x] (#2) Remove `plan` command enum variant, from_str match arm, and dispatch in main.rs (A)
+- [x] (#3) Remove `status` command enum variant, from_str match arm, and dispatch in main.rs (A)
+- [x] (#4) Remove `worktrees` command enum variant, from_str match arm, and dispatch in main.rs (B)
+- [x] (#5) Remove `worktrees-branch` command enum variant, from_str match arm, and dispatch in main.rs (B)
+- [x] (#6) Remove `cleanup` command enum variant, from_str match arm, and dispatch in main.rs (B)
 
 ## Command Handlers
 
@@ -20,7 +20,7 @@
 
 ## CLI Options
 
-- [B] (#13) Remove `--no-tail` field from CliArgs struct and parse_args()
+- [x] (#13) Remove `--no-tail` field from CliArgs struct and parse_args() (B)
 - [ ] (#14) Remove `--no-tail` from Config struct if present and update related code (blocked by #13)
 
 ## Help Text Updates
