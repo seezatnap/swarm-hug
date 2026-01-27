@@ -43,7 +43,7 @@
 ## Validation
 
 - [x] (#26) Run full test suite and fix any failures (blocked by #25) (A)
-- [A] (#27) Run cargo clippy and resolve any new warnings (blocked by #26)
+- [x] (#27) Run cargo clippy and resolve any new warnings (blocked by #26) (A)
 - [ ] (#28) Manual verification that help output matches target format (blocked by #27)
 
 ## Follow-up tasks (from sprint review)
