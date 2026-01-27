@@ -48,8 +48,6 @@ pub enum Command {
     Init,
     /// Run sprints until done or max reached.
     Run,
-    /// Show task status.
-    Status,
     /// List agent names/initials.
     Agents,
     /// List worktree branches.
@@ -72,7 +70,6 @@ impl Command {
         match s {
             "init" => Some(Self::Init),
             "run" => Some(Self::Run),
-            "status" => Some(Self::Status),
             "agents" => Some(Self::Agents),
             "worktrees-branch" => Some(Self::WorktreesBranch),
             "cleanup" => Some(Self::Cleanup),
