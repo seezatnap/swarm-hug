@@ -5,4 +5,3 @@
 [agents]
 A = "cleanup-help"
 B = "cleanup-help"
-C = "per-task-engine-selection"

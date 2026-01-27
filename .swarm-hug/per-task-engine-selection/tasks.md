@@ -2,9 +2,9 @@
 
 ## Backend - Engine Selection Logic
 
-- [C] (#1) Refactor engine selection from agent spawn to task loop in `runner.rs` - move selection logic inside `for description in tasks` loop
-- [C] (#2) Update `engine::create_engine()` to support per-task instantiation - pass engine types list and select/create per task
-- [C] (#3) Add random engine selection helper function that picks from configured engine list with equal probability
+- [x] (#1) Refactor engine selection from agent spawn to task loop in `runner.rs` - move selection logic inside `for description in tasks` loop (C)
+- [x] (#2) Update `engine::create_engine()` to support per-task instantiation - pass engine types list and select/create per task (C)
+- [x] (#3) Add random engine selection helper function that picks from configured engine list with equal probability (C)
 
 ## Backend - Logging and Chat Output
 
