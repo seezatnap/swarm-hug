@@ -1,7 +1,7 @@
 # Tasks
 
 ## Script Foundation
-- [ ] (#1) Create `lima_connect.sh` scaffold at repo root with shebang, `set -euo pipefail`, `die()`/`have()`, and make it executable
+- [A] (#1) Create `lima_connect.sh` scaffold at repo root with shebang, `set -euo pipefail`, `die()`/`have()`, and make it executable
 
 ## Lima & Docker Discovery
 - [ ] (#2) Implement running VM discovery via `limactl list --format '{{.Name}} {{.Status}}'` and error when none running (blocked by #1)
