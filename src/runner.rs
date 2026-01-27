@@ -362,9 +362,9 @@ pub(crate) fn run_sprint(
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                // Write agent start to chat
+                // Write agent start to chat (including engine name for visibility)
                 if let Err(e) =
-                    chat::write_message(&chat_path, agent_name, &format!("Starting: {}", description))
+                    chat::write_message(&chat_path, agent_name, &format!("Starting: {} [engine: {}]", description, engine_type_str))
                 {
                     eprintln!("warning: failed to write chat: {}", e);
                 }
