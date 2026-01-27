@@ -96,12 +96,37 @@ ensure_docker_context() {
   local ctx="lima-${vm}"
   local sock
 
-  sock="$(get_docker_socket "$vm")" || die "Failed to get docker socket for VM: $vm"
-  [[ -n "$sock" ]] || die "Empty docker socket path for VM: $vm"
+  sock="$(get_docker_socket "$vm")" || {
+    printf "Error: Failed to get docker socket for VM '%s'.\n" "$vm" >&2
+    printf "The VM may not be fully started or Docker may not be configured.\n" >&2
+    printf "Try: limactl shell %s -- docker info\n" "$vm" >&2
+    exit 1
+  }
+  if [[ -z "$sock" ]]; then
+    printf "Error: Empty docker socket path for VM '%s'.\n" "$vm" >&2
+    printf "This usually means Lima is not configured with Docker support.\n" >&2
+    printf "Ensure your Lima VM template includes Docker.\n" >&2
+    exit 1
+  fi
 
   if ! docker context inspect "$ctx" >/dev/null 2>&1; then
-    docker context create "$ctx" --docker "host=${sock}" >/dev/null \
-      || die "Failed to create docker context: $ctx"
+    if ! docker context create "$ctx" --docker "host=${sock}" >/dev/null 2>&1; then
+      printf "Error: Failed to create docker context '%s'.\n" "$ctx" >&2
+      printf "Socket path: %s\n" "$sock" >&2
+      printf "Check that:\n" >&2
+      printf "  1. The Lima VM '%s' is running: limactl list\n" "$vm" >&2
+      printf "  2. Docker socket exists: ls -la %s\n" "${sock#unix://}" >&2
+      printf "  3. You have permission to access the socket\n" >&2
+      exit 1
+    fi
+  fi
+
+  # Verify the context is usable by running a simple docker command
+  if ! docker --context "$ctx" info >/dev/null 2>&1; then
+    printf "Error: Docker context '%s' exists but is not usable.\n" "$ctx" >&2
+    printf "The Docker daemon in VM '%s' may not be running.\n" "$vm" >&2
+    printf "Try: limactl shell %s -- docker info\n" "$vm" >&2
+    exit 1
   fi
 
   printf '%s\n' "$ctx"
@@ -147,7 +172,14 @@ if [[ -n "$OPT_VM" ]]; then
       break
     fi
   done
-  [[ $vm_found -eq 1 ]] || die "VM not found or not running: $OPT_VM"
+  if [[ $vm_found -eq 0 ]]; then
+    printf "Error: VM '%s' is not running or does not exist.\n" "$OPT_VM" >&2
+    printf "Available running VMs:\n" >&2
+    for vm in "${RUNNING_VMS[@]}"; do
+      printf "  - %s\n" "$vm" >&2
+    done
+    exit 1
+  fi
   SELECTED_VM="$OPT_VM"
 else
   SELECTED_VM="$(select_vm "${RUNNING_VMS[@]}")"
@@ -203,7 +235,13 @@ CONTAINER_STATUSES=()
 discover_containers "$DOCKER_CTX"
 
 # Check if there are any containers at all
-[[ ${#CONTAINER_NAMES[@]} -gt 0 ]] || die "No containers found in VM: $SELECTED_VM (context: $DOCKER_CTX)"
+if [[ ${#CONTAINER_NAMES[@]} -eq 0 ]]; then
+  printf "Error: No containers found in VM '%s'.\n" "$SELECTED_VM" >&2
+  printf "Docker context: %s\n" "$DOCKER_CTX" >&2
+  printf "To see containers: docker --context %s ps -a\n" "$DOCKER_CTX" >&2
+  printf "To start a container: docker --context %s run ...\n" "$DOCKER_CTX" >&2
+  exit 1
+fi
 
 # Filter to only running containers while preserving status info for display
 RUNNING_CONTAINER_NAMES=()
@@ -218,7 +256,19 @@ for i in "${!CONTAINER_NAMES[@]}"; do
   fi
 done
 
-[[ ${#RUNNING_CONTAINER_NAMES[@]} -gt 0 ]] || die "No running containers found in VM: $SELECTED_VM (context: $DOCKER_CTX). Start a container first."
+if [[ ${#RUNNING_CONTAINER_NAMES[@]} -eq 0 ]]; then
+  printf "Error: No running containers found in VM '%s'.\n" "$SELECTED_VM" >&2
+  printf "Docker context: %s\n" "$DOCKER_CTX" >&2
+  if [[ ${#CONTAINER_NAMES[@]} -gt 0 ]]; then
+    printf "Stopped containers exist. To start one:\n" >&2
+    for i in "${!CONTAINER_NAMES[@]}"; do
+      printf "  docker --context %s start %s\n" "$DOCKER_CTX" "${CONTAINER_NAMES[$i]}" >&2
+    done
+  else
+    printf "To start a container: docker --context %s run ...\n" "$DOCKER_CTX" >&2
+  fi
+  exit 1
+fi
 
 # --- Container selection ---
 # Auto-select if only one container, otherwise prompt with select menu
@@ -278,7 +328,14 @@ if [[ -n "$OPT_CONTAINER" ]]; then
       break
     fi
   done
-  [[ $container_found -eq 1 ]] || die "Container not found or not running: $OPT_CONTAINER"
+  if [[ $container_found -eq 0 ]]; then
+    printf "Error: Container '%s' is not running or does not exist in VM '%s'.\n" "$OPT_CONTAINER" "$SELECTED_VM" >&2
+    printf "Available running containers:\n" >&2
+    for i in "${!RUNNING_CONTAINER_NAMES[@]}"; do
+      printf "  - %s (%s)\n" "${RUNNING_CONTAINER_NAMES[$i]}" "${RUNNING_CONTAINER_DISPLAY[$i]#* }" >&2
+    done
+    exit 1
+  fi
   SELECTED_CONTAINER="$OPT_CONTAINER"
 else
   SELECTED_CONTAINER="$(select_container RUNNING_CONTAINER_NAMES[@] RUNNING_CONTAINER_DISPLAY[@])"
