@@ -17,10 +17,10 @@
 
 ## Flags & Execution
 - [x] (#8) Parse `--vm`, `--container`, and `--shell` flags to skip selections and override shell (blocked by #5, #6) (A)
-- [ ] (#9) Execute `docker --context <ctx> exec -it <container> <shell>` defaulting to `bash -l` (blocked by #3, #6, #8)
+- [A] (#9) Execute `docker --context <ctx> exec -it <container> <shell>` defaulting to `bash -l` (blocked by #3, #6, #8)
 
 ## Error Handling
-- [ ] (#10) Add explicit errors for missing docker context, no running containers, or invalid provided VM/container names (blocked by #3, #4, #8)
+- [A] (#10) Add explicit errors for missing docker context, no running containers, or invalid provided VM/container names (blocked by #3, #4, #8)
 
 ## Testing
 - [ ] (#11) Run and document manual test scenarios from PRD (single VM+container auto-connect, multiple VMs prompt, no VMs error, VM with no containers error) (blocked by #9, #10)
