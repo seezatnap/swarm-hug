@@ -215,9 +215,6 @@ impl Config {
         if let Some(n) = args.max_sprints {
             self.sprints_max = n;
         }
-        if args.no_tail {
-            self.no_tail = true;
-        }
         if let Some(ref project) = args.project {
             self.project = Some(project.clone());
         }
