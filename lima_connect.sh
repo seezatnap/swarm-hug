@@ -285,5 +285,7 @@ else
   [[ -n "$SELECTED_CONTAINER" ]] || die "No container selected"
 fi
 
-# OPT_SHELL is already set (default: "bash -l"), available for exec command
-# TODO: Implement exec command using SELECTED_CONTAINER and OPT_SHELL
+# --- Execute docker exec ---
+# Connect to the selected container with the specified shell
+# shellcheck disable=SC2086
+exec docker --context "$DOCKER_CTX" exec -it "$SELECTED_CONTAINER" $OPT_SHELL
