@@ -11,11 +11,11 @@
 
 ## Command Handlers
 
-- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?) (?) (?) (?) (?)
-- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?) (?) (?) (?) (?)
-- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?) (?) (?) (?) (?)
-- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?) (?) (?) (?) (?)
-- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?) (?) (?) (?) (?)
+- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?) (?) (?) (?) (?) (?)
+- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?) (?) (?) (?) (?) (?)
+- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?) (?) (?) (?) (?) (?)
+- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?) (?) (?) (?) (?) (?)
+- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?) (?) (?) (?) (?) (?)
 - [x] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6) (A)
 
 ## CLI Options
@@ -44,7 +44,7 @@
 
 - [x] (#26) Run full test suite and fix any failures (blocked by #25) (A)
 - [x] (#27) Run cargo clippy and resolve any new warnings (blocked by #26) (A)
-- [ ] (#28) Manual verification that help output matches target format (blocked by #27)
+- [A] (#28) Manual verification that help output matches target format (blocked by #27)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#29) Fix help text to remove deprecated commands (sprint, plan, status, worktrees, worktrees-branch, cleanup, --no-tail) - task #15 was incomplete (blocked by #15) (A)
