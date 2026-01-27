@@ -56,7 +56,7 @@ OPTIONS:
     --tasks-file <PATH>       Path to tasks file [default: <project>/tasks.md]
     --chat-file <PATH>        Path to chat file [default: <project>/chat.md]
     --log-dir <PATH>          Path to log directory [default: <project>/loop/]
-    --engine <TYPE>           Engine type: claude, codex, stub [default: claude]
+    --engine <TYPE>           Engine type(s): claude, codex, stub (comma-separated for per-task selection) [default: claude]
     --stub                    Enable stub mode for testing [default: false]
     --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]
     --no-tail                 Don't tail chat.md during run [default: false]
@@ -69,6 +69,12 @@ OPTIONS:
 - After each sprint completes, `SPRINT STATUS` summary lines are appended to `chat.md`.
 - While agents are running, a heartbeat line is appended to `chat.md` roughly every 5 minutes; it stops when agents finish.
 - Sprint follow-up tickets use the prd-to-task format: `- [ ] (#123) description (blocked by #100, #101)`.
+
+## Engine Selection
+
+- `--engine` accepts a comma-separated list (e.g., `claude,codex`). When multiple engines are provided, each task randomly selects one engine.
+- Chat entries include the engine used for that task: `Starting: <task> [engine: <name>]`.
+- You can weight selection by repeating an engine (e.g., `claude,claude,codex`), and `--stub` always forces the stub engine.
 
 ## Requirements for init_lima.sh
 
