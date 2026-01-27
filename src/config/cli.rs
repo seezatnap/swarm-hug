@@ -23,8 +23,6 @@ pub struct CliArgs {
     pub stub: bool,
     /// Maximum sprints to run.
     pub max_sprints: Option<usize>,
-    /// Disable tailing.
-    pub no_tail: bool,
     /// Disable TUI mode (use plain text output).
     pub no_tui: bool,
     /// Show help.
@@ -105,7 +103,6 @@ where
             "--engine" => cli.engine = args.next(),
             "--stub" => cli.stub = true,
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
-            "--no-tail" => cli.no_tail = true,
             "--no-tui" => cli.no_tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() => {

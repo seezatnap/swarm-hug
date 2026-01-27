@@ -247,14 +247,12 @@ fn test_parse_args_flags() {
         "--max-sprints".to_string(),
         "3".to_string(),
         "--stub".to_string(),
-        "--no-tail".to_string(),
         "run".to_string(),
     ];
     let cli = parse_args(args);
     assert_eq!(cli.command, Some(Command::Run));
     assert_eq!(cli.max_sprints, Some(3));
     assert!(cli.stub);
-    assert!(cli.no_tail);
 }
 
 #[test]
