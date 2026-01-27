@@ -84,8 +84,6 @@ pub struct Config {
     pub engine_stub_mode: bool,
     /// Maximum sprints to run (0 means unlimited).
     pub sprints_max: usize,
-    /// Disable tailing CHAT.md during run.
-    pub no_tail: bool,
     /// Project name for multi-project mode.
     pub project: Option<String>,
 }
@@ -103,7 +101,6 @@ impl Default for Config {
             engine_types: vec![EngineType::Claude],
             engine_stub_mode: false,
             sprints_max: 0,
-            no_tail: false,
             project: None,
         }
     }
