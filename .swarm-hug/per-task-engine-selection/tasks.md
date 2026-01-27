@@ -8,15 +8,15 @@
 
 ## Backend - Logging and Chat Output
 
-- [C] (#4) Modify "Starting:" chat message format to include engine name suffix: `Starting: <task> [engine: <name>]` (blocked by #1)
-- [C] (#5) Update agent log file entries to include engine name for each task execution (blocked by #1)
+- [x] (#4) Modify "Starting:" chat message format to include engine name suffix: `Starting: <task> [engine: <name>]` (blocked by #1) (C)
+- [x] (#5) Update agent log file entries to include engine name for each task execution (blocked by #1) (C)
 
 ## Testing
 
-- [C] (#6) Add unit tests for random engine selection logic - verify equal distribution over many iterations (blocked by #3)
-- [D] (#7) Add integration test for multi-engine configuration - verify single agent uses both engines across tasks (blocked by #1, #2)
-- [D] (#8) Add test to verify stub mode continues using stub engine exclusively (blocked by #1, #2)
-- [D] (#9) Add test to verify single-engine configuration works unchanged (blocked by #1, #2)
+- [x] (#6) Add unit tests for random engine selection logic - verify equal distribution over many iterations (blocked by #3) (C)
+- [x] (#7) Add integration test for multi-engine configuration - verify single agent uses both engines across tasks (blocked by #1, #2) (D)
+- [x] (#8) Add test to verify stub mode continues using stub engine exclusively (blocked by #1, #2) (D)
+- [x] (#9) Add test to verify single-engine configuration works unchanged (blocked by #1, #2) (D)
 
 ## Documentation
 
