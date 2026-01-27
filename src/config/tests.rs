@@ -306,6 +306,7 @@ fn test_command_from_str() {
     assert_eq!(Command::from_str("plan"), None); // plan command removed
     assert_eq!(Command::from_str("status"), None); // status command removed
     assert_eq!(Command::from_str("agents"), Some(Command::Agents));
+    assert_eq!(Command::from_str("worktrees"), None); // worktrees command removed
     assert_eq!(Command::from_str("worktrees-branch"), None); // worktrees-branch command removed
     assert_eq!(Command::from_str("cleanup"), None); // cleanup command removed
     assert_eq!(Command::from_str("projects"), Some(Command::Projects));
