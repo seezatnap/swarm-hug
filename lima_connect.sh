@@ -39,4 +39,29 @@ done < <(discover_running_vms)
 
 [[ ${#RUNNING_VMS[@]} -gt 0 ]] || die "No running Lima VMs found. Start a VM with: limactl start <name>"
 
+# --- Docker socket and context ---
+# Resolve the docker socket path for a given VM
+get_docker_socket() {
+  local vm="$1"
+  limactl list "$vm" --format 'unix://{{.Dir}}/sock/docker.sock' 2>/dev/null
+}
+
+# Ensure docker context exists for a VM, creating it if necessary
+# Returns the context name (lima-<vm>)
+ensure_docker_context() {
+  local vm="$1"
+  local ctx="lima-${vm}"
+  local sock
+
+  sock="$(get_docker_socket "$vm")" || die "Failed to get docker socket for VM: $vm"
+  [[ -n "$sock" ]] || die "Empty docker socket path for VM: $vm"
+
+  if ! docker context inspect "$ctx" >/dev/null 2>&1; then
+    docker context create "$ctx" --docker "host=${sock}" >/dev/null \
+      || die "Failed to create docker context: $ctx"
+  fi
+
+  printf '%s\n' "$ctx"
+}
+
 # TODO: Implement container listing and interactive selection
