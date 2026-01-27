@@ -232,8 +232,6 @@ fn test_swarm_run_stub_integration() {
     );
 }
 
-// test_swarm_plan_writes_chat_summary removed: plan command was deprecated
-
 // test_swarm_status_shows_counts_and_recent_chat removed: status command was deprecated
 
 /// Test that multiple consecutive sprints correctly reassign agents.
