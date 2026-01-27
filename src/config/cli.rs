@@ -54,8 +54,6 @@ pub enum Command {
     Status,
     /// List agent names/initials.
     Agents,
-    /// List worktrees.
-    Worktrees,
     /// List worktree branches.
     WorktreesBranch,
     /// Clean up worktrees and branches.
@@ -79,7 +77,6 @@ impl Command {
             "plan" => Some(Self::Plan),
             "status" => Some(Self::Status),
             "agents" => Some(Self::Agents),
-            "worktrees" => Some(Self::Worktrees),
             "worktrees-branch" => Some(Self::WorktreesBranch),
             "cleanup" => Some(Self::Cleanup),
             "projects" => Some(Self::Projects),

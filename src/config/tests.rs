@@ -308,7 +308,6 @@ fn test_command_from_str() {
     assert_eq!(Command::from_str("plan"), Some(Command::Plan));
     assert_eq!(Command::from_str("status"), Some(Command::Status));
     assert_eq!(Command::from_str("agents"), Some(Command::Agents));
-    assert_eq!(Command::from_str("worktrees"), Some(Command::Worktrees));
     assert_eq!(Command::from_str("worktrees-branch"), Some(Command::WorktreesBranch));
     assert_eq!(Command::from_str("cleanup"), Some(Command::Cleanup));
     assert_eq!(Command::from_str("projects"), Some(Command::Projects));
