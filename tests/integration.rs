@@ -657,6 +657,111 @@ fn test_stub_mode_uses_stub_engine_exclusively() {
     );
 }
 
+/// Test that single-engine configuration works unchanged.
+/// When only one engine is configured (e.g., `--engine claude`), that engine should be used
+/// for all tasks without any changes to behavior from the per-task engine selection mechanism.
+///
+/// This test verifies:
+/// 1. Single engine configuration is accepted and works correctly
+/// 2. All tasks use the same engine (the one configured)
+/// 3. Agent logs show consistent engine usage across all tasks
+/// 4. Chat messages show the same engine for all tasks
+///
+/// Note: We use stub mode here, so the "single engine" is actually stub,
+/// but this verifies the per-task selection with a single-element engine list works.
+#[test]
+fn test_single_engine_configuration_works_unchanged() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write multiple tasks for a single agent to exercise per-task engine selection
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] First task\n- [ ] Second task\n- [ ] Third task\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+    commit_all(repo_path, "init");
+
+    // Run with --stub (single engine configuration)
+    // This simulates a single-engine config where all tasks should use the same engine
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "3",
+            "--max-agents",
+            "1",
+            "--no-tui",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    assert!(
+        output.status.success(),
+        "Command with single engine configuration should succeed"
+    );
+
+    // Verify all tasks completed
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        3,
+        "All 3 tasks should be completed"
+    );
+
+    // Verify agent log shows consistent engine usage for all tasks
+    let log_dir = team_root.join("loop");
+    let agent_log = log_dir.join("agent-A.log");
+    let log_content = fs::read_to_string(&agent_log).expect("read agent log");
+
+    // All executions should use stub engine
+    let stub_engine_count = log_content.matches("Executing with engine: stub").count();
+    assert_eq!(
+        stub_engine_count, 3,
+        "All 3 tasks should use stub engine. Log:\n{}",
+        log_content
+    );
+
+    // Verify chat messages show consistent engine for all tasks
+    let chat_path = team_root.join("chat.md");
+    let chat_content = fs::read_to_string(&chat_path).expect("read chat.md");
+
+    // All "Starting:" messages should have [engine: stub]
+    let engine_stub_count = chat_content.matches("[engine: stub]").count();
+    assert_eq!(
+        engine_stub_count, 3,
+        "All 3 tasks should show [engine: stub] in chat. Chat:\n{}",
+        chat_content
+    );
+
+    // Verify no other engine types appear
+    assert!(
+        !log_content.contains("Executing with engine: claude"),
+        "Should not have claude engine in single-engine config"
+    );
+    assert!(
+        !log_content.contains("Executing with engine: codex"),
+        "Should not have codex engine in single-engine config"
+    );
+}
+
 /// Regression test: chat history should persist across consecutive sprints in a single run.
 #[test]
 fn test_chat_history_persists_across_sprints_in_single_run() {
