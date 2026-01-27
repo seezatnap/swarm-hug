@@ -11,4 +11,32 @@ set -euo pipefail
 die() { printf "Error: %s\n" "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# TODO: Implement VM discovery, container listing, and interactive selection
+# --- preflight checks ---
+have limactl || die "Missing limactl (Lima). Install: brew install lima"
+have docker  || die "Missing docker CLI. Install Docker Desktop (or: brew install docker)"
+
+# --- VM discovery ---
+# Discover running Lima VMs via limactl list
+# Output format: "name status" per line, filter for Running status
+discover_running_vms() {
+  local vms=()
+  local line name status
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    name="${line%% *}"
+    status="${line#* }"
+    if [[ "$status" == "Running" ]]; then
+      vms+=("$name")
+    fi
+  done < <(limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null)
+  printf '%s\n' "${vms[@]}"
+}
+
+RUNNING_VMS=()
+while IFS= read -r vm; do
+  [[ -n "$vm" ]] && RUNNING_VMS+=("$vm")
+done < <(discover_running_vms)
+
+[[ ${#RUNNING_VMS[@]} -gt 0 ]] || die "No running Lima VMs found. Start a VM with: limactl start <name>"
+
+# TODO: Implement container listing and interactive selection
