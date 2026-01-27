@@ -11,21 +11,21 @@
 
 ## Command Handlers
 
-- [ ] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1)
-- [ ] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
-- [ ] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
-- [ ] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
-- [ ] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5)
-- [ ] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6)
+- [A] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1)
+- [A] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
+- [A] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
+- [A] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
+- [B] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5)
+- [B] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6)
 
 ## CLI Options
 
 - [x] (#13) Remove `--no-tail` field from CliArgs struct and parse_args() (B)
-- [ ] (#14) Remove `--no-tail` from Config struct if present and update related code (blocked by #13)
+- [B] (#14) Remove `--no-tail` from Config struct if present and update related code (blocked by #13)
 
 ## Help Text Updates
 
-- [ ] (#15) Remove MULTI-PROJECT MODE section from help output (blocked by #1, #2, #3, #4, #5, #6)
+- [B] (#15) Remove MULTI-PROJECT MODE section from help output (blocked by #1, #2, #3, #4, #5, #6)
 - [ ] (#16) Update examples section: remove deprecated examples and add `swarm -p authentication run` (blocked by #15)
 - [ ] (#17) Verify help output matches target format exactly (blocked by #16)
 
