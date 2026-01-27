@@ -126,10 +126,11 @@ impl SprintHistory {
 mod tests {
     use super::*;
     use super::super::Team;
+    use crate::testutil::with_temp_cwd;
 
     #[test]
     fn test_sprint_history_load_new() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             // Load from non-existent file should create new history with 0 sprints
             let history = SprintHistory::load("new-team").unwrap();
             assert_eq!(history.team_name, "new-team");
@@ -139,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_sprint_history_next_sprint() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             let mut history = SprintHistory::load("test-team").unwrap();
             assert_eq!(history.total_sprints, 0);
 
@@ -157,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_sprint_history_save_and_load() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             // Initialize team directory
             Team::new("persistent-team").init().unwrap();
 
@@ -198,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_sprint_history_to_json() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             let mut history = SprintHistory::load("json-team").unwrap();
             history.next_sprint();
             history.next_sprint();
@@ -211,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_sprint_history_formatted_team_name() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             // Hyphenated name
             let history = SprintHistory::load("my-awesome-team").unwrap();
             assert_eq!(history.formatted_team_name(), "My Awesome Team");
@@ -232,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_sprint_history_persistence_across_sessions() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             // Initialize team
             Team::new("session-team").init().unwrap();
 

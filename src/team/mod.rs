@@ -29,29 +29,6 @@ pub const ASSIGNMENTS_FILE: &str = "assignments.toml";
 /// Filename for sprint history within each team directory.
 pub const SPRINT_HISTORY_FILE: &str = "sprint-history.json";
 
-#[cfg(test)]
-use std::sync::Mutex;
-
-#[cfg(test)]
-use tempfile::TempDir;
-
-#[cfg(test)]
-static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-#[cfg(test)]
-fn with_temp_dir<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    let _guard = CWD_LOCK.lock().unwrap();
-    let original = std::env::current_dir().unwrap();
-    let temp = TempDir::new().unwrap();
-    std::env::set_current_dir(temp.path()).unwrap();
-    let result = f();
-    std::env::set_current_dir(original).unwrap();
-    result
-}
-
 /// List all teams in the .swarm-hug directory.
 pub fn list_teams() -> Result<Vec<Team>, String> {
     let root = PathBuf::from(SWARM_HUG_DIR);
@@ -123,10 +100,11 @@ pub fn root_exists() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::with_temp_cwd;
 
     #[test]
     fn test_list_teams() {
-        super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             init_root().unwrap();
 
             Team::new("authentication").init().unwrap();
@@ -141,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_init_root_creates_gitignore() {
-        super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             init_root().unwrap();
 
             let gitignore_path = PathBuf::from(SWARM_HUG_DIR).join(".gitignore");
@@ -156,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_init_root_preserves_existing_gitignore() {
-        super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             // Create .swarm-hug directory and custom .gitignore
             fs::create_dir_all(SWARM_HUG_DIR).unwrap();
             let gitignore_path = PathBuf::from(SWARM_HUG_DIR).join(".gitignore");
