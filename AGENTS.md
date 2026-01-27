@@ -104,6 +104,7 @@ Run when you touch build, packaging, or deployment paths:
 - Commit only after the Fast validation gate passes.
 - Commit message should explain what changed and why (brief, factual).
 - Update TASKS.md to mark completed items and note any new tasks discovered.
+- Any commit should be `Co-Authored-By: seezatnap <seezatnap@gmail.com>`
 
 ## Session boundaries (IMPORTANT)
 **Complete exactly ONE task from TASKS.md per session, then STOP.**

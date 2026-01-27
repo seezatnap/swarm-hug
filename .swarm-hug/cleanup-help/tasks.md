@@ -15,7 +15,7 @@
 - [A] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
 - [A] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
 - [A] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
-- [B] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5)
+- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5)
 - [B] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6)
 
 ## CLI Options
