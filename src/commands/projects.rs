@@ -6,6 +6,37 @@ use swarm::engine;
 use swarm::planning;
 use swarm::team::{self, Assignments, Team};
 
+/// Task completion counts for a project.
+struct TaskCounts {
+    completed: usize,
+    total: usize,
+}
+
+/// Count completed and total tasks in a tasks.md file.
+fn count_tasks(team: &Team) -> TaskCounts {
+    let tasks_path = team.tasks_path();
+    let content = match fs::read_to_string(&tasks_path) {
+        Ok(c) => c,
+        Err(_) => return TaskCounts { completed: 0, total: 0 },
+    };
+
+    let mut completed = 0;
+    let mut total = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match task lines: "- [x]", "- [ ]", "- [A]", etc.
+        if trimmed.starts_with("- [") && trimmed.len() > 4 && trimmed.chars().nth(4) == Some(']') {
+            total += 1;
+            if trimmed.starts_with("- [x]") {
+                completed += 1;
+            }
+        }
+    }
+
+    TaskCounts { completed, total }
+}
+
 /// List all projects and their assigned agents.
 pub fn cmd_projects(_config: &Config) -> Result<(), String> {
     if !team::root_exists() {
@@ -21,8 +52,25 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
         return Ok(());
     }
 
+    // Collect projects with task counts
+    let mut project_data: Vec<(Team, TaskCounts)> = projects
+        .into_iter()
+        .map(|p| {
+            let counts = count_tasks(&p);
+            (p, counts)
+        })
+        .collect();
+
+    // Sort by most incomplete first (incomplete = total - completed)
+    // Complete projects (incomplete == 0) go to the bottom
+    project_data.sort_by(|a, b| {
+        let incomplete_a = a.1.total.saturating_sub(a.1.completed);
+        let incomplete_b = b.1.total.saturating_sub(b.1.completed);
+        incomplete_b.cmp(&incomplete_a)
+    });
+
     println!("Projects:");
-    for p in &projects {
+    for (p, counts) in &project_data {
         let agents = assignments.project_agents(&p.name);
         let agent_str = if agents.is_empty() {
             "(no agents assigned)".to_string()
@@ -36,7 +84,17 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        println!("  {} - {}", p.name, agent_str);
+
+        // Format task completion status
+        let task_status = if counts.total == 0 {
+            String::new()
+        } else if counts.completed == counts.total {
+            format!(" [{}/{} Tasks Complete \u{2713}]", counts.completed, counts.total)
+        } else {
+            format!(" [{}/{} Tasks Complete]", counts.completed, counts.total)
+        };
+
+        println!("  {}{} - {}", p.name, task_status, agent_str);
     }
 
     // Show available agents
@@ -128,4 +186,126 @@ pub fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), St
     println!("  swarm -p {} status", project_name);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_temp_dir<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let original = std::env::current_dir().unwrap();
+        let temp = TempDir::new().unwrap();
+        std::env::set_current_dir(temp.path()).unwrap();
+        let result = f();
+        std::env::set_current_dir(original).unwrap();
+        result
+    }
+
+    #[test]
+    fn test_count_tasks_missing_file() {
+        with_temp_dir(|| {
+            let team = Team::new("nonexistent");
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 0);
+            assert_eq!(counts.total, 0);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_empty_file() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            fs::write(team.tasks_path(), "# Tasks\n\n").unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 0);
+            assert_eq!(counts.total, 0);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_all_pending() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            fs::write(team.tasks_path(), "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n").unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 0);
+            assert_eq!(counts.total, 3);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_all_completed() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            fs::write(team.tasks_path(), "# Tasks\n\n- [x] Task 1\n- [x] Task 2\n").unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 2);
+            assert_eq!(counts.total, 2);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_mixed() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            fs::write(team.tasks_path(), "# Tasks\n\n- [x] Done 1\n- [ ] Pending\n- [x] Done 2\n- [ ] Another pending\n").unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 2);
+            assert_eq!(counts.total, 4);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_with_agent_assigned() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            // Agent-assigned tasks like "- [A]" count as total but not completed
+            fs::write(team.tasks_path(), "# Tasks\n\n- [x] Done\n- [A] Assigned to A\n- [B] Assigned to B\n- [ ] Pending\n").unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 1);
+            assert_eq!(counts.total, 4);
+        });
+    }
+
+    #[test]
+    fn test_count_tasks_with_sections() {
+        with_temp_dir(|| {
+            let team = Team::new("test-project");
+            team.init().unwrap();
+            let content = r#"# Tasks
+
+## Section 1
+- [x] Done 1
+- [ ] Pending 1
+
+## Section 2
+- [x] Done 2
+- [x] Done 3
+- [A] In progress
+"#;
+            fs::write(team.tasks_path(), content).unwrap();
+
+            let counts = count_tasks(&team);
+            assert_eq!(counts.completed, 3);
+            assert_eq!(counts.total, 5);
+        });
+    }
 }
