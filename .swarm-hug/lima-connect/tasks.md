@@ -13,10 +13,10 @@
 ## Selection UX
 - [x] (#5) Add VM selection menu using bash `select`, auto-select when only one VM (blocked by #2) (A)
 - [x] (#6) Add container selection menu showing name + status, auto-select when only one running container (blocked by #4, #5) (A)
-- [A] (#7) Use `fzf` for VM/container selection when available, with `select` fallback (blocked by #5, #6)
+- [x] (#7) Use `fzf` for VM/container selection when available, with `select` fallback (blocked by #5, #6) (A)
 
 ## Flags & Execution
-- [A] (#8) Parse `--vm`, `--container`, and `--shell` flags to skip selections and override shell (blocked by #5, #6)
+- [x] (#8) Parse `--vm`, `--container`, and `--shell` flags to skip selections and override shell (blocked by #5, #6) (A)
 - [ ] (#9) Execute `docker --context <ctx> exec -it <container> <shell>` defaulting to `bash -l` (blocked by #3, #6, #8)
 
 ## Error Handling
