@@ -90,6 +90,42 @@ fn write_team_tasks_multi_sprint(team_root: &Path) -> PathBuf {
 }
 
 #[test]
+fn test_removed_commands_return_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let removed_commands = [
+        "sprint",
+        "plan",
+        "status",
+        "worktrees",
+        "worktrees-branch",
+        "cleanup",
+    ];
+
+    for command in removed_commands {
+        let mut cmd = Command::new(swarm_bin);
+        cmd.arg(command).current_dir(repo_path);
+        let output = cmd.output().expect("failed to run command");
+        assert!(
+            !output.status.success(),
+            "expected command '{}' to fail\nstdout:\n{}\nstderr:\n{}",
+            command,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr_raw = String::from_utf8_lossy(&output.stderr);
+        let stderr = strip_ansi(&stderr_raw);
+        assert!(
+            stderr.contains(&format!("unknown command: {}", command)),
+            "expected unknown command error for '{}'\nstderr:\n{}",
+            command,
+            stderr
+        );
+    }
+}
+
+#[test]
 fn test_swarm_run_stub_integration() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();

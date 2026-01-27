@@ -37,6 +37,8 @@ pub struct CliArgs {
     pub email_arg: Option<String>,
     /// Path to PRD file for project init --with-prd.
     pub prd_file_arg: Option<String>,
+    /// Unrecognized command, if provided.
+    pub unknown_command: Option<String>,
 }
 
 /// Swarm subcommands.
@@ -102,28 +104,32 @@ where
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
             "--no-tui" => cli.no_tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
-            _ if !arg.starts_with('-') && cli.command.is_none() => {
-                cli.command = Command::from_str(&arg);
-                // For "project init <name>", capture the next arg as project_arg
-                if cli.command == Some(Command::ProjectInit) {
-                    // Check if next arg is "init" (project init <name> format)
-                    if let Some(next) = args.peek() {
-                        if next == "init" {
-                            args.next(); // consume "init"
-                            cli.project_arg = args.next(); // project name
-                        } else if !next.starts_with('-') {
-                            // Just "project <name>" - treat as project init
-                            cli.project_arg = args.next();
+            _ if !arg.starts_with('-') && cli.command.is_none() && cli.unknown_command.is_none() => {
+                if let Some(command) = Command::from_str(&arg) {
+                    cli.command = Some(command);
+                    // For "project init <name>", capture the next arg as project_arg
+                    if cli.command == Some(Command::ProjectInit) {
+                        // Check if next arg is "init" (project init <name> format)
+                        if let Some(next) = args.peek() {
+                            if next == "init" {
+                                args.next(); // consume "init"
+                                cli.project_arg = args.next(); // project name
+                            } else if !next.starts_with('-') {
+                                // Just "project <name>" - treat as project init
+                                cli.project_arg = args.next();
+                            }
                         }
                     }
-                }
-                // For "set-email <email>", capture the email argument
-                if cli.command == Some(Command::SetEmail) {
-                    if let Some(next) = args.peek() {
-                        if !next.starts_with('-') {
-                            cli.email_arg = args.next();
+                    // For "set-email <email>", capture the email argument
+                    if cli.command == Some(Command::SetEmail) {
+                        if let Some(next) = args.peek() {
+                            if !next.starts_with('-') {
+                                cli.email_arg = args.next();
+                            }
                         }
                     }
+                } else {
+                    cli.unknown_command = Some(arg);
                 }
             }
             _ => {} // Ignore unknown flags

@@ -317,6 +317,14 @@ fn test_command_from_str() {
 }
 
 #[test]
+fn test_parse_args_unknown_command() {
+    let args = vec!["swarm".to_string(), "sprint".to_string()];
+    let cli = parse_args(args);
+    assert_eq!(cli.command, None);
+    assert_eq!(cli.unknown_command, Some("sprint".to_string()));
+}
+
+#[test]
 fn test_parse_args_set_email() {
     let args = vec![
         "swarm".to_string(),

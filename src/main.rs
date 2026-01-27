@@ -32,6 +32,11 @@ fn main() {
         return;
     }
 
+    if let Some(unknown) = cli.unknown_command.as_deref() {
+        eprintln!("error: unknown command: {}", unknown);
+        process::exit(1);
+    }
+
     let config = Config::load(&cli);
 
     // Default command is Run if none specified
