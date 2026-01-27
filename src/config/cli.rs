@@ -52,8 +52,6 @@ pub enum Command {
     Status,
     /// List agent names/initials.
     Agents,
-    /// Clean up worktrees and branches.
-    Cleanup,
     /// List all projects and their assigned agents.
     Projects,
     /// Initialize a new project (use with project name argument).
@@ -72,7 +70,6 @@ impl Command {
             "run" => Some(Self::Run),
             "status" => Some(Self::Status),
             "agents" => Some(Self::Agents),
-            "cleanup" => Some(Self::Cleanup),
             "projects" => Some(Self::Projects),
             "project" => Some(Self::ProjectInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
