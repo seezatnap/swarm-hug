@@ -4,3 +4,4 @@
 - [x] (#5) Update agent log file entries to include engine name for each task execution
 - [x] (#9) Add test to verify single-engine configuration works unchanged
 - [x] Remove "AGENT_THINK:" prefix from log format
+- [x] (#10) Update README or user docs to document per-task engine selection behavior (blocked by #1, #4)
