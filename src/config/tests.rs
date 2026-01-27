@@ -86,8 +86,10 @@ fn test_engine_type_list_to_string() {
 
 #[test]
 fn test_config_select_random_engine_single() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Codex];
+    let config = Config {
+        engine_types: vec![EngineType::Codex],
+        ..Default::default()
+    };
     // With single engine, should always return that engine
     for _ in 0..10 {
         assert_eq!(config.select_random_engine(), EngineType::Codex);
@@ -96,9 +98,11 @@ fn test_config_select_random_engine_single() {
 
 #[test]
 fn test_config_select_random_engine_stub_mode_override() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Claude, EngineType::Codex];
-    config.engine_stub_mode = true;
+    let config = Config {
+        engine_types: vec![EngineType::Claude, EngineType::Codex],
+        engine_stub_mode: true,
+        ..Default::default()
+    };
     // Stub mode should always return Stub regardless of engine_types
     for _ in 0..10 {
         assert_eq!(config.select_random_engine(), EngineType::Stub);
@@ -107,16 +111,20 @@ fn test_config_select_random_engine_stub_mode_override() {
 
 #[test]
 fn test_config_select_random_engine_empty_fallback() {
-    let mut config = Config::default();
-    config.engine_types = vec![];
+    let config = Config {
+        engine_types: vec![],
+        ..Default::default()
+    };
     // Empty list should fall back to Claude
     assert_eq!(config.select_random_engine(), EngineType::Claude);
 }
 
 #[test]
 fn test_config_select_random_engine_distribution() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Codex, EngineType::Claude];
+    let config = Config {
+        engine_types: vec![EngineType::Codex, EngineType::Claude],
+        ..Default::default()
+    };
 
     // Run many iterations and verify both engines are selected
     let mut claude_count = 0;
@@ -135,25 +143,39 @@ fn test_config_select_random_engine_distribution() {
 
 #[test]
 fn test_config_engines_display() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Claude];
+    let config = Config {
+        engine_types: vec![EngineType::Claude],
+        ..Default::default()
+    };
     assert_eq!(config.engines_display(), "claude");
 
-    config.engine_types = vec![EngineType::Claude, EngineType::Codex];
+    let config = Config {
+        engine_types: vec![EngineType::Claude, EngineType::Codex],
+        ..Default::default()
+    };
     assert_eq!(config.engines_display(), "claude,codex");
 
-    config.engine_types = vec![EngineType::Codex, EngineType::Codex, EngineType::Claude];
+    let config = Config {
+        engine_types: vec![EngineType::Codex, EngineType::Codex, EngineType::Claude],
+        ..Default::default()
+    };
     assert_eq!(config.engines_display(), "codex,codex,claude");
 
     // Stub mode overrides display
-    config.engine_stub_mode = true;
+    let config = Config {
+        engine_types: vec![EngineType::Codex, EngineType::Codex, EngineType::Claude],
+        engine_stub_mode: true,
+        ..Default::default()
+    };
     assert_eq!(config.engines_display(), "stub");
 }
 
 #[test]
 fn test_config_effective_engine_with_multiple() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Codex, EngineType::Claude];
+    let config = Config {
+        engine_types: vec![EngineType::Codex, EngineType::Claude],
+        ..Default::default()
+    };
     // effective_engine returns first in list
     assert_eq!(config.effective_engine(), EngineType::Codex);
 }
@@ -218,11 +240,17 @@ max = 5
 
 #[test]
 fn test_config_effective_engine() {
-    let mut config = Config::default();
-    config.engine_types = vec![EngineType::Claude];
+    let config = Config {
+        engine_types: vec![EngineType::Claude],
+        ..Default::default()
+    };
     assert_eq!(config.effective_engine(), EngineType::Claude);
 
-    config.engine_stub_mode = true;
+    let config = Config {
+        engine_types: vec![EngineType::Claude],
+        engine_stub_mode: true,
+        ..Default::default()
+    };
     assert_eq!(config.effective_engine(), EngineType::Stub);
 }
 
@@ -364,8 +392,10 @@ fn test_parse_args_project_init() {
 
 #[test]
 fn test_project_path_resolution() {
-    let mut cli = CliArgs::default();
-    cli.project = Some("authentication".to_string());
+    let cli = CliArgs {
+        project: Some("authentication".to_string()),
+        ..Default::default()
+    };
     let config = Config::load(&cli);
     assert_eq!(config.project, Some("authentication".to_string()));
     assert_eq!(config.files_tasks, ".swarm-hug/authentication/tasks.md");
@@ -386,9 +416,11 @@ fn test_default_toml() {
 
 #[test]
 fn test_config_load_with_cli_precedence() {
-    let mut cli = CliArgs::default();
-    cli.max_sprints = Some(10);
-    cli.stub = true;
+    let cli = CliArgs {
+        max_sprints: Some(10),
+        stub: true,
+        ..Default::default()
+    };
 
     let config = Config::load(&cli);
     assert_eq!(config.sprints_max, 10);
@@ -460,8 +492,10 @@ fn test_parse_args_agent_timeout() {
 
 #[test]
 fn test_config_with_agent_timeout_cli() {
-    let mut cli = CliArgs::default();
-    cli.agent_timeout = Some(900);
+    let cli = CliArgs {
+        agent_timeout: Some(900),
+        ..Default::default()
+    };
 
     let config = Config::load(&cli);
     assert_eq!(config.agent_timeout_secs, 900);
