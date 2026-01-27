@@ -106,7 +106,7 @@ pub(super) fn output_to_result(output: Output) -> EngineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::testutil::with_temp_cwd;
 
     #[test]
     fn test_build_agent_prompt_valid_agent() {
@@ -178,68 +178,41 @@ mod tests {
 
     #[test]
     fn test_read_coauthor_email_invalid_format() {
-        // Create a temp dir and test with invalid email
-        let tmp_dir = TempDir::new().unwrap();
-        let swarm_dir = tmp_dir.path().join(".swarm-hug");
-        fs::create_dir_all(&swarm_dir).unwrap();
-        let email_path = swarm_dir.join("email.txt");
+        with_temp_cwd(|| {
+            // Create .swarm-hug dir and write invalid email (no @)
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "invalid-email").unwrap();
 
-        // Write invalid email (no @)
-        fs::write(&email_path, "invalid-email").unwrap();
-
-        // Change to temp dir and test
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
-
-        let result = read_coauthor_email();
-        assert!(result.is_none()); // Invalid email should return None
-
-        // Restore original dir
-        std::env::set_current_dir(original_dir).unwrap();
+            let result = read_coauthor_email();
+            assert!(result.is_none()); // Invalid email should return None
+        });
     }
 
     #[test]
     fn test_read_coauthor_email_valid() {
-        let tmp_dir = TempDir::new().unwrap();
-        let swarm_dir = tmp_dir.path().join(".swarm-hug");
-        fs::create_dir_all(&swarm_dir).unwrap();
-        let email_path = swarm_dir.join("email.txt");
+        with_temp_cwd(|| {
+            // Create .swarm-hug dir and write valid email
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "test@example.com\n").unwrap();
 
-        // Write valid email
-        fs::write(&email_path, "test@example.com\n").unwrap();
-
-        // Change to temp dir and test
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
-
-        let result = read_coauthor_email();
-        assert_eq!(result, Some("test@example.com".to_string()));
-
-        // Restore original dir
-        std::env::set_current_dir(original_dir).unwrap();
+            let result = read_coauthor_email();
+            assert_eq!(result, Some("test@example.com".to_string()));
+        });
     }
 
     #[test]
     fn test_build_agent_prompt_includes_coauthor() {
-        // Create temp dir with email file
-        let tmp_dir = TempDir::new().unwrap();
-        let swarm_dir = tmp_dir.path().join(".swarm-hug");
-        fs::create_dir_all(&swarm_dir).unwrap();
-        let email_path = swarm_dir.join("email.txt");
-        fs::write(&email_path, "dev@example.com").unwrap();
+        with_temp_cwd(|| {
+            // Create .swarm-hug dir with email file
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-        // Change to temp dir and test
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
-
-        let result = build_agent_prompt("Aaron", "Test task", None);
-        assert!(result.is_ok());
-        let prompt = result.unwrap().unwrap();
-        // Check that the co-author line is in the prompt (in commit messages)
-        assert!(prompt.contains("Co-Authored-By: dev <dev@example.com>"),
-            "Prompt should contain co-author line. Prompt content:\n{}", prompt);
-
-        // Restore original dir
-        std::env::set_current_dir(original_dir).unwrap();
+            let result = build_agent_prompt("Aaron", "Test task", None);
+            assert!(result.is_ok());
+            let prompt = result.unwrap().unwrap();
+            // Check that the co-author line is in the prompt (in commit messages)
+            assert!(prompt.contains("Co-Authored-By: dev <dev@example.com>"),
+                "Prompt should contain co-author line. Prompt content:\n{}", prompt);
+        });
     }
 }

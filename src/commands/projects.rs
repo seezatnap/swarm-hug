@@ -194,24 +194,26 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
+    // Global mutex for tests that change the current working directory.
+    // Must be shared across all tests that change cwd to avoid race conditions.
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
-    fn with_temp_dir<F, R>(f: F) -> R
+    fn with_temp_cwd<F, R>(f: F) -> R
     where
         F: FnOnce() -> R,
     {
-        let _guard = CWD_LOCK.lock().unwrap();
-        let original = std::env::current_dir().unwrap();
-        let temp = TempDir::new().unwrap();
-        std::env::set_current_dir(temp.path()).unwrap();
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original = std::env::current_dir().expect("failed to get current directory");
+        let temp = TempDir::new().expect("failed to create temp directory");
+        std::env::set_current_dir(temp.path()).expect("failed to change to temp directory");
         let result = f();
-        std::env::set_current_dir(original).unwrap();
+        std::env::set_current_dir(original).expect("failed to restore original directory");
         result
     }
 
     #[test]
     fn test_count_tasks_missing_file() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("nonexistent");
             let counts = count_tasks(&team);
             assert_eq!(counts.completed, 0);
@@ -221,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_empty_file() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             fs::write(team.tasks_path(), "# Tasks\n\n").unwrap();
@@ -234,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_all_pending() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             fs::write(team.tasks_path(), "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n").unwrap();
@@ -247,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_all_completed() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             fs::write(team.tasks_path(), "# Tasks\n\n- [x] Task 1\n- [x] Task 2\n").unwrap();
@@ -260,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_mixed() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             fs::write(team.tasks_path(), "# Tasks\n\n- [x] Done 1\n- [ ] Pending\n- [x] Done 2\n- [ ] Another pending\n").unwrap();
@@ -273,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_with_agent_assigned() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             // Agent-assigned tasks like "- [A]" count as total but not completed
@@ -287,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_count_tasks_with_sections() {
-        with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
             let content = r#"# Tasks

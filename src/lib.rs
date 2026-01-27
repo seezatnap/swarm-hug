@@ -27,4 +27,6 @@ pub mod prompt;
 pub mod shutdown;
 pub mod task;
 pub mod team;
+#[doc(hidden)]
+pub mod testutil;
 pub mod worktree;

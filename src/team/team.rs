@@ -104,6 +104,7 @@ impl Team {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::with_temp_cwd;
 
     #[test]
     fn test_team_paths() {
@@ -118,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_team_init() {
-        super::super::with_temp_dir(|| {
+        with_temp_cwd(|| {
             let team = Team::new("payments");
             team.init().unwrap();
 
