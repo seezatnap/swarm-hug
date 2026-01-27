@@ -1,5 +1,9 @@
 # Tasks
 
+## Follow-up
+
+- [x] (#29) Fix help text to remove deprecated commands (sprint, plan, status, worktrees, worktrees-branch, cleanup, --no-tail)
+
 ## Testing
 
 - [x] (#21) Remove or update tests for worktrees command (blocked by #10) (A)
