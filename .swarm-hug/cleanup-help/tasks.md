@@ -11,11 +11,11 @@
 
 ## Command Handlers
 
-- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?) (?)
-- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?) (?)
-- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?) (?)
-- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?) (?)
-- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?) (?)
+- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1)
+- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
+- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
+- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
+- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5)
 - [x] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6) (A)
 
 ## CLI Options
@@ -36,7 +36,7 @@
 - [x] (#20) Remove or update tests for status command (blocked by #9) (B)
 - [x] (#21) Remove or update tests for worktrees command (blocked by #10) (A)
 - [x] (#22) Remove or update tests for worktrees-branch command (blocked by #11) (B)
-- [B] (#23) Remove or update tests for cleanup command (blocked by #12)
+- [x] (#23) Remove or update tests for cleanup command (blocked by #12) (B)
 - [x] (#24) Remove or update tests for --no-tail option (blocked by #14) (B)
 - [ ] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23)
 
@@ -47,6 +47,7 @@
 - [ ] (#28) Manual verification that help output matches target format (blocked by #27)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#29) Fix help text to remove deprecated commands (sprint, plan, status, worktrees, worktrees-branch, cleanup, --no-tail) - task #15 was incomplete (blocked by #15)
+
+- [x] (#29) Fix help text to remove deprecated commands (sprint, plan, status, worktrees, worktrees-branch, cleanup, --no-tail) (A)
 - [x] (#30) Remove --no-tail flag usage from integration tests (blocked by #13) (B)
-- [A] (#31) Reconcile TASKS.md with .swarm-hug/cleanup-help/tasks.md - task #22 status is inconsistent between files
+- [x] (#31) Reconcile TASKS.md with .swarm-hug/cleanup-help/tasks.md - task status inconsistencies (A)
