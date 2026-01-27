@@ -44,7 +44,7 @@
 
 - [x] (#26) Run full test suite and fix any failures (blocked by #25) (A)
 - [x] (#27) Run cargo clippy and resolve any new warnings (blocked by #26) (A)
-- [A] (#28) Manual verification that help output matches target format (blocked by #27)
+- [x] (#28) Manual verification that help output matches target format (blocked by #27) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#29) Fix help text to remove deprecated commands (sprint, plan, status, worktrees, worktrees-branch, cleanup, --no-tail) - task #15 was incomplete (blocked by #15) (A)
