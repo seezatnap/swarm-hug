@@ -348,8 +348,8 @@ pub(crate) fn run_sprint(
                     continue;
                 }
 
-                // Log assignment
-                if let Err(e) = logger.log(&format!("Assigned task: {}", description)) {
+                // Log assignment (including engine name for visibility)
+                if let Err(e) = logger.log(&format!("Assigned task: {} [engine: {}]", description, engine_type_str)) {
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
@@ -424,7 +424,7 @@ pub(crate) fn run_sprint(
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
-                    if let Err(e) = logger.log(&format!("Task completed: {}", description)) {
+                    if let Err(e) = logger.log(&format!("Task completed: {} [engine: {}]", description, engine_type_str)) {
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
