@@ -116,14 +116,6 @@ OPTIONS:
     --no-tail                 Don't tail chat.md during run [default: false]
     --no-tui                  Disable TUI mode (use plain text output) [default: false]
 
-MULTI-PROJECT MODE:
-    All config and artifacts live in .swarm-hug/:
-      .swarm-hug/assignments.toml       Agent-to-project assignments
-      .swarm-hug/<project>/tasks.md     Project's task list
-      .swarm-hug/<project>/chat.md      Project's chat log
-      .swarm-hug/<project>/loop/        Project's agent logs
-      .swarm-hug/<project>/worktrees/   Project's git worktrees
-
 EXAMPLES:
     swarm init                            Initialize .swarm-hug/ structure
     swarm project init authentication     Create a new project
