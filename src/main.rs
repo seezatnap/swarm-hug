@@ -13,7 +13,7 @@ mod tail;
 
 use commands::{
     cmd_agents, cmd_cleanup, cmd_customize_prompts, cmd_init, cmd_plan, cmd_project_init,
-    cmd_projects, cmd_run, cmd_run_tui, cmd_set_email, cmd_sprint, cmd_status, cmd_worktrees,
+    cmd_projects, cmd_run, cmd_run_tui, cmd_set_email, cmd_status, cmd_worktrees,
     cmd_worktrees_branch,
 };
 
@@ -39,7 +39,7 @@ fn main() {
     let command = cli.command.clone().unwrap_or(Command::Run);
 
     // Register Ctrl+C handler for commands that run sprints
-    if matches!(command, Command::Run | Command::Sprint) {
+    if matches!(command, Command::Run) {
         if let Err(e) = shutdown::register_handler() {
             eprintln!("warning: {}", e);
         }
@@ -54,7 +54,6 @@ fn main() {
                 cmd_run_tui(&config)
             }
         }
-        Command::Sprint => cmd_sprint(&config),
         Command::Plan => cmd_plan(&config),
         Command::Status => cmd_status(&config),
         Command::Agents => cmd_agents(&config),
