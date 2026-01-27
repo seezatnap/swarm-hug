@@ -1,4 +1,5 @@
 # Tasks
 
-## Selection UX
-- [x] (#7) Use `fzf` for VM/container selection when available, with `select` fallback
+## Flags & Execution
+- [x] (#8) Parse `--vm`, `--container`, and `--shell` flags to skip selections and override shell
+

@@ -4,12 +4,55 @@ set -euo pipefail
 # lima_connect.sh — Connect to Docker containers running inside Lima VMs
 #
 # Usage:
-#   ./lima_connect.sh
+#   ./lima_connect.sh [--vm <name>] [--container <name>] [--shell <cmd>]
+#
+# Options:
+#   --vm <name>        Skip VM selection, use specified VM
+#   --container <name> Skip container selection, use specified container
+#   --shell <cmd>      Override shell (default: bash -l)
+#   -h, --help         Show this help
 #
 # See specs.md for full workflow and requirements.
 
 die() { printf "Error: %s\n" "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ./lima_connect.sh [--vm <name>] [--container <name>] [--shell <cmd>]
+
+Options:
+  --vm <name>        Skip VM selection, use specified VM
+  --container <name> Skip container selection, use specified container
+  --shell <cmd>      Override shell (default: bash -l)
+  -h, --help         Show this help
+
+Examples:
+  ./lima_connect.sh                              # Interactive mode
+  ./lima_connect.sh --vm swarmbox                # Skip VM selection
+  ./lima_connect.sh --container myapp            # Skip container selection
+  ./lima_connect.sh --shell /bin/sh              # Use /bin/sh instead of bash -l
+  ./lima_connect.sh --vm swarmbox --container myapp --shell zsh
+USAGE
+}
+
+# --- argument parsing ---
+OPT_VM=""
+OPT_CONTAINER=""
+OPT_SHELL="bash -l"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vm) OPT_VM="${2:-}"; shift 2 ;;
+    --container) OPT_CONTAINER="${2:-}"; shift 2 ;;
+    --shell) OPT_SHELL="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -* ) die "Unknown option: $1" ;;
+    * ) die "Unexpected argument: $1" ;;
+  esac
+done
 
 # --- preflight checks ---
 have limactl || die "Missing limactl (Lima). Install: brew install lima"
@@ -94,8 +137,22 @@ select_vm() {
   done
 }
 
-SELECTED_VM="$(select_vm "${RUNNING_VMS[@]}")"
-[[ -n "$SELECTED_VM" ]] || die "No VM selected"
+# Use --vm flag if provided, otherwise use selection
+if [[ -n "$OPT_VM" ]]; then
+  # Validate that the specified VM is running
+  vm_found=0
+  for vm in "${RUNNING_VMS[@]}"; do
+    if [[ "$vm" == "$OPT_VM" ]]; then
+      vm_found=1
+      break
+    fi
+  done
+  [[ $vm_found -eq 1 ]] || die "VM not found or not running: $OPT_VM"
+  SELECTED_VM="$OPT_VM"
+else
+  SELECTED_VM="$(select_vm "${RUNNING_VMS[@]}")"
+  [[ -n "$SELECTED_VM" ]] || die "No VM selected"
+fi
 
 # Ensure docker context exists for the selected VM
 DOCKER_CTX="$(ensure_docker_context "$SELECTED_VM")"
@@ -211,7 +268,22 @@ select_container() {
   done
 }
 
-SELECTED_CONTAINER="$(select_container RUNNING_CONTAINER_NAMES[@] RUNNING_CONTAINER_DISPLAY[@])"
-[[ -n "$SELECTED_CONTAINER" ]] || die "No container selected"
+# Use --container flag if provided, otherwise use selection
+if [[ -n "$OPT_CONTAINER" ]]; then
+  # Validate that the specified container exists and is running
+  container_found=0
+  for name in "${RUNNING_CONTAINER_NAMES[@]}"; do
+    if [[ "$name" == "$OPT_CONTAINER" ]]; then
+      container_found=1
+      break
+    fi
+  done
+  [[ $container_found -eq 1 ]] || die "Container not found or not running: $OPT_CONTAINER"
+  SELECTED_CONTAINER="$OPT_CONTAINER"
+else
+  SELECTED_CONTAINER="$(select_container RUNNING_CONTAINER_NAMES[@] RUNNING_CONTAINER_DISPLAY[@])"
+  [[ -n "$SELECTED_CONTAINER" ]] || die "No container selected"
+fi
 
-# TODO: Implement exec command
+# OPT_SHELL is already set (default: "bash -l"), available for exec command
+# TODO: Implement exec command using SELECTED_CONTAINER and OPT_SHELL
