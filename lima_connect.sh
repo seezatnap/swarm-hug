@@ -64,4 +64,33 @@ ensure_docker_context() {
   printf '%s\n' "$ctx"
 }
 
+# --- VM selection ---
+# Auto-select if only one VM, otherwise prompt with select menu
+select_vm() {
+  local vms=("$@")
+  local count=${#vms[@]}
+
+  if [[ $count -eq 1 ]]; then
+    printf '%s\n' "${vms[0]}"
+    return
+  fi
+
+  printf "Select a Lima VM:\n" >&2
+  PS3="VM number: "
+  select vm in "${vms[@]}"; do
+    if [[ -n "$vm" ]]; then
+      printf '%s\n' "$vm"
+      return
+    fi
+    printf "Invalid selection. Please try again.\n" >&2
+  done
+}
+
+SELECTED_VM="$(select_vm "${RUNNING_VMS[@]}")"
+[[ -n "$SELECTED_VM" ]] || die "No VM selected"
+
+# Ensure docker context exists for the selected VM
+DOCKER_CTX="$(ensure_docker_context "$SELECTED_VM")"
+[[ -n "$DOCKER_CTX" ]] || die "Failed to get docker context for VM: $SELECTED_VM"
+
 # TODO: Implement container listing and interactive selection
