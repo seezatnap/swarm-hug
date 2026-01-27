@@ -38,7 +38,7 @@
 - [x] (#22) Remove or update tests for worktrees-branch command (blocked by #11) (B)
 - [x] (#23) Remove or update tests for cleanup command (blocked by #12) (B)
 - [x] (#24) Remove or update tests for --no-tail option (blocked by #14) (B)
-- [A] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23)
+- [x] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23) (A)
 
 ## Validation
 
