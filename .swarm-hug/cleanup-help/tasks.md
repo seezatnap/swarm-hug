@@ -27,7 +27,7 @@
 
 - [x] (#15) Remove MULTI-PROJECT MODE section from help output (blocked by #1, #2, #3, #4, #5, #6) (A)
 - [x] (#16) Update examples section: remove deprecated examples and add `swarm -p authentication run` (blocked by #15) (A)
-- [A] (#17) Verify help output matches target format exactly (blocked by #16)
+- [x] (#17) Verify help output matches target format exactly (blocked by #16) (A)
 
 ## Testing
 
