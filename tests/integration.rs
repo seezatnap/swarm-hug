@@ -356,6 +356,189 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
     );
 }
 
+/// Test that per-task engine selection mechanism works correctly.
+/// Verifies that when an agent has multiple tasks, the engine selection/creation
+/// happens for each task individually (not once per agent).
+///
+/// This test uses stub mode for reliable CI testing. The key verification is that
+/// the agent log shows "Executing with engine:" for each task, confirming the
+/// per-task engine selection code path is exercised.
+#[test]
+fn test_per_task_engine_selection_mechanism() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write 3 tasks - with 1 agent and 3 tasks-per-agent, single agent gets all tasks
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] Task one\n- [ ] Task two\n- [ ] Task three\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+    commit_all(repo_path, "init");
+
+    // Run with stub mode and single agent with 3 tasks
+    // This ensures one agent handles multiple tasks sequentially
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "3",
+            "--max-agents",
+            "1",
+            "--no-tui",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    // Verify all tasks completed
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        3,
+        "All 3 tasks should be completed by single agent"
+    );
+
+    // Verify agent log shows engine execution for each task
+    // The log format is: YYYY-MM-DD HH:MM:SS | AgentName | message
+    let log_dir = team_root.join("loop");
+    let agent_log = log_dir.join("agent-A.log");
+    assert!(
+        agent_log.exists(),
+        "Agent A log file should exist at {:?}",
+        agent_log
+    );
+
+    let log_content = fs::read_to_string(&agent_log).expect("read agent log");
+
+    // Count occurrences of "Executing with engine:" in the log
+    // Should appear once per task (3 times total)
+    let engine_exec_count = log_content.matches("Executing with engine:").count();
+    assert_eq!(
+        engine_exec_count, 3,
+        "Should have 3 'Executing with engine:' entries (one per task), found {}. Log content:\n{}",
+        engine_exec_count, log_content
+    );
+
+    // Verify each task was assigned and logged
+    assert!(
+        log_content.contains("Assigned task: Task one"),
+        "Log should contain 'Assigned task: Task one'"
+    );
+    assert!(
+        log_content.contains("Assigned task: Task two"),
+        "Log should contain 'Assigned task: Task two'"
+    );
+    assert!(
+        log_content.contains("Assigned task: Task three"),
+        "Log should contain 'Assigned task: Task three'"
+    );
+
+    // Verify the engine type is logged (stub in this case)
+    assert!(
+        log_content.contains("Executing with engine: stub"),
+        "Log should show 'Executing with engine: stub'"
+    );
+}
+
+/// Test multi-engine configuration parsing and selection.
+/// Verifies that --engine flag with multiple engines is parsed correctly
+/// and that the engine selection mechanism handles multiple engine types.
+///
+/// Note: In stub mode, the actual engine used is always 'stub', but this test
+/// verifies the configuration parsing and per-task selection mechanism work together.
+#[test]
+fn test_multi_engine_configuration() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write tasks for a single agent with multiple tasks
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] Task A\n- [ ] Task B\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+    commit_all(repo_path, "init");
+
+    // Run with --engine claude,codex AND --stub
+    // The --stub flag overrides engine selection to use stub engine,
+    // but this verifies the multi-engine flag is accepted
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--engine",
+            "claude,codex",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "2",
+            "--max-agents",
+            "1",
+            "--no-tui",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+
+    // Verify command succeeded (validates that --engine claude,codex is accepted)
+    assert!(
+        output.status.success(),
+        "Command with --engine claude,codex should succeed"
+    );
+
+    // Verify tasks completed
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        2,
+        "Both tasks should be completed"
+    );
+
+    // Verify agent log shows per-task engine execution
+    let log_dir = team_root.join("loop");
+    let agent_log = log_dir.join("agent-A.log");
+    let log_content = fs::read_to_string(&agent_log).expect("read agent log");
+
+    // Should have 2 engine execution entries (one per task)
+    let engine_exec_count = log_content.matches("Executing with engine:").count();
+    assert_eq!(
+        engine_exec_count, 2,
+        "Should have 2 'Executing with engine:' entries (one per task)"
+    );
+}
+
 /// Regression test: chat history should persist across consecutive sprints in a single run.
 #[test]
 fn test_chat_history_persists_across_sprints_in_single_run() {
