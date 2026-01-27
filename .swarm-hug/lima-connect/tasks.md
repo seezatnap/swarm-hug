@@ -5,13 +5,13 @@
 
 ## Lima & Docker Discovery
 - [x] (#2) Implement running VM discovery via `limactl list --format '{{.Name}} {{.Status}}'` and error when none running (blocked by #1) (A)
-- [ ] (#3) Resolve docker socket for chosen VM via `limactl list <vm> --format 'unix://{{.Dir}}/sock/docker.sock'` and ensure `lima-<vm>` context exists (inspect/create) (blocked by #2)
+- [A] (#3) Resolve docker socket for chosen VM via `limactl list <vm> --format 'unix://{{.Dir}}/sock/docker.sock'` and ensure `lima-<vm>` context exists (inspect/create) (blocked by #2)
 
 ## Containers
 - [ ] (#4) List running containers via `docker --context <ctx> ps` and collect status info (via `ps -a`) for menu display (blocked by #3)
 
 ## Selection UX
-- [ ] (#5) Add VM selection menu using bash `select`, auto-select when only one VM (blocked by #2)
+- [A] (#5) Add VM selection menu using bash `select`, auto-select when only one VM (blocked by #2)
 - [ ] (#6) Add container selection menu showing name + status, auto-select when only one running container (blocked by #4, #5)
 - [ ] (#7) Use `fzf` for VM/container selection when available, with `select` fallback (blocked by #5, #6)
 
