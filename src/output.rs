@@ -114,8 +114,7 @@ EXAMPLES:
     swarm init                        Initialize .swarm-hug/ structure
     swarm project init myproject      Create a new project
     swarm projects                    List all projects
-    swarm -p myproject run            Run sprints for a project
-"#,
+    swarm -p myproject run            Run sprints for a project"#,
         max_agents = 3,
         tasks_per_agent = 2,
         timeout = config::DEFAULT_AGENT_TIMEOUT_SECS,
