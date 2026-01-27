@@ -13,7 +13,7 @@ mod tail;
 
 use commands::{
     cmd_agents, cmd_customize_prompts, cmd_init, cmd_project_init, cmd_projects, cmd_run,
-    cmd_run_tui, cmd_set_email, cmd_status,
+    cmd_run_tui, cmd_set_email,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -53,7 +53,6 @@ fn main() {
                 cmd_run_tui(&config)
             }
         }
-        Command::Status => cmd_status(&config),
         Command::Agents => cmd_agents(&config),
         Command::Projects => cmd_projects(&config),
         Command::ProjectInit => cmd_project_init(&config, &cli),
