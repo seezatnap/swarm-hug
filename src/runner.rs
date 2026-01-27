@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use swarm::agent;
 use swarm::chat;
 use swarm::color::{self, emoji};
-use swarm::config::{self, Config};
+use swarm::config::Config;
 use swarm::engine;
 use swarm::heartbeat;
 use swarm::lifecycle::LifecycleTracker;
@@ -324,25 +324,14 @@ pub(crate) fn run_sprint(
 
             // Process each task sequentially for this agent
             for description in tasks {
-                // Select random engine for this task (per-task engine selection)
-                let selected_engine_type = if thread_engine_stub_mode {
-                    config::EngineType::Stub
-                } else if thread_engine_types.is_empty() {
-                    config::EngineType::Claude
-                } else if thread_engine_types.len() == 1 {
-                    thread_engine_types[0]
-                } else {
-                    use rand::seq::SliceRandom;
-                    *thread_engine_types
-                        .choose(&mut rand::thread_rng())
-                        .unwrap()
-                };
-                let engine_type_str = selected_engine_type.as_str().to_string();
-                let engine: Arc<dyn engine::Engine> = engine::create_engine(
-                    selected_engine_type,
+                // Select and create random engine for this task (per-task engine selection)
+                let (engine, selected_engine_type) = engine::create_random_engine(
+                    &thread_engine_types,
+                    thread_engine_stub_mode,
                     &log_dir,
                     thread_agent_timeout,
                 );
+                let engine_type_str = selected_engine_type.as_str().to_string();
                 // Check for shutdown before starting a new task
                 if shutdown::requested() {
                     if let Err(e) = logger.log("Shutdown requested, skipping remaining tasks") {

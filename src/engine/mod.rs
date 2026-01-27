@@ -87,6 +87,48 @@ pub fn create_engine(engine_type: EngineType, output_dir: &str, timeout_secs: u6
     }
 }
 
+/// Create an engine with random selection from a list of engine types.
+///
+/// This function encapsulates the per-task engine selection logic:
+/// - If `stub_mode` is true, always returns a Stub engine
+/// - If the engine list is empty, defaults to Claude
+/// - If the engine list has one entry, uses that engine
+/// - If the engine list has multiple entries, randomly selects one
+///
+/// Returns a tuple of (engine, selected_engine_type) so callers can log
+/// which engine was selected.
+pub fn create_random_engine(
+    engine_types: &[EngineType],
+    stub_mode: bool,
+    output_dir: &str,
+    timeout_secs: u64,
+) -> (Arc<dyn Engine>, EngineType) {
+    let selected_type = select_engine_type(engine_types, stub_mode);
+    let engine = create_engine(selected_type, output_dir, timeout_secs);
+    (engine, selected_type)
+}
+
+/// Select an engine type from the configured list.
+///
+/// # Arguments
+/// * `engine_types` - List of available engine types
+/// * `stub_mode` - If true, always return Stub regardless of the list
+///
+/// # Returns
+/// The selected engine type
+fn select_engine_type(engine_types: &[EngineType], stub_mode: bool) -> EngineType {
+    if stub_mode {
+        EngineType::Stub
+    } else if engine_types.is_empty() {
+        EngineType::Claude
+    } else if engine_types.len() == 1 {
+        engine_types[0]
+    } else {
+        use rand::seq::SliceRandom;
+        *engine_types.choose(&mut rand::thread_rng()).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +167,67 @@ mod tests {
     fn test_create_engine_codex() {
         let engine = create_engine(EngineType::Codex, "loop", 3600);
         assert_eq!(engine.engine_type(), EngineType::Codex);
+    }
+
+    #[test]
+    fn test_select_engine_type_stub_mode() {
+        // Stub mode always returns Stub regardless of the list
+        let types = vec![EngineType::Claude, EngineType::Codex];
+        assert_eq!(select_engine_type(&types, true), EngineType::Stub);
+    }
+
+    #[test]
+    fn test_select_engine_type_empty_list() {
+        // Empty list defaults to Claude
+        assert_eq!(select_engine_type(&[], false), EngineType::Claude);
+    }
+
+    #[test]
+    fn test_select_engine_type_single_entry() {
+        // Single entry returns that entry
+        assert_eq!(select_engine_type(&[EngineType::Codex], false), EngineType::Codex);
+        assert_eq!(select_engine_type(&[EngineType::Claude], false), EngineType::Claude);
+    }
+
+    #[test]
+    fn test_select_engine_type_multiple_entries() {
+        // Multiple entries should return one of them
+        let types = vec![EngineType::Claude, EngineType::Codex];
+        for _ in 0..20 {
+            let selected = select_engine_type(&types, false);
+            assert!(selected == EngineType::Claude || selected == EngineType::Codex);
+        }
+    }
+
+    #[test]
+    fn test_create_random_engine_stub_mode() {
+        let types = vec![EngineType::Claude, EngineType::Codex];
+        let (engine, selected_type) = create_random_engine(&types, true, "loop", 3600);
+        assert_eq!(engine.engine_type(), EngineType::Stub);
+        assert_eq!(selected_type, EngineType::Stub);
+    }
+
+    #[test]
+    fn test_create_random_engine_empty_list() {
+        let (engine, selected_type) = create_random_engine(&[], false, "loop", 3600);
+        assert_eq!(engine.engine_type(), EngineType::Claude);
+        assert_eq!(selected_type, EngineType::Claude);
+    }
+
+    #[test]
+    fn test_create_random_engine_single_entry() {
+        let (engine, selected_type) = create_random_engine(&[EngineType::Codex], false, "loop", 3600);
+        assert_eq!(engine.engine_type(), EngineType::Codex);
+        assert_eq!(selected_type, EngineType::Codex);
+    }
+
+    #[test]
+    fn test_create_random_engine_returns_matching_type() {
+        // Verify the returned engine type matches the selected type
+        let types = vec![EngineType::Claude, EngineType::Codex];
+        for _ in 0..20 {
+            let (engine, selected_type) = create_random_engine(&types, false, "loop", 3600);
+            assert_eq!(engine.engine_type(), selected_type);
+        }
     }
 }
