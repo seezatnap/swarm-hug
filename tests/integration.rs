@@ -539,6 +539,124 @@ fn test_multi_engine_configuration() {
     );
 }
 
+/// Test that stub mode continues using stub engine exclusively.
+/// When --stub flag is used, the engine should always be 'stub' regardless of
+/// what engines are configured via --engine flag.
+///
+/// This test verifies:
+/// 1. With --stub and --engine claude,codex, all tasks use stub engine
+/// 2. Agent logs show "Executing with engine: stub" for all tasks
+/// 3. Chat messages show "[engine: stub]" for all tasks
+/// 4. No task uses claude or codex engines
+#[test]
+fn test_stub_mode_uses_stub_engine_exclusively() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write multiple tasks for a single agent to ensure multiple per-task engine selections
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    let tasks_content = "# Tasks\n\n- [ ] Task Alpha\n- [ ] Task Beta\n- [ ] Task Gamma\n";
+    fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
+    commit_all(repo_path, "init");
+
+    // Run with --engine claude,codex AND --stub
+    // The --stub flag should OVERRIDE the engine selection to always use stub
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--engine",
+            "claude,codex",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "3",
+            "--max-agents",
+            "1",
+            "--no-tui",
+            "--no-tail",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    assert!(
+        output.status.success(),
+        "Command with --stub and --engine should succeed"
+    );
+
+    // Verify all tasks completed
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        3,
+        "All 3 tasks should be completed"
+    );
+
+    // Verify agent log shows stub engine for ALL tasks
+    let log_dir = team_root.join("loop");
+    let agent_log = log_dir.join("agent-A.log");
+    let log_content = fs::read_to_string(&agent_log).expect("read agent log");
+
+    // Count stub engine executions - should be 3 (one per task)
+    let stub_engine_count = log_content.matches("Executing with engine: stub").count();
+    assert_eq!(
+        stub_engine_count, 3,
+        "Should have 3 'Executing with engine: stub' entries (one per task). Log:\n{}",
+        log_content
+    );
+
+    // Verify NO claude or codex engine executions
+    assert!(
+        !log_content.contains("Executing with engine: claude"),
+        "Should not have any claude engine executions in stub mode. Log:\n{}",
+        log_content
+    );
+    assert!(
+        !log_content.contains("Executing with engine: codex"),
+        "Should not have any codex engine executions in stub mode. Log:\n{}",
+        log_content
+    );
+
+    // Verify chat messages also show stub engine
+    let chat_path = team_root.join("chat.md");
+    let chat_content = fs::read_to_string(&chat_path).expect("read chat.md");
+
+    // All "Starting:" messages should have [engine: stub]
+    let starting_stub_count = chat_content.matches("[engine: stub]").count();
+    assert_eq!(
+        starting_stub_count, 3,
+        "All 3 'Starting:' messages should have [engine: stub]. Chat:\n{}",
+        chat_content
+    );
+
+    // Verify NO claude or codex in chat engine tags
+    assert!(
+        !chat_content.contains("[engine: claude]"),
+        "Should not have any [engine: claude] in chat. Chat:\n{}",
+        chat_content
+    );
+    assert!(
+        !chat_content.contains("[engine: codex]"),
+        "Should not have any [engine: codex] in chat. Chat:\n{}",
+        chat_content
+    );
+}
+
 /// Regression test: chat history should persist across consecutive sprints in a single run.
 #[test]
 fn test_chat_history_persists_across_sprints_in_single_run() {
