@@ -120,7 +120,6 @@ fn test_swarm_run_stub_integration() {
             "--tasks-per-agent",
             "1",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -272,7 +271,6 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
             "--max-agents",
             "2",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -399,7 +397,6 @@ fn test_per_task_engine_selection_mechanism() {
             "--max-agents",
             "1",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -503,7 +500,6 @@ fn test_multi_engine_configuration() {
             "--max-agents",
             "1",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -586,7 +582,6 @@ fn test_stub_mode_uses_stub_engine_exclusively() {
             "--max-agents",
             "1",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -705,7 +700,6 @@ fn test_single_engine_configuration_works_unchanged() {
             "--max-agents",
             "1",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);
@@ -796,7 +790,6 @@ fn test_chat_history_persists_across_sprints_in_single_run() {
             "--max-agents",
             "2",
             "--no-tui",
-            "--no-tail",
             "run",
         ])
         .current_dir(repo_path);

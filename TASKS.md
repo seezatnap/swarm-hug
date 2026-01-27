@@ -8,7 +8,7 @@
 - [x] (#20) Remove or update tests for status command (blocked by #9) (B)
 - [x] (#22) Remove or update tests for worktrees-branch command (blocked by #11) (B)
 - [x] (#23) Remove or update tests for cleanup command (blocked by #12)
-- [ ] (#24) Remove or update tests for --no-tail option (blocked by #14)
+- [x] (#24) Remove or update tests for --no-tail option (blocked by #14)
 - [ ] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23)
 
 ## CLI Module
