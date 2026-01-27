@@ -155,4 +155,37 @@ done
 
 [[ ${#RUNNING_CONTAINER_NAMES[@]} -gt 0 ]] || die "No running containers found in VM: $SELECTED_VM (context: $DOCKER_CTX). Start a container first."
 
-# TODO: Implement container selection menu and exec
+# --- Container selection ---
+# Auto-select if only one container, otherwise prompt with select menu
+# Shows container name + status for better visibility
+select_container() {
+  local -a names=("${!1}")
+  local -a display=("${!2}")
+  local count=${#names[@]}
+
+  if [[ $count -eq 1 ]]; then
+    printf '%s\n' "${names[0]}"
+    return
+  fi
+
+  printf "Select a container:\n" >&2
+  PS3="Container number: "
+  select choice in "${display[@]}"; do
+    if [[ -n "$choice" ]]; then
+      # Find the index of the selected display string
+      local i
+      for i in "${!display[@]}"; do
+        if [[ "${display[$i]}" == "$choice" ]]; then
+          printf '%s\n' "${names[$i]}"
+          return
+        fi
+      done
+    fi
+    printf "Invalid selection. Please try again.\n" >&2
+  done
+}
+
+SELECTED_CONTAINER="$(select_container RUNNING_CONTAINER_NAMES[@] RUNNING_CONTAINER_DISPLAY[@])"
+[[ -n "$SELECTED_CONTAINER" ]] || die "No container selected"
+
+# TODO: Implement exec command
