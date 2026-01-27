@@ -1,12 +1,12 @@
 use super::*;
 
 #[test]
-fn test_engine_type_from_str() {
-    assert_eq!(EngineType::from_str("claude"), Some(EngineType::Claude));
-    assert_eq!(EngineType::from_str("CLAUDE"), Some(EngineType::Claude));
-    assert_eq!(EngineType::from_str("codex"), Some(EngineType::Codex));
-    assert_eq!(EngineType::from_str("stub"), Some(EngineType::Stub));
-    assert_eq!(EngineType::from_str("unknown"), None);
+fn test_engine_type_parse() {
+    assert_eq!(EngineType::parse("claude"), Some(EngineType::Claude));
+    assert_eq!(EngineType::parse("CLAUDE"), Some(EngineType::Claude));
+    assert_eq!(EngineType::parse("codex"), Some(EngineType::Codex));
+    assert_eq!(EngineType::parse("stub"), Some(EngineType::Stub));
+    assert_eq!(EngineType::parse("unknown"), None);
 }
 
 #[test]
@@ -299,21 +299,21 @@ fn test_parse_args_config() {
 }
 
 #[test]
-fn test_command_from_str() {
-    assert_eq!(Command::from_str("init"), Some(Command::Init));
-    assert_eq!(Command::from_str("run"), Some(Command::Run));
-    assert_eq!(Command::from_str("sprint"), None); // sprint command removed
-    assert_eq!(Command::from_str("plan"), None); // plan command removed
-    assert_eq!(Command::from_str("status"), None); // status command removed
-    assert_eq!(Command::from_str("agents"), Some(Command::Agents));
-    assert_eq!(Command::from_str("worktrees"), None); // worktrees command removed
-    assert_eq!(Command::from_str("worktrees-branch"), None); // worktrees-branch command removed
-    assert_eq!(Command::from_str("cleanup"), None); // cleanup command removed
-    assert_eq!(Command::from_str("projects"), Some(Command::Projects));
-    assert_eq!(Command::from_str("project"), Some(Command::ProjectInit));
-    assert_eq!(Command::from_str("customize-prompts"), Some(Command::CustomizePrompts));
-    assert_eq!(Command::from_str("set-email"), Some(Command::SetEmail));
-    assert_eq!(Command::from_str("unknown"), None);
+fn test_command_parse() {
+    assert_eq!(Command::parse("init"), Some(Command::Init));
+    assert_eq!(Command::parse("run"), Some(Command::Run));
+    assert_eq!(Command::parse("sprint"), None); // sprint command removed
+    assert_eq!(Command::parse("plan"), None); // plan command removed
+    assert_eq!(Command::parse("status"), None); // status command removed
+    assert_eq!(Command::parse("agents"), Some(Command::Agents));
+    assert_eq!(Command::parse("worktrees"), None); // worktrees command removed
+    assert_eq!(Command::parse("worktrees-branch"), None); // worktrees-branch command removed
+    assert_eq!(Command::parse("cleanup"), None); // cleanup command removed
+    assert_eq!(Command::parse("projects"), Some(Command::Projects));
+    assert_eq!(Command::parse("project"), Some(Command::ProjectInit));
+    assert_eq!(Command::parse("customize-prompts"), Some(Command::CustomizePrompts));
+    assert_eq!(Command::parse("set-email"), Some(Command::SetEmail));
+    assert_eq!(Command::parse("unknown"), None);
 }
 
 #[test]

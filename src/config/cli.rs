@@ -62,7 +62,7 @@ pub enum Command {
 
 impl Command {
     /// Parse command from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "init" => Some(Self::Init),
             "run" => Some(Self::Run),
@@ -105,7 +105,7 @@ where
             "--no-tui" => cli.no_tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
             _ if !arg.starts_with('-') && cli.command.is_none() && cli.unknown_command.is_none() => {
-                if let Some(command) = Command::from_str(&arg) {
+                if let Some(command) = Command::parse(&arg) {
                     cli.command = Some(command);
                     // For "project init <name>", capture the next arg as project_arg
                     if cli.command == Some(Command::ProjectInit) {

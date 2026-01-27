@@ -60,7 +60,7 @@ pub fn run_tui_with_subprocess(
     let stop_for_proc = Arc::clone(&stop_flag);
 
     let exe_path = std::env::current_exe()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("failed to get exe path: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("failed to get exe path: {}", e)))?;
 
     let proc_handle = thread::spawn(move || {
         thread::sleep(Duration::from_millis(100));

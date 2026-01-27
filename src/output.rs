@@ -15,6 +15,7 @@ pub(crate) fn print_sprint_start_banner(team_name: &str, sprint_number: usize) {
 }
 
 /// Print a team status banner after sprint completion.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn print_team_status_banner(
     team_name: &str,
     sprint_number: usize,

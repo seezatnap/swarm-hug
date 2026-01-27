@@ -82,7 +82,7 @@ pub fn read_from_agent<P: AsRef<Path>>(path: P, agent_name: &str) -> io::Result<
 
     let lines: Vec<String> = reader
         .lines()
-        .filter_map(|line| line.ok())
+        .map_while(Result::ok)
         .filter(|line| line.contains(&pattern))
         .collect();
 

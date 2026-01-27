@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::agent;
 
 use super::{Task, TaskList, TaskStatus};
@@ -36,11 +38,10 @@ impl TaskList {
         Self { header, tasks, footer }
     }
 
-    /// Format tasks back to TASKS.md content.
-    ///
-    /// Preserves document structure by outputting each task's prefix lines
-    /// (section headings, blank lines) before the task itself.
-    pub fn to_string(&self) -> String {
+}
+
+impl fmt::Display for TaskList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut lines = Vec::new();
 
         for h in &self.header {
@@ -55,15 +56,15 @@ impl TaskList {
             lines.push(task.to_line());
         }
 
-        for f in &self.footer {
-            lines.push(f.clone());
+        for footer_line in &self.footer {
+            lines.push(footer_line.clone());
         }
 
         let mut result = lines.join("\n");
         if !result.ends_with('\n') {
             result.push('\n');
         }
-        result
+        f.write_str(&result)
     }
 }
 

@@ -11,6 +11,7 @@
 
 mod assignments;
 mod sprint_history;
+#[allow(clippy::module_inception)]
 mod team;
 
 pub use assignments::Assignments;
