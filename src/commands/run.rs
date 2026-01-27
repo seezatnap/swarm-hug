@@ -34,7 +34,8 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
     let mut tail_stop: Option<Arc<AtomicBool>> = None;
     let mut tail_handle: Option<thread::JoinHandle<()>> = None;
 
-    if !config.no_tail {
+    // Only tail if SWARM_NO_TAIL is not set (TUI subprocess sets this)
+    if !should_skip_tail() {
         let stop = Arc::new(AtomicBool::new(false));
         let path = config.files_chat.clone();
         let stop_clone = Arc::clone(&stop);
@@ -142,10 +143,10 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
     }
 
     // Build command-line args to re-run swarm with --no-tui (plain text mode)
+    // Note: SWARM_NO_TAIL env var is set by run_tui_with_subprocess to disable tailing
     let mut args: Vec<String> = Vec::new();
     args.push("run".to_string());
     args.push("--no-tui".to_string());  // Subprocess uses plain text mode
-    args.push("--no-tail".to_string()); // TUI handles display
 
     if let Some(ref project) = config.project {
         args.push("--project".to_string());
@@ -173,6 +174,10 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
 
 fn should_reset_chat() -> bool {
     env::var("SWARM_SKIP_CHAT_RESET").is_err()
+}
+
+fn should_skip_tail() -> bool {
+    env::var("SWARM_NO_TAIL").is_ok()
 }
 
 #[cfg(test)]

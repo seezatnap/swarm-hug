@@ -72,7 +72,8 @@ pub fn run_tui_with_subprocess(
             let mut cmd = Command::new(&exe_path);
             cmd.args(&args)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null());
+                .stderr(Stdio::null())
+                .env("SWARM_NO_TAIL", "1"); // TUI handles display, subprocess shouldn't tail
             if skip_chat_reset {
                 cmd.env("SWARM_SKIP_CHAT_RESET", "1");
             }
@@ -91,7 +92,8 @@ pub fn run_tui_with_subprocess(
             let mut cmd = Command::new(&exe_path);
             cmd.args(&args)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null());
+                .stderr(Stdio::null())
+                .env("SWARM_NO_TAIL", "1"); // TUI handles display, subprocess shouldn't tail
             if skip_chat_reset {
                 cmd.env("SWARM_SKIP_CHAT_RESET", "1");
             }
