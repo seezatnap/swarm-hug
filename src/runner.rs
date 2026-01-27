@@ -311,26 +311,6 @@ pub(crate) fn run_sprint(
             let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> =
                 Vec::new();
 
-            // Select random engine for this agent
-            let selected_engine_type = if thread_engine_stub_mode {
-                config::EngineType::Stub
-            } else if thread_engine_types.is_empty() {
-                config::EngineType::Claude
-            } else if thread_engine_types.len() == 1 {
-                thread_engine_types[0]
-            } else {
-                use rand::seq::SliceRandom;
-                *thread_engine_types
-                    .choose(&mut rand::thread_rng())
-                    .unwrap()
-            };
-            let engine_type_str = selected_engine_type.as_str().to_string();
-            let engine: Arc<dyn engine::Engine> = engine::create_engine(
-                selected_engine_type,
-                &log_dir,
-                thread_agent_timeout,
-            );
-
             // Create agent logger
             let logger = AgentLogger::new(Path::new(&log_dir), initial, agent_name);
 
@@ -344,6 +324,25 @@ pub(crate) fn run_sprint(
 
             // Process each task sequentially for this agent
             for description in tasks {
+                // Select random engine for this task (per-task engine selection)
+                let selected_engine_type = if thread_engine_stub_mode {
+                    config::EngineType::Stub
+                } else if thread_engine_types.is_empty() {
+                    config::EngineType::Claude
+                } else if thread_engine_types.len() == 1 {
+                    thread_engine_types[0]
+                } else {
+                    use rand::seq::SliceRandom;
+                    *thread_engine_types
+                        .choose(&mut rand::thread_rng())
+                        .unwrap()
+                };
+                let engine_type_str = selected_engine_type.as_str().to_string();
+                let engine: Arc<dyn engine::Engine> = engine::create_engine(
+                    selected_engine_type,
+                    &log_dir,
+                    thread_agent_timeout,
+                );
                 // Check for shutdown before starting a new task
                 if shutdown::requested() {
                     if let Err(e) = logger.log("Shutdown requested, skipping remaining tasks") {
