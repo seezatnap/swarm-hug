@@ -74,7 +74,7 @@ OPTIONS:
 
 - `--engine` accepts a comma-separated list (e.g., `claude,codex`). When multiple engines are provided, each task randomly selects one engine.
 - Chat entries include the engine used for that task: `Starting: <task> [engine: <name>]`.
-- You can weight selection by repeating an engine (e.g., `claude,claude,codex`), and `--stub` always forces the stub engine.
+- You can weight selection by repeating an engine (e.g., `claude,claude,codex`).
 
 ## Requirements for init_lima.sh
 
