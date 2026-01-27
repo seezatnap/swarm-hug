@@ -31,7 +31,7 @@
 
 ## Testing
 
-- [B] (#18) Remove or update tests for sprint command (blocked by #7)
+- [x] (#18) Remove or update tests for sprint command (blocked by #7)
 - [A] (#19) Remove or update tests for plan command (blocked by #8)
 - [B] (#20) Remove or update tests for status command (blocked by #9)
 - [A] (#21) Remove or update tests for worktrees command (blocked by #10)
