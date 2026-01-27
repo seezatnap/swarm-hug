@@ -117,12 +117,10 @@ OPTIONS:
     --no-tui                  Disable TUI mode (use plain text output) [default: false]
 
 EXAMPLES:
-    swarm init                            Initialize .swarm-hug/ structure
-    swarm project init authentication     Create a new project
-    swarm project init payments           Create another project
-    swarm projects                        List all projects
-    swarm --project authentication run    Run sprints for authentication project
-    swarm -p payments status              Show status for payments project
+    swarm init                        Initialize .swarm-hug/ structure
+    swarm project init myproject      Create a new project
+    swarm projects                    List all projects
+    swarm -p myproject run            Run sprints for a project
 "#,
         max_agents = 3,
         tasks_per_agent = 2,
