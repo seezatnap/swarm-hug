@@ -305,7 +305,7 @@ fn test_command_from_str() {
     assert_eq!(Command::from_str("init"), Some(Command::Init));
     assert_eq!(Command::from_str("run"), Some(Command::Run));
     assert_eq!(Command::from_str("sprint"), None); // sprint command removed
-    assert_eq!(Command::from_str("plan"), Some(Command::Plan));
+    assert_eq!(Command::from_str("plan"), None); // plan command removed
     assert_eq!(Command::from_str("status"), Some(Command::Status));
     assert_eq!(Command::from_str("agents"), Some(Command::Agents));
     assert_eq!(Command::from_str("worktrees"), Some(Command::Worktrees));
