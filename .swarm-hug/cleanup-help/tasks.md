@@ -11,11 +11,11 @@
 
 ## Command Handlers
 
-- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?) (?)
-- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?) (?)
-- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?) (?)
-- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?) (?)
-- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?) (?)
+- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?) (?) (?)
+- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?) (?) (?)
+- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?) (?) (?)
+- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?) (?) (?)
+- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?) (?) (?)
 - [x] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6) (A)
 
 ## CLI Options
@@ -27,7 +27,7 @@
 
 - [x] (#15) Remove MULTI-PROJECT MODE section from help output (blocked by #1, #2, #3, #4, #5, #6) (A)
 - [x] (#16) Update examples section: remove deprecated examples and add `swarm -p authentication run` (blocked by #15) (A)
-- [ ] (#17) Verify help output matches target format exactly (blocked by #16)
+- [A] (#17) Verify help output matches target format exactly (blocked by #16)
 
 ## Testing
 
@@ -38,7 +38,7 @@
 - [x] (#22) Remove or update tests for worktrees-branch command (blocked by #11) (B)
 - [x] (#23) Remove or update tests for cleanup command (blocked by #12) (B)
 - [x] (#24) Remove or update tests for --no-tail option (blocked by #14) (B)
-- [ ] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23)
+- [A] (#25) Add test verifying removed commands return appropriate error (blocked by #18, #19, #20, #21, #22, #23)
 
 ## Validation
 
