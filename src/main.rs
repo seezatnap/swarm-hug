@@ -13,7 +13,7 @@ mod tail;
 
 use commands::{
     cmd_agents, cmd_cleanup, cmd_customize_prompts, cmd_init, cmd_plan, cmd_project_init,
-    cmd_projects, cmd_run, cmd_run_tui, cmd_set_email, cmd_sprint, cmd_status, cmd_worktrees,
+    cmd_projects, cmd_run, cmd_run_tui, cmd_set_email, cmd_sprint, cmd_status,
     cmd_worktrees_branch,
 };
 
@@ -58,7 +58,6 @@ fn main() {
         Command::Plan => cmd_plan(&config),
         Command::Status => cmd_status(&config),
         Command::Agents => cmd_agents(&config),
-        Command::Worktrees => cmd_worktrees(&config),
         Command::WorktreesBranch => cmd_worktrees_branch(&config),
         Command::Cleanup => cmd_cleanup(&config),
         Command::Projects => cmd_projects(&config),
