@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -7,16 +6,11 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use swarm::agent;
 use swarm::chat;
 use swarm::color::{self, emoji};
 use swarm::config::Config;
 use swarm::shutdown;
-use swarm::task::{TaskList, TaskStatus};
-use swarm::team::{self, Assignments};
 
-use crate::git::commit_task_assignments;
-use crate::project::project_name_for_config;
 use crate::tail::tail_follow;
 use crate::runner::run_sprint;
 
@@ -202,125 +196,4 @@ mod tests {
         assert!(!should_reset_chat());
         std::env::remove_var("SWARM_SKIP_CHAT_RESET");
     }
-}
-
-/// Run exactly one sprint.
-pub fn cmd_sprint(config: &Config) -> Result<(), String> {
-    println!("{} {} (engine={})...",
-             emoji::SPRINT,
-             color::label("Running single sprint"),
-             color::info(&config.engines_display()));
-    let result = run_sprint(config, 1)?;
-    if result.all_failed() {
-        println!();
-        println!("{} {}: All {} task(s) failed in this sprint.",
-                 emoji::WARNING,
-                 color::warning("WARNING"),
-                 color::failed(&result.tasks_failed.to_string()));
-        println!("   This usually indicates a configuration or authentication issue.");
-        println!("   Please check CLI authentication (run 'claude' or 'codex login').");
-    }
-    Ok(())
-}
-
-/// Run sprint planning only.
-pub fn cmd_plan(config: &Config) -> Result<(), String> {
-    println!("Running sprint planning...");
-
-    // Load tasks
-    let content = fs::read_to_string(&config.files_tasks)
-        .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
-    let mut task_list = TaskList::parse(&content);
-
-    // Determine how many agents to spawn based on assignable tasks
-    let assignable = task_list.assignable_count();
-    if assignable == 0 {
-        println!("{} No assignable tasks found.", emoji::CHECK);
-        return Ok(());
-    }
-
-    let team_name = project_name_for_config(config);
-    let mut assignments_state = Assignments::load()?;
-
-    let tasks_per_agent = config.agents_tasks_per_agent;
-    let agents_needed = (assignable + tasks_per_agent - 1) / tasks_per_agent;
-    let agent_cap = agents_needed.min(config.agents_max_count);
-    let initials = assignments_state.available_for_team(&team_name, agent_cap);
-    if initials.is_empty() {
-        println!("No available agents for team '{}'.", team_name);
-        return Ok(());
-    }
-    let agent_count = initials.len();
-    let assigned = task_list.assign_sprint(&initials, tasks_per_agent);
-
-    // Load sprint history and increment for this planning session
-    let mut sprint_history = team::SprintHistory::load(&team_name)?;
-    let historical_sprint = sprint_history.next_sprint();
-    let formatted_team = sprint_history.formatted_team_name();
-    sprint_history.save()?;
-
-    // Write updated tasks
-    fs::write(&config.files_tasks, task_list.to_string())
-        .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
-
-    // Collect assignments for chat
-    let assignments: Vec<(char, &str)> = task_list
-        .tasks
-        .iter()
-        .filter_map(|t| {
-            if let TaskStatus::Assigned(initial) = t.status {
-                Some((initial, t.description.as_str()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut assigned_initials: Vec<char> = Vec::new();
-    for (initial, _) in &assignments {
-        if !assigned_initials.contains(initial) {
-            assigned_initials.push(*initial);
-        }
-    }
-    if !assigned_initials.is_empty() {
-        for initial in &assigned_initials {
-            if let Some(existing) = assignments_state.get_team(*initial) {
-                if existing != team_name.as_str() {
-                    return Err(format!(
-                        "Agent {} is already assigned to team '{}'",
-                        initial, existing
-                    ));
-                }
-            } else {
-                assignments_state.assign(*initial, &team_name)?;
-            }
-        }
-        assignments_state.save()?;
-    }
-
-    // Write sprint plan to chat
-    chat::write_sprint_plan(&config.files_chat, historical_sprint, &assignments)
-        .map_err(|e| format!("failed to write chat: {}", e))?;
-
-    // Commit assignment changes to git so worktrees can see them
-    let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
-    commit_task_assignments(
-        &config.files_tasks,
-        sprint_history_path.to_str().unwrap_or(""),
-        &formatted_team,
-        historical_sprint,
-    )?;
-
-    println!("{} {} Sprint {}: assigned {} task(s) to {} agent(s).",
-             emoji::SPRINT,
-             color::info(&formatted_team),
-             color::number(historical_sprint),
-             color::number(assigned),
-             color::number(agent_count));
-    for (initial, desc) in &assignments {
-        let name = agent::name_from_initial(*initial).unwrap_or("Unknown");
-        println!("  {} {}: {}", emoji::ROBOT, color::agent(name), desc);
-    }
-
-    Ok(())
 }
