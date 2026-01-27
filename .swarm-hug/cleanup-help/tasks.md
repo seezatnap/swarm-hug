@@ -11,11 +11,11 @@
 
 ## Command Handlers
 
-- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1)
-- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2)
-- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3)
-- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4)
-- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?)
+- [x] (#7) Remove sprint command handler function and module in src/commands/ (blocked by #1) (?)
+- [x] (#8) Remove plan command handler function and module in src/commands/ (blocked by #2) (?)
+- [x] (#9) Remove status command handler function and module in src/commands/ (blocked by #3) (?)
+- [x] (#10) Remove worktrees command handler function and module in src/commands/ (blocked by #4) (?)
+- [x] (#11) Remove worktrees-branch command handler function and module in src/commands/ (blocked by #5) (?) (?)
 - [A] (#12) Remove cleanup command handler function and module in src/commands/ (blocked by #6)
 
 ## CLI Options
@@ -31,10 +31,10 @@
 
 ## Testing
 
-- [ ] (#18) Remove or update tests for sprint command (blocked by #7)
-- [ ] (#19) Remove or update tests for plan command (blocked by #8)
-- [ ] (#20) Remove or update tests for status command (blocked by #9)
-- [ ] (#21) Remove or update tests for worktrees command (blocked by #10)
+- [B] (#18) Remove or update tests for sprint command (blocked by #7)
+- [A] (#19) Remove or update tests for plan command (blocked by #8)
+- [B] (#20) Remove or update tests for status command (blocked by #9)
+- [A] (#21) Remove or update tests for worktrees command (blocked by #10)
 - [B] (#22) Remove or update tests for worktrees-branch command (blocked by #11)
 - [ ] (#23) Remove or update tests for cleanup command (blocked by #12)
 - [ ] (#24) Remove or update tests for --no-tail option (blocked by #14)
