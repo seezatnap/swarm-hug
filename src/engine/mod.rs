@@ -108,7 +108,13 @@ pub fn create_random_engine(
     (engine, selected_type)
 }
 
-/// Select an engine type from the configured list.
+/// Select an engine type from the configured list with equal probability.
+///
+/// This is the core random selection helper that implements per-task engine selection:
+/// - If `stub_mode` is true, always returns `Stub` regardless of the list
+/// - If the list is empty, defaults to `Claude`
+/// - If the list has one entry, returns that entry
+/// - If the list has multiple entries, randomly selects one with equal probability
 ///
 /// # Arguments
 /// * `engine_types` - List of available engine types
@@ -116,7 +122,22 @@ pub fn create_random_engine(
 ///
 /// # Returns
 /// The selected engine type
-fn select_engine_type(engine_types: &[EngineType], stub_mode: bool) -> EngineType {
+///
+/// # Example
+/// ```
+/// use swarm::engine::select_engine_type;
+/// use swarm::config::EngineType;
+///
+/// // With multiple engines, selection is random
+/// let types = vec![EngineType::Claude, EngineType::Codex];
+/// let selected = select_engine_type(&types, false);
+/// // selected is either Claude or Codex with equal probability
+///
+/// // Stub mode always returns Stub
+/// let selected = select_engine_type(&types, true);
+/// assert_eq!(selected, EngineType::Stub);
+/// ```
+pub fn select_engine_type(engine_types: &[EngineType], stub_mode: bool) -> EngineType {
     if stub_mode {
         EngineType::Stub
     } else if engine_types.is_empty() {
