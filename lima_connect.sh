@@ -66,6 +66,7 @@ ensure_docker_context() {
 
 # --- VM selection ---
 # Auto-select if only one VM, otherwise prompt with select menu
+# Uses fzf when available for better UX, falls back to bash select
 select_vm() {
   local vms=("$@")
   local count=${#vms[@]}
@@ -75,6 +76,13 @@ select_vm() {
     return
   fi
 
+  # Use fzf if available
+  if have fzf; then
+    printf '%s\n' "${vms[@]}" | fzf --prompt="Select a Lima VM: " --height=~50% --reverse
+    return
+  fi
+
+  # Fallback to bash select
   printf "Select a Lima VM:\n" >&2
   PS3="VM number: "
   select vm in "${vms[@]}"; do
@@ -158,6 +166,7 @@ done
 # --- Container selection ---
 # Auto-select if only one container, otherwise prompt with select menu
 # Shows container name + status for better visibility
+# Uses fzf when available for better UX, falls back to bash select
 select_container() {
   local -a names=("${!1}")
   local -a display=("${!2}")
@@ -168,6 +177,23 @@ select_container() {
     return
   fi
 
+  # Use fzf if available
+  if have fzf; then
+    local selected
+    selected="$(printf '%s\n' "${display[@]}" | fzf --prompt="Select a container: " --height=~50% --reverse)"
+    [[ -z "$selected" ]] && return
+    # Find the index of the selected display string to return the name
+    local i
+    for i in "${!display[@]}"; do
+      if [[ "${display[$i]}" == "$selected" ]]; then
+        printf '%s\n' "${names[$i]}"
+        return
+      fi
+    done
+    return
+  fi
+
+  # Fallback to bash select
   printf "Select a container:\n" >&2
   PS3="Container number: "
   select choice in "${display[@]}"; do
