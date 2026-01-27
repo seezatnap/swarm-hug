@@ -12,7 +12,7 @@
 
 ## Selection UX
 - [x] (#5) Add VM selection menu using bash `select`, auto-select when only one VM (blocked by #2) (A)
-- [A] (#6) Add container selection menu showing name + status, auto-select when only one running container (blocked by #4, #5)
+- [x] (#6) Add container selection menu showing name + status, auto-select when only one running container (blocked by #4, #5) (A)
 - [ ] (#7) Use `fzf` for VM/container selection when available, with `select` fallback (blocked by #5, #6)
 
 ## Flags & Execution
