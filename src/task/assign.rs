@@ -51,12 +51,9 @@ impl Task {
                 return refs
                     .split(',')
                     .filter_map(|part| {
-                        let trimmed = part.trim();
-                        if trimmed.starts_with('#') {
-                            trimmed[1..].parse::<usize>().ok()
-                        } else {
-                            None
-                        }
+                        part.trim()
+                            .strip_prefix('#')
+                            .and_then(|num| num.parse::<usize>().ok())
                     })
                     .collect();
             }

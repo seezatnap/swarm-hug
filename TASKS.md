@@ -44,10 +44,10 @@
 
 - [x] (#15) Remove MULTI-PROJECT MODE section from help output (blocked by #1, #2, #3, #4, #5, #6)
 - [x] (#16) Update examples section: remove deprecated examples and add `swarm -p authentication run` (blocked by #15)
-- [ ] (#17) Verify help output matches target format exactly (blocked by #16)
+- [x] (#17) Verify help output matches target format exactly (blocked by #16)
 
 ## Validation
 
-- [ ] (#26) Run full test suite and fix any failures (blocked by #25)
-- [ ] (#27) Run cargo clippy and resolve any new warnings (blocked by #26)
+- [x] (#26) Run full test suite and fix any failures (blocked by #25)
+- [x] (#27) Run cargo clippy and resolve any new warnings (blocked by #26) (A)
 - [ ] (#28) Manual verification that help output matches target format (blocked by #27)

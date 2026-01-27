@@ -17,7 +17,7 @@ pub enum EngineType {
 
 impl EngineType {
     /// Parse engine type from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
@@ -41,7 +41,7 @@ impl EngineType {
     pub fn parse_list(s: &str) -> Option<Vec<Self>> {
         let engines: Vec<Self> = s
             .split(',')
-            .map(|part| Self::from_str(part.trim()))
+            .map(|part| Self::parse(part.trim()))
             .collect::<Option<Vec<_>>>()?;
 
         if engines.is_empty() {

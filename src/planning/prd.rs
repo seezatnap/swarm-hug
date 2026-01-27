@@ -60,11 +60,10 @@ pub fn parse_prd_response(response: &str) -> String {
     let mut result = response.to_string();
 
     // Remove markdown code fences if present
-    if result.starts_with("```markdown") || result.starts_with("```md") {
-        if let Some(first_newline) = result.find('\n') {
-            result = result[first_newline + 1..].to_string();
-        }
-    } else if result.starts_with("```") {
+    if ["```markdown", "```md", "```"]
+        .iter()
+        .any(|prefix| result.starts_with(prefix))
+    {
         if let Some(first_newline) = result.find('\n') {
             result = result[first_newline + 1..].to_string();
         }
@@ -135,7 +134,7 @@ fn stub_prd_conversion(prd_content: &str) -> PrdConversionResult {
     let word_count = prd_content.split_whitespace().count();
 
     // Generate a number of tasks proportional to PRD length
-    let task_count = (word_count / 50).max(3).min(10);
+    let task_count = (word_count / 50).clamp(3, 10);
 
     let mut tasks = String::new();
     tasks.push_str("## Implementation\n\n");
@@ -150,7 +149,7 @@ fn stub_prd_conversion(prd_content: &str) -> PrdConversionResult {
     tasks.push_str("\n## Testing\n\n");
     // Testing tasks depend on the first implementation task
     tasks.push_str(&format!("- [ ] (#{})", task_num));
-    tasks.push_str(&format!(" Write unit tests for new features (blocked by #1)\n"));
+    tasks.push_str(" Write unit tests for new features (blocked by #1)\n");
     task_num += 1;
     tasks.push_str(&format!("- [ ] (#{})", task_num));
     tasks.push_str(&format!(" Write integration tests (blocked by #{})\n", task_num - 1));

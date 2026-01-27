@@ -26,6 +26,8 @@ use crate::git::{
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
 use crate::project::{project_name_for_config, release_assignments_for_project};
 
+type TaskResult = (char, String, bool, Option<String>, Option<Duration>);
+
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
 pub(crate) struct SprintResult {
@@ -79,7 +81,7 @@ pub(crate) fn run_sprint(
     let mut assignments_state = Assignments::load()?;
 
     let tasks_per_agent = config.agents_tasks_per_agent;
-    let agents_needed = (assignable + tasks_per_agent - 1) / tasks_per_agent;
+    let agents_needed = assignable.div_ceil(tasks_per_agent);
     let agent_cap = agents_needed.min(config.agents_max_count);
     let initials = assignments_state.available_for_team(&team_name, agent_cap);
     if initials.is_empty() {
@@ -283,9 +285,7 @@ pub(crate) fn run_sprint(
 
     // Execute agents in parallel, each agent processes their tasks sequentially
     // Return type includes: (initial, description, success, error, duration)
-    let mut handles: Vec<
-        thread::JoinHandle<Vec<(char, String, bool, Option<String>, Option<Duration>)>>,
-    > = Vec::new();
+    let mut handles: Vec<thread::JoinHandle<Vec<TaskResult>>> = Vec::new();
 
     // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
     let team_dir: Option<String> = Path::new(&config.files_tasks)
@@ -308,8 +308,7 @@ pub(crate) fn run_sprint(
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
-            let mut task_results: Vec<(char, String, bool, Option<String>, Option<Duration>)> =
-                Vec::new();
+            let mut task_results: Vec<TaskResult> = Vec::new();
 
             // Create agent logger
             let logger = AgentLogger::new(Path::new(&log_dir), initial, agent_name);
@@ -489,7 +488,7 @@ pub(crate) fn run_sprint(
     }
 
     // Wait for all agents to complete and collect results
-    let mut results: Vec<(char, String, bool, Option<String>, Option<Duration>)> = Vec::new();
+    let mut results: Vec<TaskResult> = Vec::new();
     let shutdown_in_progress = shutdown::requested();
     let total_agents = handles.len();
     if shutdown_in_progress {
