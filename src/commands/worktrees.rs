@@ -22,23 +22,6 @@ pub fn cmd_worktrees(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// List worktree branches.
-pub fn cmd_worktrees_branch(_config: &Config) -> Result<(), String> {
-    println!("Agent Branches:");
-    let branches = worktree::list_agent_branches()?;
-
-    if branches.is_empty() {
-        println!("  (no agent branches found)");
-    } else {
-        for b in &branches {
-            let status = if b.exists { "active" } else { "missing" };
-            let name = agent::name_from_initial(b.initial).unwrap_or("?");
-            println!("  {} ({}) - {} [{}]", name, b.initial, b.branch, status);
-        }
-    }
-    Ok(())
-}
-
 /// Clean up worktrees and branches.
 pub fn cmd_cleanup(config: &Config) -> Result<(), String> {
     println!("Cleaning up worktrees and branches...");
