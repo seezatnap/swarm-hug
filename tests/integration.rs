@@ -247,7 +247,7 @@ fn test_swarm_run_stub_integration() {
     // Branches are also cleaned up after sprint
     let mut branches_cmd = Command::new("git");
     branches_cmd
-        .args(["branch", "--list", "agent/*"])
+        .args(["branch", "--list", "agent-*"])
         .current_dir(repo_path);
     let branches_output = run_success(&mut branches_cmd);
     let branches_stdout = String::from_utf8_lossy(&branches_output.stdout);

@@ -156,10 +156,10 @@ mod tests {
         let template = "Agent {{agent_name}} on branch {{branch}}";
         let mut vars = HashMap::new();
         vars.insert("agent_name", "Aaron".to_string());
-        vars.insert("branch", "agent/aaron".to_string());
+        vars.insert("branch", "agent-aaron".to_string());
 
         let result = render(template, &vars);
-        assert_eq!(result, "Agent Aaron on branch agent/aaron");
+        assert_eq!(result, "Agent Aaron on branch agent-aaron");
     }
 
     #[test]
