@@ -1,4 +1,79 @@
 use super::*;
+use super::types::detect_target_branch_in;
+use std::fs;
+use std::path::Path;
+use std::process::Command as ProcessCommand;
+use tempfile::TempDir;
+
+fn run_git(repo: &Path, args: &[&str]) {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("failed to run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn init_git_repo(repo: &Path) {
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.name", "Swarm Test"]);
+    run_git(repo, &["config", "user.email", "swarm-test@example.com"]);
+    fs::write(repo.join("README.md"), "init").expect("write README");
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "-m", "init"]);
+}
+
+fn git_branch_exists(repo: &Path, branch: &str) -> bool {
+    let ref_name = format!("refs/heads/{}", branch);
+    ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["show-ref", "--verify", "--quiet", &ref_name])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn git_current_branch(repo: &Path) -> Option<String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        None
+    } else {
+        Some(branch)
+    }
+}
+
+fn ensure_branch(repo: &Path, branch: &str) {
+    if !git_branch_exists(repo, branch) {
+        run_git(repo, &[ "branch", branch ]);
+    }
+}
+
+fn delete_branch_if_exists(repo: &Path, branch: &str) {
+    if !git_branch_exists(repo, branch) {
+        return;
+    }
+    if git_current_branch(repo).as_deref() == Some(branch) {
+        return;
+    }
+    run_git(repo, &["branch", "-D", branch]);
+}
 
 #[test]
 fn test_engine_type_parse() {
@@ -386,6 +461,41 @@ fn test_parse_args_set_email() {
     let cli = parse_args(args);
     assert_eq!(cli.command, Some(Command::SetEmail));
     assert_eq!(cli.email_arg, Some("user@example.com".to_string()));
+}
+
+#[test]
+fn test_detect_target_branch_prefers_main() {
+    let temp = TempDir::new().expect("temp dir");
+    init_git_repo(temp.path());
+    ensure_branch(temp.path(), "main");
+    run_git(temp.path(), &["checkout", "-b", "dev"]);
+
+    let detected = detect_target_branch_in(Some(temp.path()));
+    assert_eq!(detected.as_deref(), Some("main"));
+}
+
+#[test]
+fn test_detect_target_branch_falls_back_to_master() {
+    let temp = TempDir::new().expect("temp dir");
+    init_git_repo(temp.path());
+    ensure_branch(temp.path(), "master");
+    run_git(temp.path(), &["checkout", "-b", "feature"]);
+    delete_branch_if_exists(temp.path(), "main");
+
+    let detected = detect_target_branch_in(Some(temp.path()));
+    assert_eq!(detected.as_deref(), Some("master"));
+}
+
+#[test]
+fn test_detect_target_branch_falls_back_to_current_branch() {
+    let temp = TempDir::new().expect("temp dir");
+    init_git_repo(temp.path());
+    run_git(temp.path(), &["checkout", "-b", "feature"]);
+    delete_branch_if_exists(temp.path(), "main");
+    delete_branch_if_exists(temp.path(), "master");
+
+    let detected = detect_target_branch_in(Some(temp.path()));
+    assert_eq!(detected.as_deref(), Some("feature"));
 }
 
 #[test]
