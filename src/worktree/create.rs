@@ -246,6 +246,24 @@ mod tests {
         output
     }
 
+    fn run_git_in(dir: &Path, args: &[&str]) -> Output {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git -C {} {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            dir.display(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
     fn init_repo() {
         run_git(&["init"]);
         run_git(&["config", "user.name", "Swarm Test"]);
@@ -322,6 +340,47 @@ mod tests {
             assert!(output.status.success());
             let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(wt_commit, base_commit);
+        });
+    }
+
+    #[test]
+    fn test_create_worktrees_in_recreates_existing_worktree() {
+        with_temp_cwd(|| {
+            init_repo();
+            run_git(&["checkout", "-b", "alpha-sprint-1"]);
+            fs::write("feature.txt", "feature").expect("write feature file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "feature commit"]);
+            let base_commit = String::from_utf8_lossy(&run_git(&["rev-parse", "HEAD"]).stdout)
+                .trim()
+                .to_string();
+
+            let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
+            let assignments = vec![('A', "Task one".to_string())];
+            let worktrees =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                    .expect("create worktrees");
+            let wt_path = &worktrees[0].path;
+
+            fs::write(wt_path.join("task.txt"), "task").expect("write task file");
+            run_git_in(wt_path, &["add", "."]);
+            run_git_in(wt_path, &["commit", "-m", "task commit"]);
+
+            let worktrees_again =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                    .expect("recreate worktree");
+            let wt_path_again = &worktrees_again[0].path;
+
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(wt_path_again)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("failed to run git rev-parse");
+            assert!(output.status.success());
+            let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            assert_eq!(wt_commit, base_commit);
+            assert!(!wt_path_again.join("task.txt").exists());
         });
     }
 }
