@@ -75,13 +75,19 @@ pub(crate) fn commit_files(paths: &[&str], message: &str) -> Result<bool, String
 pub(crate) fn commit_task_assignments(
     tasks_file: &str,
     sprint_history_file: &str,
+    team_state_file: &str,
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("{} Sprint {}: task assignments", team_name, sprint_number);
     if commit_files(
-        &[tasks_file, sprint_history_file, assignments_path.as_str()],
+        &[
+            tasks_file,
+            sprint_history_file,
+            team_state_file,
+            assignments_path.as_str(),
+        ],
         &commit_msg,
     )? {
         println!("  Committed task assignments to git.");

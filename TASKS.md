@@ -38,7 +38,7 @@
 ### Configuration
 
 - [ ] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
-- [ ] (#23) Store sprint/feature branch name in team state for reference during merge operations (blocked by #3)
+- [x] (#23) Store sprint/feature branch name in team state for reference during merge operations
 
 ### Testing
 

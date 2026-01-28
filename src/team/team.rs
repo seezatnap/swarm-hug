@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{SPRINT_HISTORY_FILE, SWARM_HUG_DIR};
+use super::{SPRINT_HISTORY_FILE, SWARM_HUG_DIR, TEAM_STATE_FILE};
 
 /// A team's configuration and paths.
 #[derive(Debug, Clone)]
@@ -54,6 +54,11 @@ impl Team {
     /// Path to team's sprint-history.json file.
     pub fn sprint_history_path(&self) -> PathBuf {
         self.root.join(SPRINT_HISTORY_FILE)
+    }
+
+    /// Path to team's team-state.json file.
+    pub fn team_state_path(&self) -> PathBuf {
+        self.root.join(TEAM_STATE_FILE)
     }
 
     /// Check if this team exists (has been initialized).
@@ -115,6 +120,10 @@ mod tests {
         assert_eq!(team.chat_path(), PathBuf::from(".swarm-hug/authentication/chat.md"));
         assert_eq!(team.loop_dir(), PathBuf::from(".swarm-hug/authentication/loop"));
         assert_eq!(team.worktrees_dir(), PathBuf::from(".swarm-hug/authentication/worktrees"));
+        assert_eq!(
+            team.team_state_path(),
+            PathBuf::from(".swarm-hug/authentication/team-state.json")
+        );
     }
 
     #[test]

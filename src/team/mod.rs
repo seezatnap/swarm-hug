@@ -5,16 +5,19 @@
 //! - Its own loop/, worktrees/ directories
 //! - Its own chat.md
 //! - Its own sprint-history.json for tracking sprint counts
+//! - Its own team-state.json for tracking sprint feature branch
 //!
 //! Agent assignments are tracked in `.swarm-hug/assignments.toml` to ensure
 //! no agent works on multiple teams simultaneously.
 
 mod assignments;
+mod state;
 mod sprint_history;
 #[allow(clippy::module_inception)]
 mod team;
 
 pub use assignments::Assignments;
+pub use state::TeamState;
 pub use sprint_history::SprintHistory;
 pub use team::Team;
 
@@ -29,6 +32,8 @@ pub const ASSIGNMENTS_FILE: &str = "assignments.toml";
 
 /// Filename for sprint history within each team directory.
 pub const SPRINT_HISTORY_FILE: &str = "sprint-history.json";
+/// Filename for team state within each team directory.
+pub const TEAM_STATE_FILE: &str = "team-state.json";
 
 /// List all teams in the .swarm-hug directory.
 pub fn list_teams() -> Result<Vec<Team>, String> {
