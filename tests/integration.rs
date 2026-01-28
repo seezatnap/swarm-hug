@@ -6,6 +6,8 @@ use std::sync::Mutex;
 use tempfile::TempDir;
 
 use swarm::chat;
+use swarm::engine::StubEngine;
+use swarm::merge_agent;
 use swarm::task::{TaskList, TaskStatus};
 use swarm::worktree;
 
@@ -302,6 +304,70 @@ fn test_swarm_run_stub_integration() {
         main_log.contains("Alpha Sprint 1: task assignments"),
         "target branch should include sprint assignment commit after merge, log:\n{}",
         main_log
+    );
+}
+
+#[test]
+fn test_merge_agent_conflict_surfaces_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("conflict.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "base");
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut checkout_feature = Command::new("git");
+    checkout_feature
+        .args(["checkout", "-b", "alpha-sprint-1"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feature);
+    fs::write(repo_path.join("conflict.txt"), "feature change\n").expect("write feature");
+    commit_all(repo_path, "feature change");
+
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+    fs::write(repo_path.join("conflict.txt"), "target change\n").expect("write target");
+    commit_all(repo_path, "target change");
+
+    let engine = StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
+    let err = merge_agent::ensure_feature_merged(
+        &engine,
+        "alpha-sprint-1",
+        "main",
+        repo_path,
+    )
+    .expect_err("expected merge conflict");
+
+    assert!(
+        err.contains("merge conflicts"),
+        "expected conflict error, got: {}",
+        err
+    );
+    assert!(
+        err.contains("conflict.txt"),
+        "expected conflict file name in error, got: {}",
+        err
+    );
+
+    let mut diff_cmd = Command::new("git");
+    diff_cmd
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(repo_path);
+    let diff_output = run_success(&mut diff_cmd);
+    let conflicts = String::from_utf8_lossy(&diff_output.stdout);
+    assert!(
+        conflicts.trim().is_empty(),
+        "merge conflicts should be cleared, got: {}",
+        conflicts
     );
 }
 
