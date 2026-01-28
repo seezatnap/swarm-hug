@@ -11,9 +11,9 @@
 
 ### Agent Worktree Lifecycle
 
-- [ ] (#5) Modify agent worktree creation to fork from feature/sprint branch instead of target branch (blocked by #3)
+- [A] (#5) Modify agent worktree creation to fork from feature/sprint branch instead of target branch (blocked by #3)
 - [ ] (#6) Implement agent worktree recreation logic - delete and recreate fresh from feature branch after each task completion (blocked by #5)
-- [ ] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
+- [B] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
 
 ### Task Merge Flow
 
@@ -22,13 +22,13 @@
 
 ### Merge Agent Implementation
 
-- [ ] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
+- [C] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
 - [ ] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
 - [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
 
 ### Sprint Workflow Updates
 
-- [ ] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
+- [B] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
 
 ### Sprint Completion Flow
 
@@ -37,12 +37,12 @@
 
 ### Configuration
 
-- [ ] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
-- [ ] (#23) Store sprint/feature branch name in team state for reference during merge operations (blocked by #3)
+- [A] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
+- [C] (#23) Store sprint/feature branch name in team state for reference during merge operations (blocked by #3)
 
 ### Testing
 
-- [ ] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
+- [A] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
 - [ ] (#25) Add integration test for full worktree lifecycle: feature branch → agent worktree → merge → cleanup (blocked by #8, #9)
 - [ ] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
 - [ ] (#27) Add test for `--target-branch` flag override behavior (blocked by #21)
