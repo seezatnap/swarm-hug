@@ -20,8 +20,8 @@ use swarm::team::{self, Assignments};
 use swarm::worktree::{self, Worktree};
 
 use crate::git::{
-    commit_files, commit_sprint_completion, commit_task_assignments, get_current_commit,
-    get_git_log_range,
+    commit_files_in_worktree, commit_sprint_completion, commit_task_assignments,
+    get_current_commit_in, get_git_log_range_in,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
 use crate::project::{project_name_for_config, release_assignments_for_project};
@@ -216,6 +216,7 @@ pub(crate) fn run_sprint(
     // Commit assignment changes to git so worktrees can see them
     let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
     commit_task_assignments(
+        &feature_worktree_path,
         &config.files_tasks,
         sprint_history_path.to_str().unwrap_or(""),
         team_state_path.as_str(),
@@ -225,7 +226,8 @@ pub(crate) fn run_sprint(
 
     // Capture the commit hash at sprint start (after assignment commit)
     // This will be used to determine git range for post-sprint review
-    let sprint_start_commit = get_current_commit().unwrap_or_else(|| "HEAD".to_string());
+    let sprint_start_commit =
+        get_current_commit_in(&feature_worktree_path).unwrap_or_else(|| "HEAD".to_string());
 
     println!(
         "{} {} Sprint {}: assigned {} task(s) to {} agent(s)",
@@ -752,7 +754,12 @@ pub(crate) fn run_sprint(
     }
 
     // Commit sprint completion (updated tasks and released assignments)
-    commit_sprint_completion(&config.files_tasks, &formatted_team, historical_sprint)?;
+    commit_sprint_completion(
+        &feature_worktree_path,
+        &config.files_tasks,
+        &formatted_team,
+        historical_sprint,
+    )?;
 
     // Run post-sprint review to identify follow-up tasks (skip if shutting down)
     if shutdown::requested() {
@@ -761,6 +768,7 @@ pub(crate) fn run_sprint(
         run_post_sprint_review(
             config,
             engine.as_ref(),
+            &feature_worktree_path,
             &sprint_start_commit,
             &task_list,
             &formatted_team,
@@ -811,13 +819,14 @@ pub(crate) fn run_sprint(
 fn run_post_sprint_review(
     config: &Config,
     engine: &dyn engine::Engine,
+    feature_worktree: &Path,
     sprint_start_commit: &str,
     task_list: &TaskList,
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
     // Get git log from sprint start to now
-    let git_log = get_git_log_range(sprint_start_commit, "HEAD")?;
+    let git_log = get_git_log_range_in(feature_worktree, sprint_start_commit, "HEAD")?;
 
     // If no changes, skip review
     if git_log.trim().is_empty() {
@@ -883,8 +892,11 @@ fn run_post_sprint_review(
                 // Commit follow-up tasks so next planning phase sees them
                 let commit_msg =
                     format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
-                if let Ok(true) = commit_files(&[&config.files_tasks, &config.files_chat], &commit_msg)
-                {
+                if let Ok(true) = commit_files_in_worktree(
+                    feature_worktree,
+                    &[&config.files_tasks, &config.files_chat],
+                    &commit_msg,
+                ) {
                     println!("  Committed follow-up tasks to git.");
                 }
             }

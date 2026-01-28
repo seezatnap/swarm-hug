@@ -28,7 +28,7 @@
 
 ### Sprint Workflow Updates
 
-- [ ] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
+- [x] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
 
 ### Sprint Completion Flow
 
