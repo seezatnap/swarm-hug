@@ -262,17 +262,9 @@ fn test_swarm_run_stub_integration() {
 
     let sprint_worktree = worktrees_dir.join(format!("{}-sprint-1", team_name));
     assert!(
-        sprint_worktree.exists(),
-        "feature worktree should exist after sprint"
+        !sprint_worktree.exists(),
+        "feature worktree should be removed after merge"
     );
-    let mut branch_cmd = Command::new("git");
-    branch_cmd
-        .arg("-C")
-        .arg(&sprint_worktree)
-        .args(["rev-parse", "--abbrev-ref", "HEAD"]);
-    let branch_output = run_success(&mut branch_cmd);
-    let branch_name = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
-    assert_eq!(branch_name, format!("{}-sprint-1", team_name));
 
     // Branches are also cleaned up after sprint
     let mut branches_cmd = Command::new("git");
@@ -286,22 +278,15 @@ fn test_swarm_run_stub_integration() {
         "agent branches should be cleaned up after sprint"
     );
 
-    // Sprint commits should land on the feature branch (not the current branch)
-    let mut feature_log_cmd = Command::new("git");
-    feature_log_cmd
-        .args(["log", "--oneline", "-10"])
-        .current_dir(&sprint_worktree);
-    let feature_log_output = run_success(&mut feature_log_cmd);
-    let feature_log = String::from_utf8_lossy(&feature_log_output.stdout);
+    let mut feature_branch_cmd = Command::new("git");
+    feature_branch_cmd
+        .args(["branch", "--list", &format!("{}-sprint-1", team_name)])
+        .current_dir(repo_path);
+    let feature_branch_output = run_success(&mut feature_branch_cmd);
+    let feature_branch_stdout = String::from_utf8_lossy(&feature_branch_output.stdout);
     assert!(
-        feature_log.contains("Alpha Sprint 1: completed"),
-        "feature branch should include sprint completion commit, log:\n{}",
-        feature_log
-    );
-    assert!(
-        feature_log.contains("Alpha Sprint 1: task assignments"),
-        "feature branch should include sprint assignment commit, log:\n{}",
-        feature_log
+        feature_branch_stdout.trim().is_empty(),
+        "feature branch should be deleted after merge"
     );
 
     let mut main_log_cmd = Command::new("git");
@@ -317,30 +302,6 @@ fn test_swarm_run_stub_integration() {
         main_log.contains("Alpha Sprint 1: task assignments"),
         "target branch should include sprint assignment commit after merge, log:\n{}",
         main_log
-    );
-
-    // Feature worktree should be clean for tracked files
-    let mut status_cmd = Command::new("git");
-    status_cmd
-        .args(["status", "--porcelain"])
-        .current_dir(&sprint_worktree);
-    let status_output = run_success(&mut status_cmd);
-    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
-    // Filter out gitignored files (loop/, worktrees/, chat.md)
-    let uncommitted: Vec<&str> = status_stdout
-        .lines()
-        .filter(|line| {
-            !line.contains("/loop/")
-                && !line.contains("loop/")
-                && !line.contains("/worktrees/")
-                && !line.contains("worktrees/")
-                && !line.contains("chat.md")
-        })
-        .collect();
-    assert!(
-        uncommitted.is_empty(),
-        "feature worktree should be clean after sprint, found uncommitted: {:?}",
-        uncommitted
     );
 }
 

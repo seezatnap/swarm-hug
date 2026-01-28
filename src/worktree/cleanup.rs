@@ -111,9 +111,10 @@ pub fn cleanup_worktrees(base: &Path) -> Result<(), String> {
     cleanup_worktrees_in(&base.join("worktrees"))
 }
 
-/// Delete a branch by full name.
-pub fn delete_branch(branch_name: &str) -> Result<bool, String> {
+fn delete_branch_in(repo_root: &Path, branch_name: &str) -> Result<bool, String> {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
         .args(["branch", "-D", branch_name])
         .output()
         .map_err(|e| format!("failed to run git branch -D: {}", e))?;
@@ -128,6 +129,12 @@ pub fn delete_branch(branch_name: &str) -> Result<bool, String> {
             Err(format!("git branch -D failed: {}", stderr.trim()))
         }
     }
+}
+
+/// Delete a branch by full name.
+pub fn delete_branch(branch_name: &str) -> Result<bool, String> {
+    let repo_root = git_repo_root()?;
+    delete_branch_in(&repo_root, branch_name)
 }
 
 /// Clean up a specific agent's worktree in the given directory.
@@ -179,6 +186,55 @@ pub fn cleanup_agent_worktree(
             }
         }
         delete_agent_branch(initial)?;
+    }
+
+    Ok(())
+}
+
+/// Clean up a feature/sprint worktree in the given directory.
+/// Removes the worktree and optionally deletes the branch.
+pub fn cleanup_feature_worktree(
+    worktrees_dir: &Path,
+    feature_branch: &str,
+    delete_branch: bool,
+) -> Result<(), String> {
+    let feature = feature_branch.trim();
+    if feature.is_empty() {
+        return Err("feature branch name is empty".to_string());
+    }
+
+    let repo_root = git_repo_root()?;
+    let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
+    let path = worktrees_dir.join(feature);
+
+    if path.exists() {
+        let is_registered = worktree_is_registered(&repo_root, &path)?;
+        if is_registered {
+            let path_str = path.to_string_lossy().to_string();
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args(["worktree", "remove", "--force", &path_str])
+                .output()
+                .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("git worktree remove failed: {}", stderr.trim()));
+            }
+        } else {
+            fs::remove_dir_all(&path)
+                .map_err(|e| format!("failed to remove worktree dir: {}", e))?;
+        }
+    }
+
+    if delete_branch {
+        if let Ok(worktrees_with_branch) = find_worktrees_with_branch(&repo_root, feature) {
+            for wt_path in worktrees_with_branch {
+                let _ = remove_worktree_by_path(&repo_root, &wt_path);
+            }
+        }
+        let _ = delete_branch_in(&repo_root, feature)?;
     }
 
     Ok(())

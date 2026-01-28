@@ -872,6 +872,7 @@ pub(crate) fn run_sprint(
             println!("  Merge agent: completed");
             let merged = worktree::branch_is_merged(&sprint_branch, target_branch)
                 .map_err(|e| format!("merge verification failed: {}", e))?;
+            let mut merged_ok = merged;
             if !merged {
                 if engine.engine_type() == EngineType::Stub {
                     let merge_result =
@@ -879,6 +880,7 @@ pub(crate) fn run_sprint(
                     match merge_result {
                         worktree::MergeResult::Success | worktree::MergeResult::NoChanges => {
                             println!("  Merge agent: merged feature branch (stub)");
+                            merged_ok = true;
                         }
                         worktree::MergeResult::NoBranch => {
                             return Err(format!(
@@ -903,6 +905,16 @@ pub(crate) fn run_sprint(
                         "merge agent did not merge '{}' into '{}'",
                         sprint_branch, target_branch
                     ));
+                }
+            }
+
+            if merged_ok {
+                if let Err(e) =
+                    worktree::cleanup_feature_worktree(worktrees_dir, &sprint_branch, true)
+                {
+                    eprintln!("  warning: feature worktree cleanup failed: {}", e);
+                } else {
+                    println!("  Feature cleanup: removed '{}'", sprint_branch);
                 }
             }
         } else {

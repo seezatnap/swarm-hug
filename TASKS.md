@@ -2,7 +2,7 @@
 
 ## Current Task
 
-- [x] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14)
+- [x] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
@@ -36,7 +36,7 @@
 ### Sprint Completion Flow
 
 - [x] (#18) Implement feature branch merge to target branch at sprint completion using merge agent (blocked by #14)
-- [ ] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
+- [x] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
 
 ### Configuration
 
