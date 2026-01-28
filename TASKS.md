@@ -22,7 +22,7 @@
 ### Task Merge Flow
 
 - [x] (#8) Implement agent-to-feature-branch merge after task completion using `--no-ff` (blocked by #5)
-- [ ] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
+- [x] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
 
 ### Merge Agent Implementation
 

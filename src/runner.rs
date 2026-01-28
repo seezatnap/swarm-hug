@@ -518,45 +518,68 @@ pub(crate) fn run_sprint(
                         )
                     };
 
-                    let merge_error = match merge_result {
+                    let mut merge_error_detail = None;
+                    let mut should_cleanup = false;
+
+                    match merge_result {
                         worktree::MergeResult::Success => {
                             if let Err(e) = logger.log("Merge successful") {
                                 eprintln!("warning: failed to write log: {}", e);
                             }
-                            None
+                            should_cleanup = true;
                         }
                         worktree::MergeResult::NoChanges => {
                             if let Err(e) = logger.log("Merge skipped: no changes detected") {
                                 eprintln!("warning: failed to write log: {}", e);
                             }
-                            None
+                            should_cleanup = true;
                         }
                         worktree::MergeResult::NoBranch => {
-                            let msg = "Merge failed: agent branch not found".to_string();
-                            if let Err(e) = logger.log(&msg) {
-                                eprintln!("warning: failed to write log: {}", e);
-                            }
-                            Some(msg)
+                            merge_error_detail = Some("agent branch not found".to_string());
                         }
                         worktree::MergeResult::Conflict(files) => {
-                            let msg = if files.is_empty() {
-                                "Merge failed: conflicts detected".to_string()
+                            let detail = if files.is_empty() {
+                                "conflicts detected".to_string()
                             } else {
-                                format!("Merge failed: conflicts in {}", files.join(", "))
+                                format!("conflicts in {}", files.join(", "))
                             };
-                            if let Err(e) = logger.log(&msg) {
-                                eprintln!("warning: failed to write log: {}", e);
-                            }
-                            Some(msg)
+                            merge_error_detail = Some(detail);
                         }
                         worktree::MergeResult::Error(e) => {
-                            let msg = format!("Merge failed: {}", e);
+                            merge_error_detail = Some(e);
+                        }
+                    }
+
+                    if should_cleanup {
+                        if let Err(e) = logger.log("Cleaning up agent worktree after merge...") {
+                            eprintln!("warning: failed to write log: {}", e);
+                        }
+                        let cleanup_result = {
+                            let _guard = worktree_lock.lock().unwrap();
+                            worktree::cleanup_agent_worktree(&worktrees_dir, initial, true)
+                        };
+                        if let Err(e) = cleanup_result {
+                            let msg = format!("Worktree cleanup failed: {}", e);
                             if let Err(e) = logger.log(&msg) {
                                 eprintln!("warning: failed to write log: {}", e);
                             }
-                            Some(msg)
+                        } else if let Err(e) = logger.log("Worktree cleanup complete") {
+                            eprintln!("warning: failed to write log: {}", e);
                         }
-                    };
+                    }
+
+                    let merge_error = merge_error_detail
+                        .as_ref()
+                        .map(|detail| format!("Merge failed: {}", detail));
+
+                    if let Some(detail) = merge_error_detail.as_ref() {
+                        if let Err(e) = logger.log(&format!("Merge failed: {}", detail)) {
+                            eprintln!("warning: failed to write log: {}", e);
+                        }
+                        if let Err(e) = write_merge_failure_chat(&chat_path, agent_name, detail) {
+                            eprintln!("warning: failed to write chat: {}", e);
+                        }
+                    }
 
                     if let Some(msg) = merge_error {
                         success = false;
@@ -914,6 +937,11 @@ fn run_post_sprint_review(
     Ok(())
 }
 
+fn write_merge_failure_chat(chat_path: &str, agent_name: &str, detail: &str) -> std::io::Result<()> {
+    let msg = format!("Merge failed for {}: {}", agent_name, detail);
+    chat::write_message(chat_path, "ScrumMaster", &msg)
+}
+
 /// Commit an agent's work in their worktree.
 /// Each agent makes one commit per task (enforces one task = one commit rule).
 fn commit_agent_work(
@@ -989,7 +1017,9 @@ fn commit_agent_work(
 
 #[cfg(test)]
 mod tests {
-    use super::SprintResult;
+    use super::{chat, write_merge_failure_chat, SprintResult};
+    use std::fs;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_sprint_result_all_failed_true() {
@@ -1029,5 +1059,22 @@ mod tests {
             tasks_failed: 0,
         };
         assert!(!result.all_failed());
+    }
+
+    #[test]
+    fn test_write_merge_failure_chat() {
+        let temp = NamedTempFile::new().expect("temp chat file");
+        write_merge_failure_chat(
+            temp.path().to_str().expect("temp path"),
+            "Aaron",
+            "conflicts in file.txt",
+        )
+        .expect("write merge failure chat");
+
+        let content = fs::read_to_string(temp.path()).expect("read chat");
+        let line = content.lines().next().expect("chat line");
+        let (_, agent, message) = chat::parse_line(line).expect("parse chat line");
+        assert_eq!(agent, "ScrumMaster");
+        assert_eq!(message, "Merge failed for Aaron: conflicts in file.txt");
     }
 }
