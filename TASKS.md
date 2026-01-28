@@ -7,7 +7,7 @@
 - [x] (#1) Add `--target-branch` CLI flag to specify base/merge target branch (defaults to auto-detected main/master)
 - [x] (#2) Implement target branch auto-detection logic (check for main, then master, then current branch)
 - [x] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
-- [ ] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
+- [x] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
 
 ### Agent Worktree Lifecycle
 

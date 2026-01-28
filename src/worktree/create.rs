@@ -5,7 +5,8 @@ use std::process::Command;
 
 use super::cleanup::remove_worktree_by_path;
 use super::git::{
-    agent_branch_name, ensure_head, find_worktrees_with_branch, git_repo_root, registered_worktrees,
+    agent_branch_name, create_feature_branch_in, ensure_head, find_worktrees_with_branch,
+    git_repo_root, registered_worktrees,
 };
 use super::Worktree;
 
@@ -137,6 +138,78 @@ pub fn create_worktrees_in(
     Ok(created)
 }
 
+/// Create a feature/sprint worktree under the specified worktrees directory.
+/// The worktree path is `<worktrees_dir>/<feature_branch>`.
+pub fn create_feature_worktree_in(
+    worktrees_dir: &Path,
+    feature_branch: &str,
+    target_branch: &str,
+) -> Result<PathBuf, String> {
+    let feature = feature_branch.trim();
+    if feature.is_empty() {
+        return Err("feature branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+
+    let repo_root = git_repo_root()?;
+    ensure_head(&repo_root)?;
+    let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
+
+    fs::create_dir_all(&worktrees_dir)
+        .map_err(|e| format!("failed to create worktrees dir: {}", e))?;
+
+    create_feature_branch_in(&repo_root, feature, target)?;
+
+    let path = worktrees_dir.join(feature);
+    let path_str = path.to_string_lossy().to_string();
+
+    if let Ok(existing) = find_worktrees_with_branch(&repo_root, feature) {
+        if existing.iter().any(|p| p == &path_str) {
+            return Ok(path);
+        }
+        if !existing.is_empty() {
+            return Err(format!(
+                "feature branch '{}' already checked out in another worktree: {}",
+                feature,
+                existing.join(", ")
+            ));
+        }
+    }
+
+    if worktree_is_registered(&repo_root, &path)? {
+        return Err(format!(
+            "worktree path '{}' is already registered for another branch",
+            path.display()
+        ));
+    }
+
+    if path.exists() {
+        fs::remove_dir_all(&path)
+            .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&repo_root)
+        .args(["worktree", "add", &path_str, feature])
+        .output()
+        .map_err(|e| format!("failed to run git worktree add: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git worktree add failed for {}: {}",
+            path.display(),
+            stderr.trim()
+        ));
+    }
+
+    Ok(path)
+}
+
 /// Legacy function for backwards compatibility.
 /// Creates worktrees under `base/worktrees/`.
 pub fn create_worktrees(base: &Path, assignments: &[(char, String)]) -> Result<Vec<Worktree>, String> {
@@ -145,14 +218,72 @@ pub fn create_worktrees(base: &Path, assignments: &[(char, String)]) -> Result<V
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
+    use std::process::{Command, Output};
 
-    use super::worktree_path;
+    use crate::testutil::with_temp_cwd;
+
+    use super::{create_feature_worktree_in, worktree_path};
+
+    fn run_git(args: &[&str]) -> Output {
+        let output = Command::new("git")
+            .args(args)
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn init_repo() {
+        run_git(&["init"]);
+        run_git(&["config", "user.name", "Swarm Test"]);
+        run_git(&["config", "user.email", "swarm-test@example.com"]);
+        fs::write("README.md", "init").expect("write README");
+        run_git(&["add", "."]);
+        run_git(&["commit", "-m", "init"]);
+    }
 
     #[test]
     fn test_worktree_path() {
         let root = Path::new("/tmp/worktrees");
         let path = worktree_path(root, 'A', "Aaron");
         assert_eq!(path, Path::new("/tmp/worktrees/agent-A-Aaron"));
+    }
+
+    #[test]
+    fn test_create_feature_worktree_in_creates_worktree() {
+        with_temp_cwd(|| {
+            init_repo();
+            run_git(&["branch", "target-branch"]);
+
+            let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
+            let path = create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "target-branch")
+                .expect("create feature worktree");
+
+            assert!(path.ends_with("alpha-sprint-1"));
+            assert!(path.exists());
+
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&path)
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+                .expect("failed to run git rev-parse");
+            assert!(output.status.success());
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            assert_eq!(branch, "alpha-sprint-1");
+
+            let path_again =
+                create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "target-branch")
+                    .expect("idempotent create");
+            assert_eq!(path, path_again);
+        });
     }
 }
