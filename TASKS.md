@@ -2,7 +2,7 @@
 
 ## Current Task
 
-- [x] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
+- [x] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
@@ -46,7 +46,7 @@
 ### Testing
 
 - [x] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
-- [ ] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
+- [x] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
 - [x] (#27) Add test for `--target-branch` flag override behavior
 
 ### Documentation
