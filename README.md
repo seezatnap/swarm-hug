@@ -65,6 +65,19 @@ OPTIONS:
 - While agents are running, a heartbeat line is appended to `chat.md` roughly every 5 minutes; it stops when agents finish.
 - Sprint follow-up tickets use the prd-to-task format: `- [ ] (#123) description (blocked by #100, #101)`.
 
+## Merge Agent
+
+At sprint completion, `swarm` invokes a merge agent to merge the feature/sprint branch back into the target branch (auto-detected `main`/`master`, or `--target-branch`). The merge runs in the main repo (parent of `.swarm-hug/`) and uses `git merge --no-ff`. Before merging, the workspace is cleaned to avoid stale swarm state causing conflicts (tracked task files are reset and transient files like `team-state.json`/`sprint-history.json` are removed if present). In stub mode, the merge is executed directly by `swarm` to keep tests deterministic.
+
+### Conflict Resolution Approach
+
+- Never rewrite upstream history (no rebase, no force-push, no reset --hard).
+- Do not delete branches or worktrees.
+- Resolve only merge conflicts; avoid unrelated refactors.
+- Preserve upstream intent; if unsure, favor the target branch and reapply feature changes carefully.
+- Run the validation gate (build/lint/tests) after resolving.
+- If conflicts cannot be resolved safely, stop and report the blockers instead of forcing changes.
+
 ## Engine Selection
 
 - `--engine` accepts a comma-separated list (e.g., `claude,codex`). When multiple engines are provided, each task randomly selects one engine.

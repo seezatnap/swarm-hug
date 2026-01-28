@@ -2,8 +2,7 @@
 
 ## Current Task
 
-- [x] (#25) Add integration test for full worktree lifecycle: feature branch -> agent worktree -> merge -> cleanup (blocked by #8, #9)
-- [x] (#30) Ensure sprint planning, postmortem, and sprint completion commits run on the sprint feature branch (not the current branch)
+- [x] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14)
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
@@ -53,7 +52,6 @@
 ### Documentation
 
 - [ ] (#28) Update README.md with new worktree workflow documentation (blocked by #18)
-- [ ] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14)
 
 ### Maintenance
 
