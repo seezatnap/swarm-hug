@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 use tempfile::TempDir;
 
 use swarm::chat;
 use swarm::task::{TaskList, TaskStatus};
+use swarm::worktree;
 
 /// Strip ANSI escape codes from a string.
 fn strip_ansi(s: &str) -> String {
@@ -44,6 +46,28 @@ fn run_success(cmd: &mut Command) -> Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
+}
+
+static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_temp_cwd<F, R>(f: F) -> R
+where
+    F: FnOnce(&Path) -> R,
+{
+    let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let original = std::env::current_dir().expect("current dir");
+    let temp = TempDir::new().expect("temp dir");
+    std::env::set_current_dir(temp.path()).expect("set temp dir");
+    let result = f(temp.path());
+    std::env::set_current_dir(original).expect("restore dir");
+    result
+}
+
+fn git_stdout(repo: &Path, args: &[&str]) -> String {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(repo).args(args);
+    let output = run_success(&mut cmd);
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
 fn init_git_repo(path: &Path) {
@@ -313,6 +337,93 @@ fn test_swarm_run_stub_integration() {
         "feature worktree should be clean after sprint, found uncommitted: {:?}",
         uncommitted
     );
+}
+
+#[test]
+fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        fs::write(repo_path.join(".gitignore"), ".swarm-hug/\n").expect("write gitignore");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        let team_name = "alpha";
+        let worktrees_dir = repo_path
+            .join(".swarm-hug")
+            .join(team_name)
+            .join("worktrees");
+        let feature_branch = format!("{}-sprint-1", team_name);
+
+        let feature_worktree = worktree::create_feature_worktree_in(
+            &worktrees_dir,
+            &feature_branch,
+            "main",
+        )
+        .expect("create feature worktree");
+
+        let assignments = vec![('A', "Task one".to_string())];
+        let worktrees = worktree::create_worktrees_in(&worktrees_dir, &assignments, &feature_branch)
+            .expect("create agent worktree");
+        assert_eq!(worktrees.len(), 1);
+        let agent_worktree = worktrees[0].path.clone();
+
+        let worktree_list = git_stdout(&repo_path, &["worktree", "list", "--porcelain"]);
+        assert!(
+            worktree_list.contains(&format!("worktree {}", feature_worktree.display())),
+            "feature worktree should be registered"
+        );
+        assert!(
+            worktree_list.contains(&format!("worktree {}", agent_worktree.display())),
+            "agent worktree should be registered"
+        );
+
+        let agent_branch = git_stdout(&agent_worktree, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(agent_branch, "agent-aaron");
+
+        fs::write(agent_worktree.join("agent.txt"), "agent change").expect("write agent file");
+        commit_all(&agent_worktree, "Agent commit");
+
+        let merge_result =
+            worktree::merge_agent_branch_in(&feature_worktree, 'A', Some(&feature_branch));
+        assert!(matches!(merge_result, worktree::MergeResult::Success));
+
+        let merge_parents = git_stdout(&feature_worktree, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        let parent_count = merge_parents.split_whitespace().count();
+        assert_eq!(parent_count, 3, "expected merge commit with two parents");
+
+        let merged_content =
+            fs::read_to_string(feature_worktree.join("agent.txt")).expect("read merged file");
+        assert_eq!(merged_content, "agent change");
+
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true)
+            .expect("cleanup agent worktree");
+        assert!(!agent_worktree.exists(), "agent worktree should be removed");
+
+        let worktree_list_after = git_stdout(&repo_path, &["worktree", "list", "--porcelain"]);
+        assert!(
+            !worktree_list_after.contains(&format!("worktree {}", agent_worktree.display())),
+            "agent worktree should be deregistered"
+        );
+        assert!(
+            worktree_list_after.contains(&format!("worktree {}", feature_worktree.display())),
+            "feature worktree should remain"
+        );
+
+        let agent_branch_list = git_stdout(&repo_path, &["branch", "--list", "agent-aaron"]);
+        assert!(
+            agent_branch_list.trim().is_empty(),
+            "agent branch should be deleted"
+        );
+    });
 }
 
 // test_swarm_status_shows_counts_and_recent_chat removed: status command was deprecated

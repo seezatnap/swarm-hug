@@ -2,6 +2,7 @@
 
 ## Current Task
 
+- [x] (#25) Add integration test for full worktree lifecycle: feature branch -> agent worktree -> merge -> cleanup (blocked by #8, #9)
 - [x] (#30) Ensure sprint planning, postmortem, and sprint completion commits run on the sprint feature branch (not the current branch)
 
 ## Worktree Overhaul
@@ -47,7 +48,6 @@
 ### Testing
 
 - [x] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
-- [ ] (#25) Add integration test for full worktree lifecycle: feature branch -> agent worktree -> merge -> cleanup (blocked by #8, #9)
 - [ ] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
 - [x] (#27) Add test for `--target-branch` flag override behavior
 
