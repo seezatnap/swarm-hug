@@ -309,8 +309,8 @@ fn test_swarm_run_stub_integration() {
     let main_log_output = run_success(&mut main_log_cmd);
     let main_log = String::from_utf8_lossy(&main_log_output.stdout);
     assert!(
-        !main_log.contains("Alpha Sprint 1: completed"),
-        "current branch should not include sprint completion commit, log:\n{}",
+        main_log.contains("Alpha Sprint 1: completed"),
+        "target branch should include sprint completion commit after merge, log:\n{}",
         main_log
     );
 

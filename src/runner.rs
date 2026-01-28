@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use swarm::agent;
 use swarm::chat;
 use swarm::color::{self, emoji};
-use swarm::config::Config;
+use swarm::config::{Config, EngineType};
 use swarm::engine;
 use swarm::heartbeat;
 use swarm::lifecycle::LifecycleTracker;
@@ -851,6 +851,41 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("merge agent failed: {}", e))?;
         if merge_result.success {
             println!("  Merge agent: completed");
+            let merged = worktree::branch_is_merged(&sprint_branch, target_branch)
+                .map_err(|e| format!("merge verification failed: {}", e))?;
+            if !merged {
+                if engine.engine_type() == EngineType::Stub {
+                    let merge_result =
+                        worktree::merge_feature_branch(&sprint_branch, target_branch);
+                    match merge_result {
+                        worktree::MergeResult::Success | worktree::MergeResult::NoChanges => {
+                            println!("  Merge agent: merged feature branch (stub)");
+                        }
+                        worktree::MergeResult::NoBranch => {
+                            return Err(format!(
+                                "merge agent failed: feature branch '{}' not found",
+                                sprint_branch
+                            ));
+                        }
+                        worktree::MergeResult::Conflict(files) => {
+                            let detail = if files.is_empty() {
+                                "conflicts detected".to_string()
+                            } else {
+                                format!("conflicts in {}", files.join(", "))
+                            };
+                            return Err(format!("merge agent failed: {}", detail));
+                        }
+                        worktree::MergeResult::Error(e) => {
+                            return Err(format!("merge agent failed: {}", e));
+                        }
+                    }
+                } else {
+                    return Err(format!(
+                        "merge agent did not merge '{}' into '{}'",
+                        sprint_branch, target_branch
+                    ));
+                }
+            }
         } else {
             let detail = merge_result
                 .error

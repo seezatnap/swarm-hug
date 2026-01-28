@@ -24,9 +24,10 @@ pub use cleanup::{
 };
 pub use create::{create_feature_worktree_in, create_worktrees, create_worktrees_in};
 pub use git::{
-    agent_branch_exists, agent_branch_has_changes, agent_branch_name, create_feature_branch,
-    create_feature_branch_in, delete_agent_branch, merge_agent_branch, merge_agent_branch_in,
-    merge_all_agent_branches, MergeResult, MergeSummary,
+    agent_branch_exists, agent_branch_has_changes, agent_branch_name, branch_is_merged,
+    create_feature_branch, create_feature_branch_in, delete_agent_branch, merge_agent_branch,
+    merge_agent_branch_in, merge_all_agent_branches, merge_feature_branch, MergeResult,
+    MergeSummary,
 };
 pub use list::{list_agent_branches, list_worktrees, AgentBranch};
 
