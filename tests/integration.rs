@@ -159,7 +159,13 @@ fn test_swarm_run_stub_integration() {
             "run",
         ])
         .current_dir(repo_path);
-    run_success(&mut run_cmd);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    assert!(
+        stdout.contains("Merge agent:"),
+        "merge agent should run at sprint completion. stdout:\n{}",
+        stdout
+    );
 
     let tasks_content = fs::read_to_string(&tasks_path).expect("read TASKS.md");
     let task_list = TaskList::parse(&tasks_content);

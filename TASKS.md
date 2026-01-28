@@ -28,7 +28,7 @@
 
 - [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
 - [x] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
-- [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
+- [x] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
 
 ### Sprint Workflow Updates
 
@@ -55,3 +55,7 @@
 
 - [ ] (#28) Update README.md with new worktree workflow documentation (blocked by #18)
 - [ ] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14)
+
+### Maintenance
+
+- [ ] (#31) Refactor src/runner.rs to split modules (file >1000 LOC)

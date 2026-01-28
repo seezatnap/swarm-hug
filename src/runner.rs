@@ -13,6 +13,7 @@ use swarm::engine;
 use swarm::heartbeat;
 use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
+use swarm::merge_agent;
 use swarm::planning;
 use swarm::shutdown;
 use swarm::task::TaskList;
@@ -833,6 +834,30 @@ pub(crate) fn run_sprint(
         config.sprints_max,
         agent_count,
     );
+
+    // Merge sprint branch into target branch via merge agent.
+    if shutdown::requested() {
+        println!("  Skipping merge agent due to shutdown.");
+    } else if sprint_branch == target_branch {
+        println!("  Skipping merge agent: feature branch matches target branch.");
+    } else {
+        println!("  Merge agent: {} -> {}", sprint_branch, target_branch);
+        let merge_result = merge_agent::run_merge_agent(
+            engine.as_ref(),
+            &sprint_branch,
+            target_branch,
+            &feature_worktree_path,
+        )
+        .map_err(|e| format!("merge agent failed: {}", e))?;
+        if merge_result.success {
+            println!("  Merge agent: completed");
+        } else {
+            let detail = merge_result
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            return Err(format!("merge agent failed: {}", detail));
+        }
+    }
 
     Ok(SprintResult {
         tasks_assigned: assigned,
