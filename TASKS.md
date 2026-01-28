@@ -42,7 +42,7 @@
 
 ### Testing
 
-- [ ] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
+- [x] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
 - [ ] (#25) Add integration test for full worktree lifecycle: feature branch -> agent worktree -> merge -> cleanup (blocked by #8, #9)
 - [ ] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
 - [ ] (#27) Add test for `--target-branch` flag override behavior
