@@ -1,5 +1,9 @@
 # Tasks
 
+## Current Task
+
+- [x] (#30) Ensure sprint planning, postmortem, and sprint completion commits run on the sprint feature branch (not the current branch)
+
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
