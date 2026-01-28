@@ -256,11 +256,39 @@ fn test_swarm_run_stub_integration() {
         "agent branches should be cleaned up after sprint"
     );
 
-    // Sprint completion should be committed (tasks marked complete, assignments released)
+    // Sprint commits should land on the feature branch (not the current branch)
+    let mut feature_log_cmd = Command::new("git");
+    feature_log_cmd
+        .args(["log", "--oneline", "-10"])
+        .current_dir(&sprint_worktree);
+    let feature_log_output = run_success(&mut feature_log_cmd);
+    let feature_log = String::from_utf8_lossy(&feature_log_output.stdout);
+    assert!(
+        feature_log.contains("Alpha Sprint 1: completed"),
+        "feature branch should include sprint completion commit, log:\n{}",
+        feature_log
+    );
+    assert!(
+        feature_log.contains("Alpha Sprint 1: task assignments"),
+        "feature branch should include sprint assignment commit, log:\n{}",
+        feature_log
+    );
+
+    let mut main_log_cmd = Command::new("git");
+    main_log_cmd.args(["log", "--oneline", "-10"]).current_dir(repo_path);
+    let main_log_output = run_success(&mut main_log_cmd);
+    let main_log = String::from_utf8_lossy(&main_log_output.stdout);
+    assert!(
+        !main_log.contains("Alpha Sprint 1: completed"),
+        "current branch should not include sprint completion commit, log:\n{}",
+        main_log
+    );
+
+    // Feature worktree should be clean for tracked files
     let mut status_cmd = Command::new("git");
     status_cmd
         .args(["status", "--porcelain"])
-        .current_dir(repo_path);
+        .current_dir(&sprint_worktree);
     let status_output = run_success(&mut status_cmd);
     let status_stdout = String::from_utf8_lossy(&status_output.stdout);
     // Filter out gitignored files (loop/, worktrees/, chat.md)
@@ -276,7 +304,7 @@ fn test_swarm_run_stub_integration() {
         .collect();
     assert!(
         uncommitted.is_empty(),
-        "tasks and assignments should be committed after sprint, found uncommitted: {:?}",
+        "feature worktree should be clean after sprint, found uncommitted: {:?}",
         uncommitted
     );
 }

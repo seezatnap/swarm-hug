@@ -9,6 +9,10 @@
 - [x] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
 - [x] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
 
+### Sprint Workflow Updates
+
+- [x] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
+
 ### Merge Agent Implementation
 
 - [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
@@ -25,10 +29,6 @@
 
 - [ ] (#8) Implement agent-to-feature-branch merge after task completion using `--no-ff` (blocked by #5)
 - [ ] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
-
-### Sprint Workflow Updates
-
-- [ ] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
 
 ### Sprint Completion Flow
 
