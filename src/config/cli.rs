@@ -31,6 +31,8 @@ pub struct CliArgs {
     pub version: bool,
     /// Project name for multi-project mode.
     pub project: Option<String>,
+    /// Target branch for base/merge operations (defaults to auto-detected main/master).
+    pub target_branch: Option<String>,
     /// Project name for project-specific subcommands (positional arg).
     pub project_arg: Option<String>,
     /// Email for set-email command (positional arg).
@@ -93,6 +95,7 @@ where
             "-V" | "--version" => cli.version = true,
             "-c" | "--config" => cli.config = args.next(),
             "-p" | "--project" => cli.project = args.next(),
+            "--target-branch" => cli.target_branch = args.next(),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),

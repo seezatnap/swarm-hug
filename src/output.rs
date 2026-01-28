@@ -99,6 +99,7 @@ OPTIONS:
     -V, --version             Show version
     -c, --config <PATH>       Path to config file [default: swarm.toml]
     -p, --project <NAME>      Project to operate on
+    --target-branch <NAME>    Base/merge target branch (default: auto-detected main/master)
     --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
     --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
     --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
