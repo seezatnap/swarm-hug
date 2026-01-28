@@ -33,7 +33,7 @@
 
 ### Sprint Completion Flow
 
-- [A] (#18) Implement feature branch merge to target branch at sprint completion using merge agent (blocked by #14)
+- [x] (#18) Implement feature branch merge to target branch at sprint completion using merge agent (blocked by #14) (A)
 - [ ] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
 
 ### Configuration
@@ -44,14 +44,14 @@
 ### Testing
 
 - [x] (#24) Add unit tests for target branch auto-detection logic (blocked by #2) (A)
-- [B] (#25) Add integration test for full worktree lifecycle: feature branch → agent worktree → merge → cleanup (blocked by #8, #9)
-- [B] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
+- [x] (#25) Add integration test for full worktree lifecycle: feature branch → agent worktree → merge → cleanup (blocked by #8, #9) (B)
+- [x] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14) (B)
 - [x] (#27) Add test for `--target-branch` flag override behavior (blocked by #21) (A)
 
 ### Documentation
 
 - [ ] (#28) Update README.md with new worktree workflow documentation (blocked by #18)
-- [A] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14)
+- [x] (#29) Document merge agent behavior and conflict resolution approach (blocked by #14) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#30) Ensure sprint planning, postmortem, and sprint completion commits run on the sprint feature branch (not the current branch) (B)
