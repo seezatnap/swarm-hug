@@ -49,12 +49,17 @@ pub(super) fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
 pub fn create_worktrees_in(
     worktrees_dir: &Path,
     assignments: &[(char, String)],
+    base_branch: &str,
 ) -> Result<Vec<Worktree>, String> {
     let mut created = Vec::new();
     let mut seen = HashSet::new();
 
     if assignments.is_empty() {
         return Ok(created);
+    }
+    let base = base_branch.trim();
+    if base.is_empty() {
+        return Err("base branch name is empty".to_string());
     }
 
     let repo_root = git_repo_root()?;
@@ -110,11 +115,11 @@ pub fn create_worktrees_in(
             .args(["branch", "-D", &branch])
             .output();
 
-        // Create fresh worktree with new branch from HEAD
+        // Create fresh worktree with new branch from the base branch
         let output = Command::new("git")
             .arg("-C")
             .arg(&repo_root)
-            .args(["worktree", "add", "-B", &branch, &path_str])
+            .args(["worktree", "add", "-B", &branch, &path_str, base])
             .output()
             .map_err(|e| format!("failed to run git worktree add: {}", e))?;
 
@@ -213,7 +218,7 @@ pub fn create_feature_worktree_in(
 /// Legacy function for backwards compatibility.
 /// Creates worktrees under `base/worktrees/`.
 pub fn create_worktrees(base: &Path, assignments: &[(char, String)]) -> Result<Vec<Worktree>, String> {
-    create_worktrees_in(&base.join("worktrees"), assignments)
+    create_worktrees_in(&base.join("worktrees"), assignments, "HEAD")
 }
 
 #[cfg(test)]
@@ -224,7 +229,7 @@ mod tests {
 
     use crate::testutil::with_temp_cwd;
 
-    use super::{create_feature_worktree_in, worktree_path};
+    use super::{create_feature_worktree_in, create_worktrees_in, worktree_path};
 
     fn run_git(args: &[&str]) -> Output {
         let output = Command::new("git")
@@ -284,6 +289,39 @@ mod tests {
                 create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "target-branch")
                     .expect("idempotent create");
             assert_eq!(path, path_again);
+        });
+    }
+
+    #[test]
+    fn test_create_worktrees_in_uses_base_branch() {
+        with_temp_cwd(|| {
+            init_repo();
+            run_git(&["checkout", "-b", "alpha-sprint-1"]);
+            fs::write("feature.txt", "feature").expect("write feature file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "feature commit"]);
+            let base_commit = String::from_utf8_lossy(&run_git(&["rev-parse", "HEAD"]).stdout)
+                .trim()
+                .to_string();
+
+            let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
+            let assignments = vec![('A', "Task one".to_string())];
+            let worktrees =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                    .expect("create worktrees");
+            assert_eq!(worktrees.len(), 1);
+            let wt_path = &worktrees[0].path;
+            assert!(wt_path.exists());
+
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(wt_path)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("failed to run git rev-parse");
+            assert!(output.status.success());
+            let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            assert_eq!(wt_commit, base_commit);
         });
     }
 }
