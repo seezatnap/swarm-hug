@@ -4,10 +4,10 @@
 
 ### Feature/Sprint Branch Management
 
-- [A] (#1) Add `--target-branch` CLI flag to specify base/merge target branch (defaults to auto-detected main/master)
-- [A] (#2) Implement target branch auto-detection logic (check for main, then master, then current branch)
-- [A] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
-- [A] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
+- [ ] (#1) Add `--target-branch` CLI flag to specify base/merge target branch (defaults to auto-detected main/master)
+- [ ] (#2) Implement target branch auto-detection logic (check for main, then master, then current branch)
+- [ ] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
+- [ ] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
 
 ### Agent Worktree Lifecycle
 
@@ -37,7 +37,7 @@
 
 ### Configuration
 
-- [ ] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1, #21)
+- [ ] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
 - [ ] (#23) Store sprint/feature branch name in team state for reference during merge operations (blocked by #3)
 
 ### Testing
@@ -45,7 +45,7 @@
 - [ ] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
 - [ ] (#25) Add integration test for full worktree lifecycle: feature branch → agent worktree → merge → cleanup (blocked by #8, #9)
 - [ ] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
-- [ ] (#27) Add test for `--target-branch` flag override behavior (blocked by #22)
+- [ ] (#27) Add test for `--target-branch` flag override behavior (blocked by #21)
 
 ### Documentation
 
