@@ -134,6 +134,74 @@ pub fn agent_branch_exists(initial: char) -> bool {
     }
 }
 
+/// Create a feature/sprint branch from the target branch.
+/// Returns Ok(true) if created, Ok(false) if it already exists.
+pub fn create_feature_branch(feature_branch: &str, target_branch: &str) -> Result<bool, String> {
+    let repo_root = git_repo_root()?;
+    create_feature_branch_in(&repo_root, feature_branch, target_branch)
+}
+
+/// Create a feature/sprint branch from the target branch in the specified repo.
+/// Returns Ok(true) if created, Ok(false) if it already exists.
+pub fn create_feature_branch_in(
+    repo_root: &Path,
+    feature_branch: &str,
+    target_branch: &str,
+) -> Result<bool, String> {
+    let feature = feature_branch.trim();
+    if feature.is_empty() {
+        return Err("feature branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+
+    ensure_head(repo_root)?;
+
+    if !branch_exists(repo_root, target)? {
+        return Err(format!("target branch '{}' not found", target));
+    }
+    if branch_exists(repo_root, feature)? {
+        return Ok(false);
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["branch", feature, target])
+        .output()
+        .map_err(|e| format!("failed to run git branch: {}", e))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git branch failed: {}", stderr.trim()))
+    }
+}
+
+fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
+    let ref_name = format!("refs/heads/{}", branch);
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["show-ref", "--verify", "--quiet", &ref_name])
+        .output()
+        .map_err(|e| format!("failed to run git show-ref: {}", e))?;
+
+    if output.status.success() {
+        return Ok(true);
+    }
+    match output.status.code() {
+        Some(1) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("git show-ref failed: {}", stderr.trim()))
+        }
+    }
+}
+
 /// Merge result.
 #[derive(Debug, Clone)]
 pub enum MergeResult {
@@ -308,7 +376,61 @@ pub fn delete_agent_branch(initial: char) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_worktrees_with_branch;
+    use std::fs;
+    use std::path::Path;
+    use std::process::{Command, Output};
+
+    use tempfile::TempDir;
+
+    use super::{create_feature_branch_in, parse_worktrees_with_branch};
+
+    fn run_git(repo: &Path, args: &[&str]) -> Output {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn init_repo(repo: &Path) {
+        run_git(repo, &["init"]);
+        run_git(repo, &["config", "user.name", "Swarm Test"]);
+        run_git(repo, &["config", "user.email", "swarm-test@example.com"]);
+        fs::write(repo.join("README.md"), "init").expect("write README");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "init"]);
+    }
+
+    fn commit_file(repo: &Path, filename: &str, message: &str) {
+        fs::write(repo.join(filename), "change").expect("write file");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", message]);
+    }
+
+    fn rev_parse(repo: &Path, rev: &str) -> String {
+        let output = run_git(repo, &["rev-parse", rev]);
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn branch_exists(repo: &Path, branch: &str) -> bool {
+        let ref_name = format!("refs/heads/{}", branch);
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["show-ref", "--verify", "--quiet", &ref_name])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
 
     #[test]
     fn test_parse_worktrees_with_branch_finds_match() {
@@ -389,5 +511,62 @@ detached
     fn test_parse_worktrees_with_branch_empty_output() {
         let result = parse_worktrees_with_branch("", "agent/diana");
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_create_feature_branch_from_target() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        // Create target branch at initial commit
+        run_git(repo, &["branch", "target-branch"]);
+
+        // Advance current branch so HEAD differs from target
+        commit_file(repo, "extra.txt", "extra commit");
+
+        let head_rev = rev_parse(repo, "HEAD");
+        let target_rev = rev_parse(repo, "target-branch");
+        assert_ne!(head_rev, target_rev);
+
+        let created =
+            create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch").unwrap();
+        assert!(created);
+        assert!(branch_exists(repo, "greenfield-sprint-1"));
+
+        let feature_rev = rev_parse(repo, "greenfield-sprint-1");
+        assert_eq!(feature_rev, target_rev);
+        assert_ne!(feature_rev, head_rev);
+    }
+
+    #[test]
+    fn test_create_feature_branch_noop_when_exists() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "target-branch"]);
+
+        let created = create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch")
+            .expect("create feature branch");
+        assert!(created);
+
+        let created_again = create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch")
+            .expect("second create should not error");
+        assert!(!created_again);
+    }
+
+    #[test]
+    fn test_create_feature_branch_missing_target() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        let err =
+            create_feature_branch_in(repo, "greenfield-sprint-1", "missing-branch").unwrap_err();
+        assert!(
+            err.contains("target branch 'missing-branch' not found"),
+            "unexpected error: {}",
+            err
+        );
     }
 }
