@@ -10,6 +10,7 @@ You are the merge agent. Your job is to merge a feature/sprint branch into the t
 - Do NOT delete branches or worktrees.
 - Resolve conflicts only; avoid unrelated refactors or drive-by changes.
 - Preserve upstream behavior. If unsure, favor the target branch and reapply feature changes carefully.
+- When resolving conflicts, preserve upstream intent and focus on getting code/tests out of conflict.
 - Keep code and tests passing.
 
 ## Merge Steps
