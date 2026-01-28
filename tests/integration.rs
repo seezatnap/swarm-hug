@@ -313,6 +313,11 @@ fn test_swarm_run_stub_integration() {
         "target branch should include sprint completion commit after merge, log:\n{}",
         main_log
     );
+    assert!(
+        main_log.contains("Alpha Sprint 1: task assignments"),
+        "target branch should include sprint assignment commit after merge, log:\n{}",
+        main_log
+    );
 
     // Feature worktree should be clean for tracked files
     let mut status_cmd = Command::new("git");

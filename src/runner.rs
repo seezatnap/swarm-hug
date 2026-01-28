@@ -842,6 +842,18 @@ pub(crate) fn run_sprint(
         println!("  Skipping merge agent: feature branch matches target branch.");
     } else {
         println!("  Merge agent: {} -> {}", sprint_branch, target_branch);
+        let merge_cleanup_paths = vec![
+            PathBuf::from(&config.files_tasks),
+            PathBuf::from(format!(
+                "{}/{}",
+                team::SWARM_HUG_DIR,
+                team::ASSIGNMENTS_FILE
+            )),
+            sprint_history_path.clone(),
+            PathBuf::from(&team_state_path),
+        ];
+        merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths)
+            .map_err(|e| format!("merge agent failed: {}", e))?;
         let merge_result = merge_agent::run_merge_agent(
             engine.as_ref(),
             &sprint_branch,
@@ -850,6 +862,13 @@ pub(crate) fn run_sprint(
         )
         .map_err(|e| format!("merge agent failed: {}", e))?;
         if merge_result.success {
+            merge_agent::ensure_feature_merged(
+                engine.as_ref(),
+                &sprint_branch,
+                target_branch,
+                &feature_worktree_path,
+            )
+            .map_err(|e| format!("merge agent failed: {}", e))?;
             println!("  Merge agent: completed");
             let merged = worktree::branch_is_merged(&sprint_branch, target_branch)
                 .map_err(|e| format!("merge verification failed: {}", e))?;

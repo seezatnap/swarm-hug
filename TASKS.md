@@ -4,7 +4,6 @@
 
 - [x] (#25) Add integration test for full worktree lifecycle: feature branch -> agent worktree -> merge -> cleanup (blocked by #8, #9)
 - [x] (#30) Ensure sprint planning, postmortem, and sprint completion commits run on the sprint feature branch (not the current branch)
-
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
