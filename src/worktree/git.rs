@@ -117,21 +117,22 @@ pub fn agent_branch_name(initial: char) -> Option<String> {
     Some(format!("agent-{}", name.to_lowercase()))
 }
 
-/// Check if an agent branch exists.
-pub fn agent_branch_exists(initial: char) -> bool {
+fn agent_branch_exists_in(repo_root: &Path, initial: char) -> bool {
     let branch = match agent_branch_name(initial) {
         Some(b) => b,
         None => return false,
     };
 
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", &branch])
-        .output();
+    branch_exists(repo_root, &branch).unwrap_or(false)
+}
 
-    match output {
-        Ok(o) => o.status.success(),
-        Err(_) => false,
-    }
+/// Check if an agent branch exists.
+pub fn agent_branch_exists(initial: char) -> bool {
+    let repo_root = match git_repo_root() {
+        Ok(root) => root,
+        Err(_) => return false,
+    };
+    agent_branch_exists_in(&repo_root, initial)
 }
 
 /// Create a feature/sprint branch from the target branch.
@@ -214,10 +215,21 @@ pub enum MergeResult {
 
 /// Check if an agent branch has changes relative to a target branch.
 pub fn agent_branch_has_changes(initial: char, target: &str) -> Result<bool, String> {
+    let repo_root = git_repo_root()?;
+    agent_branch_has_changes_in(&repo_root, initial, target)
+}
+
+fn agent_branch_has_changes_in(
+    repo_root: &Path,
+    initial: char,
+    target: &str,
+) -> Result<bool, String> {
     let branch = agent_branch_name(initial)
         .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
 
     let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
         .args(["rev-list", "--count", &format!("{}..{}", target, branch)])
         .output()
         .map_err(|e| format!("failed to run git rev-list: {}", e))?;
@@ -235,19 +247,39 @@ pub fn agent_branch_has_changes(initial: char, target: &str) -> Result<bool, Str
 /// Merge an agent branch into the current branch.
 /// Returns MergeResult indicating success, conflict, or error.
 pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeResult {
+    let repo_root = match git_repo_root() {
+        Ok(root) => root,
+        Err(e) => return MergeResult::Error(e),
+    };
+    merge_agent_branch_in(&repo_root, initial, target_branch)
+}
+
+/// Merge an agent branch into the target branch within the specified repo/worktree.
+/// Returns MergeResult indicating success, conflict, or error.
+pub fn merge_agent_branch_in(
+    repo_root: &Path,
+    initial: char,
+    target_branch: Option<&str>,
+) -> MergeResult {
     let branch = match agent_branch_name(initial) {
         Some(b) => b,
         None => return MergeResult::Error(format!("invalid agent initial: {}", initial)),
     };
 
     // Check if branch exists
-    if !agent_branch_exists(initial) {
-        return MergeResult::NoBranch;
+    match branch_exists(repo_root, &branch) {
+        Ok(true) => {}
+        Ok(false) => return MergeResult::NoBranch,
+        Err(e) => return MergeResult::Error(e),
     }
 
     // If target branch specified, checkout first
     if let Some(target) = target_branch {
-        let checkout = Command::new("git").args(["checkout", target]).output();
+        let checkout = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["checkout", target])
+            .output();
 
         if let Err(e) = checkout {
             return MergeResult::Error(format!("checkout failed: {}", e));
@@ -259,7 +291,7 @@ pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeRe
         }
 
         // Check if branch has changes
-        match agent_branch_has_changes(initial, target) {
+        match agent_branch_has_changes_in(repo_root, initial, target) {
             Ok(false) => return MergeResult::NoChanges,
             Err(e) => return MergeResult::Error(e),
             Ok(true) => {}
@@ -271,6 +303,8 @@ pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeRe
 
     // Attempt merge with --no-ff
     let merge = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
         .args(["merge", "--no-ff", "-m", &format!("Merge {}", branch), &branch])
         .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
         .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
@@ -283,10 +317,14 @@ pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeRe
         Ok(output) if output.status.success() => MergeResult::Success,
         Ok(_) => {
             // Check for conflicts
-            let conflicts = get_merge_conflicts();
+            let conflicts = get_merge_conflicts_in(repo_root);
             if !conflicts.is_empty() {
                 // Abort the merge
-                let _ = Command::new("git").args(["merge", "--abort"]).output();
+                let _ = Command::new("git")
+                    .arg("-C")
+                    .arg(repo_root)
+                    .args(["merge", "--abort"])
+                    .output();
                 MergeResult::Conflict(conflicts)
             } else {
                 MergeResult::Error("merge failed".to_string())
@@ -295,9 +333,11 @@ pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeRe
     }
 }
 
-/// Get list of files with merge conflicts.
-fn get_merge_conflicts() -> Vec<String> {
+/// Get list of files with merge conflicts in the specified repo/worktree.
+fn get_merge_conflicts_in(repo_root: &Path) -> Vec<String> {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
         .args(["diff", "--name-only", "--diff-filter=U"])
         .output();
 
@@ -382,7 +422,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{create_feature_branch_in, parse_worktrees_with_branch};
+    use super::{create_feature_branch_in, merge_agent_branch_in, parse_worktrees_with_branch, MergeResult};
 
     fn run_git(repo: &Path, args: &[&str]) -> Output {
         let output = Command::new("git")
@@ -568,5 +608,27 @@ detached
             "unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_merge_agent_branch_in_creates_no_ff_merge_commit() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        run_git(repo, &["checkout", "-b", "alpha-sprint-1"]);
+        run_git(repo, &["checkout", "-b", "agent-aaron"]);
+        commit_file(repo, "task.txt", "task commit");
+
+        let result = merge_agent_branch_in(repo, 'A', Some("alpha-sprint-1"));
+        assert!(matches!(result, MergeResult::Success));
+
+        let output = run_git(repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let parents: Vec<&str> = output_str.split_whitespace().collect();
+        assert_eq!(parents.len(), 3, "expected merge commit with two parents");
+
+        let content = fs::read_to_string(repo.join("task.txt")).expect("read file");
+        assert_eq!(content, "change");
     }
 }
