@@ -19,8 +19,8 @@ pub struct Worktree {
 }
 
 pub use cleanup::{
-    cleanup_agent_worktree, cleanup_agent_worktrees, cleanup_worktrees, cleanup_worktrees_in,
-    delete_branch, CleanupSummary,
+    cleanup_agent_worktree, cleanup_agent_worktrees, cleanup_feature_worktree, cleanup_worktrees,
+    cleanup_worktrees_in, delete_branch, CleanupSummary,
 };
 pub use create::{create_feature_worktree_in, create_worktrees, create_worktrees_in};
 pub use git::{
