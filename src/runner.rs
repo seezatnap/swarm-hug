@@ -226,12 +226,12 @@ pub(crate) fn run_sprint(
     );
 
     // Clean up any existing worktrees for assigned agents before creating new ones
-    // This ensures a clean slate from master for each sprint
+    // This ensures a clean slate from the feature branch for each sprint
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
     let cleanup_summary = worktree::cleanup_agent_worktrees(
         worktrees_dir,
         &assigned_initials,
-        true, // Also delete branches so they're recreated fresh from HEAD
+        true, // Also delete branches so they're recreated fresh from the feature branch
     );
     if cleanup_summary.cleaned_count() > 0 {
         println!(
@@ -249,7 +249,7 @@ pub(crate) fn run_sprint(
 
     // Create worktrees for assigned agents
     let worktrees: Vec<Worktree> =
-        worktree::create_worktrees_in(worktrees_dir, &assignments)
+        worktree::create_worktrees_in(worktrees_dir, &assignments, &sprint_branch)
             .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Build a map from initial to worktree path (owned for thread safety)
@@ -563,7 +563,7 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
 
     // Clean up worktrees after sprint completes
-    // This ensures worktrees are recreated fresh from master on the next sprint
+    // This ensures worktrees are recreated fresh from the feature branch on the next sprint
     let cleanup_summary = worktree::cleanup_agent_worktrees(
         worktrees_dir,
         &assigned_initials,
