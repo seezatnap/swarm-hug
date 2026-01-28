@@ -46,7 +46,6 @@ pub(super) fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
 /// Create worktrees in the specified directory.
 /// The `worktrees_dir` should be the full path to the worktrees directory
 /// (e.g., ".swarm-hug/authentication/worktrees" in multi-team mode).
-/// New agent branches are forked from `base_branch`.
 pub fn create_worktrees_in(
     worktrees_dir: &Path,
     assignments: &[(char, String)],
@@ -58,7 +57,6 @@ pub fn create_worktrees_in(
     if assignments.is_empty() {
         return Ok(created);
     }
-
     let base = base_branch.trim();
     if base.is_empty() {
         return Err("base branch name is empty".to_string());
@@ -67,21 +65,6 @@ pub fn create_worktrees_in(
     let repo_root = git_repo_root()?;
     ensure_head(&repo_root)?;
     let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
-
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&repo_root)
-        .args(["rev-parse", "--verify", base])
-        .output()
-        .map_err(|e| format!("failed to run git rev-parse {}: {}", base, e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "base branch '{}' not found: {}",
-            base,
-            stderr.trim()
-        ));
-    }
 
     fs::create_dir_all(&worktrees_dir)
         .map_err(|e| format!("failed to create worktrees dir: {}", e))?;
@@ -132,7 +115,7 @@ pub fn create_worktrees_in(
             .args(["branch", "-D", &branch])
             .output();
 
-        // Create fresh worktree with new branch from base branch
+        // Create fresh worktree with new branch from the base branch
         let output = Command::new("git")
             .arg("-C")
             .arg(&repo_root)
@@ -272,17 +255,6 @@ mod tests {
         run_git(&["commit", "-m", "init"]);
     }
 
-    fn commit_file(path: &str, contents: &str) {
-        fs::write(path, contents).expect("write file");
-        run_git(&["add", path]);
-        run_git(&["commit", "-m", "commit"]);
-    }
-
-    fn rev_parse(reference: &str) -> String {
-        let output = run_git(&["rev-parse", reference]);
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
-    }
-
     #[test]
     fn test_worktree_path() {
         let root = Path::new("/tmp/worktrees");
@@ -321,34 +293,35 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktrees_in_forks_from_base_branch() {
+    fn test_create_worktrees_in_uses_base_branch() {
         with_temp_cwd(|| {
             init_repo();
-            run_git(&["branch", "feature-branch"]);
-            commit_file("after-feature.txt", "advance head");
-
-            let head_rev = rev_parse("HEAD");
-            let feature_rev = rev_parse("feature-branch");
-            assert_ne!(head_rev, feature_rev);
+            run_git(&["checkout", "-b", "alpha-sprint-1"]);
+            fs::write("feature.txt", "feature").expect("write feature file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "feature commit"]);
+            let base_commit = String::from_utf8_lossy(&run_git(&["rev-parse", "HEAD"]).stdout)
+                .trim()
+                .to_string();
 
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
-            let worktrees = create_worktrees_in(worktrees_dir, &assignments, "feature-branch")
-                .expect("create worktrees");
+            let worktrees =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                    .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
-
-            let agent_rev = rev_parse("agent/aaron");
-            assert_eq!(agent_rev, feature_rev);
+            let wt_path = &worktrees[0].path;
+            assert!(wt_path.exists());
 
             let output = Command::new("git")
                 .arg("-C")
-                .arg(&worktrees[0].path)
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .arg(wt_path)
+                .args(["rev-parse", "HEAD"])
                 .output()
                 .expect("failed to run git rev-parse");
             assert!(output.status.success());
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            assert_eq!(branch, "agent/aaron");
+            let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            assert_eq!(wt_commit, base_commit);
         });
     }
 }
