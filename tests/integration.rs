@@ -230,6 +230,20 @@ fn test_swarm_run_stub_integration() {
         "worktrees should be cleaned up after sprint"
     );
 
+    let sprint_worktree = worktrees_dir.join(format!("{}-sprint-1", team_name));
+    assert!(
+        sprint_worktree.exists(),
+        "feature worktree should exist after sprint"
+    );
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .arg("-C")
+        .arg(&sprint_worktree)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"]);
+    let branch_output = run_success(&mut branch_cmd);
+    let branch_name = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+    assert_eq!(branch_name, format!("{}-sprint-1", team_name));
+
     // Branches are also cleaned up after sprint
     let mut branches_cmd = Command::new("git");
     branches_cmd

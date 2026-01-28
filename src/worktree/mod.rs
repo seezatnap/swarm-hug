@@ -22,7 +22,7 @@ pub use cleanup::{
     cleanup_agent_worktree, cleanup_agent_worktrees, cleanup_worktrees, cleanup_worktrees_in,
     delete_branch, CleanupSummary,
 };
-pub use create::{create_worktrees, create_worktrees_in};
+pub use create::{create_feature_worktree_in, create_worktrees, create_worktrees_in};
 pub use git::{
     agent_branch_exists, agent_branch_has_changes, agent_branch_name, create_feature_branch,
     create_feature_branch_in, delete_agent_branch, merge_agent_branch, merge_all_agent_branches,

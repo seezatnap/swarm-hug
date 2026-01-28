@@ -146,6 +146,16 @@ pub(crate) fn run_sprint(
     // Print sprint start banner
     print_sprint_start_banner(&formatted_team, historical_sprint);
 
+    // Create feature worktree for this sprint
+    let sprint_branch = format!("{}-sprint-{}", team_name, historical_sprint);
+    let target_branch = config
+        .target_branch
+        .as_deref()
+        .ok_or_else(|| "target branch not configured".to_string())?;
+    let worktrees_dir = Path::new(&config.files_worktrees_dir);
+    worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
+        .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+
     // Write updated tasks
     fs::write(&config.files_tasks, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
