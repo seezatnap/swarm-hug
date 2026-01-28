@@ -337,7 +337,7 @@ mod tests {
                 .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
 
-            let agent_rev = rev_parse("agent/aaron");
+            let agent_rev = rev_parse("agent-aaron");
             assert_eq!(agent_rev, feature_rev);
 
             let output = Command::new("git")
@@ -348,7 +348,7 @@ mod tests {
                 .expect("failed to run git rev-parse");
             assert!(output.status.success());
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            assert_eq!(branch, "agent/aaron");
+            assert_eq!(branch, "agent-aaron");
         });
     }
 }
