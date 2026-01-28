@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Command;
 
 use super::cli::CliArgs;
 use super::{env, toml};
@@ -145,6 +146,10 @@ impl Config {
         if config.project.is_some() {
             let project_name = config.project.clone().unwrap();
             config.apply_project_paths(&project_name, cli_args);
+        }
+
+        if config.target_branch.is_none() {
+            config.target_branch = detect_target_branch();
         }
 
         config
@@ -299,6 +304,51 @@ max = 0
             return "stub".to_string();
         }
         EngineType::list_to_string(&self.engine_types)
+    }
+}
+
+pub(crate) fn detect_target_branch() -> Option<String> {
+    detect_target_branch_in(None)
+}
+
+pub(crate) fn detect_target_branch_in(repo_root: Option<&Path>) -> Option<String> {
+    if git_branch_exists(repo_root, "main") {
+        return Some("main".to_string());
+    }
+    if git_branch_exists(repo_root, "master") {
+        return Some("master".to_string());
+    }
+    git_current_branch(repo_root)
+}
+
+fn git_branch_exists(repo_root: Option<&Path>, branch: &str) -> bool {
+    let mut cmd = Command::new("git");
+    if let Some(root) = repo_root {
+        cmd.arg("-C").arg(root);
+    }
+    let ref_name = format!("refs/heads/{}", branch);
+    cmd.args(["show-ref", "--verify", "--quiet", &ref_name]);
+    match cmd.output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
+fn git_current_branch(repo_root: Option<&Path>) -> Option<String> {
+    let mut cmd = Command::new("git");
+    if let Some(root) = repo_root {
+        cmd.arg("-C").arg(root);
+    }
+    cmd.args(["rev-parse", "--abbrev-ref", "HEAD"]);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        None
+    } else {
+        Some(branch)
     }
 }
 
