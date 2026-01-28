@@ -371,3 +371,76 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::process::{Command, Output};
+
+    use tempfile::TempDir;
+
+    use super::detect_target_branch_in;
+
+    fn run_git(repo: &Path, args: &[&str]) -> Output {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn init_repo(repo: &Path) {
+        run_git(repo, &["init"]);
+        run_git(repo, &["config", "user.name", "Swarm Test"]);
+        run_git(repo, &["config", "user.email", "swarm-test@example.com"]);
+        fs::write(repo.join("README.md"), "init").expect("write README");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "init"]);
+    }
+
+    fn init_repo_on_branch(repo: &Path, branch: &str) {
+        init_repo(repo);
+        run_git(repo, &["branch", "-M", branch]);
+    }
+
+    #[test]
+    fn test_detect_target_branch_prefers_main() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo_on_branch(repo, "main");
+        run_git(repo, &["branch", "master"]);
+
+        let detected = detect_target_branch_in(Some(repo));
+        assert_eq!(detected, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_detect_target_branch_falls_back_to_master() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo_on_branch(repo, "master");
+
+        let detected = detect_target_branch_in(Some(repo));
+        assert_eq!(detected, Some("master".to_string()));
+    }
+
+    #[test]
+    fn test_detect_target_branch_falls_back_to_current_branch() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo_on_branch(repo, "trunk");
+
+        let detected = detect_target_branch_in(Some(repo));
+        assert_eq!(detected, Some("trunk".to_string()));
+    }
+}
