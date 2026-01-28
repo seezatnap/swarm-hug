@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -268,6 +268,8 @@ pub(crate) fn run_sprint(
         .map(|wt| (wt.initial, wt.path.clone()))
         .collect();
 
+    let worktrees_dir_buf = PathBuf::from(&config.files_worktrees_dir);
+
     // Initialize lifecycle tracker (wrapped for thread-safe access)
     let tracker = Arc::new(Mutex::new(LifecycleTracker::new()));
     for (initial, description) in &assignments {
@@ -281,6 +283,8 @@ pub(crate) fn run_sprint(
             .unwrap()
             .register(*initial, agent_name, description, &wt_path);
     }
+
+    let worktree_lock = Arc::new(Mutex::new(()));
 
     // Prepare engine configuration for per-agent random selection
     let engine_types = config.engine_types.clone();
@@ -313,7 +317,7 @@ pub(crate) fn run_sprint(
         .map(|p| p.to_string_lossy().to_string());
 
     for (initial, tasks) in agent_tasks {
-        let working_dir = worktree_map
+        let mut working_dir = worktree_map
             .get(&initial)
             .cloned()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
@@ -321,6 +325,9 @@ pub(crate) fn run_sprint(
         let chat_path = config.files_chat.clone();
         let log_dir = log_dir_path.clone();
         let team_dir = team_dir.clone();
+        let worktrees_dir = worktrees_dir_buf.clone();
+        let sprint_branch = sprint_branch.clone();
+        let worktree_lock = Arc::clone(&worktree_lock);
         // Clone engine config for this thread
         let thread_engine_types = engine_types.clone();
         let thread_engine_stub_mode = engine_stub_mode;
@@ -341,8 +348,11 @@ pub(crate) fn run_sprint(
                 eprintln!("warning: failed to write log: {}", e);
             }
 
+            let total_tasks = tasks.len();
+
             // Process each task sequentially for this agent
-            for description in tasks {
+            for (task_index, description) in tasks.iter().enumerate() {
+                let description = description.clone();
                 // Select and create random engine for this task (per-task engine selection)
                 let (engine, selected_engine_type) = engine::create_random_engine(
                     &thread_engine_types,
@@ -498,7 +508,72 @@ pub(crate) fn run_sprint(
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
-                task_results.push((initial, description, success, error, Some(task_duration)));
+                task_results.push((
+                    initial,
+                    description.clone(),
+                    success,
+                    error.clone(),
+                    Some(task_duration),
+                ));
+
+                if task_index + 1 < total_tasks {
+                    if let Err(e) = logger.log("Recreating worktree for next task...") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                    let recreate_assignments = vec![(initial, description.clone())];
+                    let recreate_result = {
+                        let _guard = worktree_lock.lock().unwrap();
+                        worktree::create_worktrees_in(
+                            &worktrees_dir,
+                            &recreate_assignments,
+                            &sprint_branch,
+                        )
+                    };
+                    match recreate_result {
+                        Ok(mut recreated) => {
+                            if let Some(new_worktree) = recreated.pop() {
+                                working_dir = new_worktree.path;
+                                if let Err(e) = logger.log(&format!(
+                                    "Worktree recreated at {}",
+                                    working_dir.display()
+                                )) {
+                                    eprintln!("warning: failed to write log: {}", e);
+                                }
+                            } else {
+                                let msg = "worktree recreation returned no worktree".to_string();
+                                if let Err(e) = logger.log(&msg) {
+                                    eprintln!("warning: failed to write log: {}", e);
+                                }
+                                for remaining in tasks.iter().skip(task_index + 1) {
+                                    task_results.push((
+                                        initial,
+                                        remaining.clone(),
+                                        false,
+                                        Some(msg.clone()),
+                                        None,
+                                    ));
+                                }
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let msg = format!("worktree recreation failed: {}", e);
+                            if let Err(e) = logger.log(&msg) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            for remaining in tasks.iter().skip(task_index + 1) {
+                                task_results.push((
+                                    initial,
+                                    remaining.clone(),
+                                    false,
+                                    Some(msg.clone()),
+                                    None,
+                                ));
+                            }
+                            break;
+                        }
+                    }
+                }
             }
 
             task_results
