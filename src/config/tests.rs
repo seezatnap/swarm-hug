@@ -563,6 +563,17 @@ fn test_config_load_with_cli_precedence() {
 }
 
 #[test]
+fn test_config_load_cli_target_branch_overrides_auto_detection() {
+    let cli = CliArgs {
+        target_branch: Some("override-branch".to_string()),
+        ..Default::default()
+    };
+
+    let config = Config::load(&cli);
+    assert_eq!(config.target_branch.as_deref(), Some("override-branch"));
+}
+
+#[test]
 fn test_parse_args_with_prd() {
     let args = vec![
         "swarm".to_string(),
