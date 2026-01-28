@@ -153,8 +153,9 @@ pub(crate) fn run_sprint(
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
-    worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
-        .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+    let feature_worktree_path =
+        worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
+            .map_err(|e| format!("failed to create feature worktree: {}", e))?;
     let mut team_state = team::TeamState::load(&team_name)
         .map_err(|e| format!("failed to load team state: {}", e))?;
     team_state
@@ -326,6 +327,7 @@ pub(crate) fn run_sprint(
         let log_dir = log_dir_path.clone();
         let team_dir = team_dir.clone();
         let worktrees_dir = worktrees_dir_buf.clone();
+        let feature_worktree_path = feature_worktree_path.clone();
         let sprint_branch = sprint_branch.clone();
         let worktree_lock = Arc::clone(&worktree_lock);
         // Clone engine config for this thread
@@ -443,7 +445,8 @@ pub(crate) fn run_sprint(
                     }
                 }
 
-                let (success, error) = if result.success {
+                let mut allow_recreate = true;
+                let (mut success, mut error) = if result.success {
                     // Transition: Working -> Done (success)
                     {
                         let mut t = tracker.lock().unwrap();
@@ -499,6 +502,66 @@ pub(crate) fn run_sprint(
                     (false, Some(err))
                 };
 
+                if success {
+                    if let Err(e) = logger.log("Merging agent branch into sprint branch...") {
+                        eprintln!("warning: failed to write log: {}", e);
+                    }
+                    let merge_result = {
+                        let _guard = worktree_lock.lock().unwrap();
+                        worktree::merge_agent_branch_in(
+                            &feature_worktree_path,
+                            initial,
+                            Some(&sprint_branch),
+                        )
+                    };
+
+                    let merge_error = match merge_result {
+                        worktree::MergeResult::Success => {
+                            if let Err(e) = logger.log("Merge successful") {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            None
+                        }
+                        worktree::MergeResult::NoChanges => {
+                            if let Err(e) = logger.log("Merge skipped: no changes detected") {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            None
+                        }
+                        worktree::MergeResult::NoBranch => {
+                            let msg = "Merge failed: agent branch not found".to_string();
+                            if let Err(e) = logger.log(&msg) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            Some(msg)
+                        }
+                        worktree::MergeResult::Conflict(files) => {
+                            let msg = if files.is_empty() {
+                                "Merge failed: conflicts detected".to_string()
+                            } else {
+                                format!("Merge failed: conflicts in {}", files.join(", "))
+                            };
+                            if let Err(e) = logger.log(&msg) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            Some(msg)
+                        }
+                        worktree::MergeResult::Error(e) => {
+                            let msg = format!("Merge failed: {}", e);
+                            if let Err(e) = logger.log(&msg) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            Some(msg)
+                        }
+                    };
+
+                    if let Some(msg) = merge_error {
+                        success = false;
+                        error = Some(msg);
+                        allow_recreate = false;
+                    }
+                }
+
                 // Transition: Done -> Terminated
                 {
                     let mut t = tracker.lock().unwrap();
@@ -517,6 +580,15 @@ pub(crate) fn run_sprint(
                 ));
 
                 if task_index + 1 < total_tasks {
+                    if !allow_recreate {
+                        let msg = error
+                            .clone()
+                            .unwrap_or_else(|| "worktree recreation skipped".to_string());
+                        for remaining in tasks.iter().skip(task_index + 1) {
+                            task_results.push((initial, remaining.clone(), false, Some(msg.clone()), None));
+                        }
+                        break;
+                    }
                     if let Err(e) = logger.log("Recreating worktree for next task...") {
                         eprintln!("warning: failed to write log: {}", e);
                     }
