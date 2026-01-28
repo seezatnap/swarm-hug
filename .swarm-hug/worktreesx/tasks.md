@@ -18,13 +18,13 @@
 ### Task Merge Flow
 
 - [x] (#8) Implement agent-to-feature-branch merge after task completion using `--no-ff` (blocked by #5) (A)
-- [ ] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
+- [A] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
 
 ### Merge Agent Implementation
 
 - [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges (C)
 - [x] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11) (B)
-- [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
+- [A] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
 
 ### Sprint Workflow Updates
 
