@@ -203,6 +203,32 @@ fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
     }
 }
 
+fn branch_has_changes_in(
+    repo_root: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<bool, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args([
+            "rev-list",
+            "--count",
+            &format!("{}..{}", target_branch, source_branch),
+        ])
+        .output()
+        .map_err(|e| format!("failed to run git rev-list: {}", e))?;
+
+    if !output.status.success() {
+        // Branch might not exist
+        return Ok(false);
+    }
+
+    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let count: i32 = count_str.parse().unwrap_or(0);
+    Ok(count > 0)
+}
+
 /// Merge result.
 #[derive(Debug, Clone)]
 pub enum MergeResult {
@@ -226,22 +252,7 @@ fn agent_branch_has_changes_in(
 ) -> Result<bool, String> {
     let branch = agent_branch_name(initial)
         .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
-
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["rev-list", "--count", &format!("{}..{}", target, branch)])
-        .output()
-        .map_err(|e| format!("failed to run git rev-list: {}", e))?;
-
-    if !output.status.success() {
-        // Branch might not exist
-        return Ok(false);
-    }
-
-    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let count: i32 = count_str.parse().unwrap_or(0);
-    Ok(count > 0)
+    branch_has_changes_in(repo_root, &branch, target)
 }
 
 /// Merge an agent branch into the current branch.
@@ -333,6 +344,190 @@ pub fn merge_agent_branch_in(
     }
 }
 
+/// Check whether a source branch has been merged into a target branch.
+pub fn branch_is_merged(source_branch: &str, target_branch: &str) -> Result<bool, String> {
+    let repo_root = git_repo_root()?;
+    branch_is_merged_in(&repo_root, source_branch, target_branch)
+}
+
+fn branch_is_merged_in(
+    repo_root: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<bool, String> {
+    let source = source_branch.trim();
+    if source.is_empty() {
+        return Err("source branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+
+    ensure_head(repo_root)?;
+
+    if !branch_exists(repo_root, source)? {
+        return Err(format!("source branch '{}' not found", source));
+    }
+    if !branch_exists(repo_root, target)? {
+        return Err(format!("target branch '{}' not found", target));
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["merge-base", "--is-ancestor", source, target])
+        .output()
+        .map_err(|e| format!("failed to run git merge-base: {}", e))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else if output.status.code() == Some(1) {
+        Ok(false)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git merge-base failed: {}", stderr.trim()))
+    }
+}
+
+/// Merge a feature branch into a target branch in the main repo.
+pub fn merge_feature_branch(feature_branch: &str, target_branch: &str) -> MergeResult {
+    let repo_root = match git_repo_root() {
+        Ok(root) => root,
+        Err(e) => return MergeResult::Error(e),
+    };
+    merge_feature_branch_in(&repo_root, feature_branch, target_branch)
+}
+
+fn merge_feature_branch_in(
+    repo_root: &Path,
+    feature_branch: &str,
+    target_branch: &str,
+) -> MergeResult {
+    let feature = feature_branch.trim();
+    if feature.is_empty() {
+        return MergeResult::Error("feature branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return MergeResult::Error("target branch name is empty".to_string());
+    }
+
+    if let Err(e) = ensure_head(repo_root) {
+        return MergeResult::Error(e);
+    }
+
+    match branch_exists(repo_root, feature) {
+        Ok(true) => {}
+        Ok(false) => return MergeResult::NoBranch,
+        Err(e) => return MergeResult::Error(e),
+    }
+    match branch_exists(repo_root, target) {
+        Ok(true) => {}
+        Ok(false) => {
+            return MergeResult::Error(format!("target branch '{}' not found", target));
+        }
+        Err(e) => return MergeResult::Error(e),
+    }
+
+    let checkout = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["checkout", target])
+        .output();
+
+    if let Err(e) = checkout {
+        return MergeResult::Error(format!("checkout failed: {}", e));
+    }
+    let checkout = checkout.unwrap();
+    if !checkout.status.success() {
+        let stderr = String::from_utf8_lossy(&checkout.stderr);
+        return MergeResult::Error(format!("checkout failed: {}", stderr.trim()));
+    }
+
+    match branch_has_changes_in(repo_root, feature, target) {
+        Ok(false) => return MergeResult::NoChanges,
+        Ok(true) => {}
+        Err(e) => return MergeResult::Error(e),
+    }
+
+    if let Err(e) = cleanup_untracked_swarm_hug_files(repo_root) {
+        return MergeResult::Error(e);
+    }
+
+    let merge = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args([
+            "merge",
+            "--autostash",
+            "--no-ff",
+            "-m",
+            &format!("Merge branch '{}' into {}", feature, target),
+            feature,
+        ])
+        .output();
+
+    match merge {
+        Err(e) => MergeResult::Error(format!("merge command failed: {}", e)),
+        Ok(output) if output.status.success() => MergeResult::Success,
+        Ok(output) => {
+            let conflicts = get_merge_conflicts_in(repo_root);
+            if !conflicts.is_empty() {
+                let _ = Command::new("git")
+                    .arg("-C")
+                    .arg(repo_root)
+                    .args(["merge", "--abort"])
+                    .output();
+                MergeResult::Conflict(conflicts)
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = stderr.trim();
+                if detail.is_empty() {
+                    MergeResult::Error("merge failed".to_string())
+                } else {
+                    MergeResult::Error(format!("merge failed: {}", detail))
+                }
+            }
+        }
+    }
+}
+
+fn cleanup_untracked_swarm_hug_files(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["ls-files", "--others", "--exclude-standard", "--", ".swarm-hug"])
+        .output()
+        .map_err(|e| format!("failed to list untracked files: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git ls-files failed while scanning untracked files: {}",
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let rel = line.trim();
+        if rel.is_empty() {
+            continue;
+        }
+        let path = repo_root.join(rel);
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("failed to remove {}: {}", path.display(), e))?;
+        } else if path.is_file() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("failed to remove {}: {}", path.display(), e))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Get list of files with merge conflicts in the specified repo/worktree.
 fn get_merge_conflicts_in(repo_root: &Path) -> Vec<String> {
     let output = Command::new("git")
@@ -422,7 +617,14 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{create_feature_branch_in, merge_agent_branch_in, parse_worktrees_with_branch, MergeResult};
+    use super::{
+        branch_is_merged_in,
+        create_feature_branch_in,
+        merge_agent_branch_in,
+        merge_feature_branch_in,
+        parse_worktrees_with_branch,
+        MergeResult,
+    };
 
     fn run_git(repo: &Path, args: &[&str]) -> Output {
         let output = Command::new("git")
@@ -630,5 +832,33 @@ detached
 
         let content = fs::read_to_string(repo.join("task.txt")).expect("read file");
         assert_eq!(content, "change");
+    }
+
+    #[test]
+    fn test_branch_is_merged_in_tracks_feature_merge() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        run_git(repo, &["branch", "-M", "main"]);
+        run_git(repo, &["checkout", "-b", "feature-branch"]);
+        commit_file(repo, "feature.txt", "feature commit");
+        run_git(repo, &["checkout", "main"]);
+
+        let merged_before = branch_is_merged_in(repo, "feature-branch", "main")
+            .expect("merge check before");
+        assert!(!merged_before);
+
+        let merge_result = merge_feature_branch_in(repo, "feature-branch", "main");
+        assert!(matches!(merge_result, MergeResult::Success));
+
+        let merged_after = branch_is_merged_in(repo, "feature-branch", "main")
+            .expect("merge check after");
+        assert!(merged_after);
+
+        let output = run_git(repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let parents: Vec<&str> = output_str.split_whitespace().collect();
+        assert_eq!(parents.len(), 3, "expected merge commit with two parents");
     }
 }
