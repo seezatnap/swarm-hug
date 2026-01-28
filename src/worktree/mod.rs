@@ -2,7 +2,7 @@
 //!
 //! Manages git worktrees and branches for agents. Each agent gets:
 //! - A worktree directory: `worktrees/agent-<INITIAL>-<name>`
-//! - A dedicated branch: `agent/<lowercase_name>`
+//! - A dedicated branch: `agent-<lowercase_name>`
 //!
 //! In multi-team mode, worktrees are created under `.swarm-hug/<team>/worktrees/`.
 
@@ -36,10 +36,10 @@ mod tests {
 
     #[test]
     fn test_agent_branch_name() {
-        assert_eq!(agent_branch_name('A'), Some("agent/aaron".to_string()));
-        assert_eq!(agent_branch_name('B'), Some("agent/betty".to_string()));
-        assert_eq!(agent_branch_name('Z'), Some("agent/zane".to_string()));
-        assert_eq!(agent_branch_name('a'), Some("agent/aaron".to_string()));
+        assert_eq!(agent_branch_name('A'), Some("agent-aaron".to_string()));
+        assert_eq!(agent_branch_name('B'), Some("agent-betty".to_string()));
+        assert_eq!(agent_branch_name('Z'), Some("agent-zane".to_string()));
+        assert_eq!(agent_branch_name('a'), Some("agent-aaron".to_string()));
         assert_eq!(agent_branch_name('1'), None);
     }
 
@@ -64,18 +64,18 @@ mod tests {
         let branch = AgentBranch {
             initial: 'A',
             name: "aaron".to_string(),
-            branch: "agent/aaron".to_string(),
+            branch: "agent-aaron".to_string(),
             exists: true,
         };
         assert_eq!(branch.initial, 'A');
         assert_eq!(branch.name, "aaron");
-        assert_eq!(branch.branch, "agent/aaron");
+        assert_eq!(branch.branch, "agent-aaron");
 
         // Non-standard branch (like scrummaster) uses '?' as initial
         let sm_branch = AgentBranch {
             initial: '?',
             name: "scrummaster".to_string(),
-            branch: "agent/scrummaster".to_string(),
+            branch: "agent-scrummaster".to_string(),
             exists: true,
         };
         assert_eq!(sm_branch.initial, '?');

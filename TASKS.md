@@ -11,9 +11,9 @@
 
 ### Agent Worktree Lifecycle
 
+- [x] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
 - [ ] (#5) Modify agent worktree creation to fork from feature/sprint branch instead of target branch (blocked by #3)
 - [ ] (#6) Implement agent worktree recreation logic - delete and recreate fresh from feature branch after each task completion (blocked by #5)
-- [ ] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
 
 ### Task Merge Flow
 

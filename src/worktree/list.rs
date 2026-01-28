@@ -53,10 +53,10 @@ pub struct AgentBranch {
 }
 
 /// List agent branches in the repository.
-/// Returns branches matching the pattern `agent/<name>`.
+/// Returns branches matching the pattern `agent-<name>`.
 pub fn list_agent_branches() -> Result<Vec<AgentBranch>, String> {
     let output = Command::new("git")
-        .args(["branch", "--list", "agent/*"])
+        .args(["branch", "--list", "agent-*"])
         .output()
         .map_err(|e| format!("failed to run git branch: {}", e))?;
 
@@ -70,7 +70,7 @@ pub fn list_agent_branches() -> Result<Vec<AgentBranch>, String> {
 
     for line in stdout.lines() {
         let branch = line.trim().trim_start_matches("* ");
-        if let Some(agent_name) = branch.strip_prefix("agent/") {
+        if let Some(agent_name) = branch.strip_prefix("agent-") {
             // Find the initial for this agent name (may be None for non-standard branches)
             let initial = crate::agent::initial_from_name(agent_name).unwrap_or('?');
             branches.push(AgentBranch {

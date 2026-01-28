@@ -111,10 +111,10 @@ pub(super) fn find_worktrees_with_branch(
 }
 
 /// Get the branch name for an agent.
-/// Format: agent/<lowercase_name> (e.g., agent/aaron)
+/// Format: agent-<lowercase_name> (e.g., agent-aaron)
 pub fn agent_branch_name(initial: char) -> Option<String> {
     let name = crate::agent::name_from_initial(initial)?;
-    Some(format!("agent/{}", name.to_lowercase()))
+    Some(format!("agent-{}", name.to_lowercase()))
 }
 
 /// Check if an agent branch exists.
@@ -442,14 +442,14 @@ branch refs/heads/main
 
 worktree /repo/.swarm-hug/greenfield/worktrees/agent-D-Diana
 HEAD def456
-branch refs/heads/agent/diana
+branch refs/heads/agent-diana
 
 worktree /repo/.swarm-hug/phase-one/worktrees/agent-A-Aaron
 HEAD ghi789
-branch refs/heads/agent/aaron
+branch refs/heads/agent-aaron
 
 ";
-        let result = parse_worktrees_with_branch(porcelain, "agent/diana");
+        let result = parse_worktrees_with_branch(porcelain, "agent-diana");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "/repo/.swarm-hug/greenfield/worktrees/agent-D-Diana");
     }
@@ -463,10 +463,10 @@ branch refs/heads/main
 
 worktree /repo/.swarm-hug/team/worktrees/agent-A-Aaron
 HEAD def456
-branch refs/heads/agent/aaron
+branch refs/heads/agent-aaron
 
 ";
-        let result = parse_worktrees_with_branch(porcelain, "agent/diana");
+        let result = parse_worktrees_with_branch(porcelain, "agent-diana");
         assert!(result.is_empty());
     }
 
@@ -476,14 +476,14 @@ branch refs/heads/agent/aaron
         let porcelain = "\\
 worktree /repo/.swarm-hug/team1/worktrees/agent-D-Diana
 HEAD abc123
-branch refs/heads/agent/diana
+branch refs/heads/agent-diana
 
 worktree /repo/.swarm-hug/team2/worktrees/agent-D-Diana
 HEAD abc123
-branch refs/heads/agent/diana
+branch refs/heads/agent-diana
 
 ";
-        let result = parse_worktrees_with_branch(porcelain, "agent/diana");
+        let result = parse_worktrees_with_branch(porcelain, "agent-diana");
         assert_eq!(result.len(), 2);
         assert!(result.contains(&"/repo/.swarm-hug/team1/worktrees/agent-D-Diana".to_string()));
         assert!(result.contains(&"/repo/.swarm-hug/team2/worktrees/agent-D-Diana".to_string()));
@@ -502,14 +502,14 @@ HEAD def456
 detached
 
 ";
-        // Should not crash and should return empty for agent/aaron
-        let result = parse_worktrees_with_branch(porcelain, "agent/aaron");
+        // Should not crash and should return empty for agent-aaron
+        let result = parse_worktrees_with_branch(porcelain, "agent-aaron");
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_parse_worktrees_with_branch_empty_output() {
-        let result = parse_worktrees_with_branch("", "agent/diana");
+        let result = parse_worktrees_with_branch("", "agent-diana");
         assert!(result.is_empty());
     }
 

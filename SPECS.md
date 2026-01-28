@@ -119,7 +119,7 @@
 
 ### Git worktree workflow
 - Each agent uses a worktree under `worktrees/agent-<initial>-<name>`.
-- Dedicated branch per agent (e.g., `agent/aaron`).
+- Dedicated branch per agent (e.g., `agent-aaron`).
 - Worktrees are created before agents run, and cleaned up after merge.
 - Merge conflicts are surfaced in CHAT.md and cause the sprint to report failure but not crash the runner.
 
