@@ -20,7 +20,7 @@ use swarm::team::{self, Assignments};
 use swarm::worktree::{self, Worktree};
 
 use crate::git::{
-    commit_files_in_worktree, commit_sprint_completion, commit_task_assignments,
+    commit_files_in_worktree_on_branch, commit_sprint_completion, commit_task_assignments,
     get_current_commit_in, get_git_log_range_in,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
@@ -217,6 +217,7 @@ pub(crate) fn run_sprint(
     let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
     commit_task_assignments(
         &feature_worktree_path,
+        &sprint_branch,
         &config.files_tasks,
         sprint_history_path.to_str().unwrap_or(""),
         team_state_path.as_str(),
@@ -756,6 +757,7 @@ pub(crate) fn run_sprint(
     // Commit sprint completion (updated tasks and released assignments)
     commit_sprint_completion(
         &feature_worktree_path,
+        &sprint_branch,
         &config.files_tasks,
         &formatted_team,
         historical_sprint,
@@ -769,6 +771,7 @@ pub(crate) fn run_sprint(
             config,
             engine.as_ref(),
             &feature_worktree_path,
+            &sprint_branch,
             &sprint_start_commit,
             &task_list,
             &formatted_team,
@@ -820,6 +823,7 @@ fn run_post_sprint_review(
     config: &Config,
     engine: &dyn engine::Engine,
     feature_worktree: &Path,
+    sprint_branch: &str,
     sprint_start_commit: &str,
     task_list: &TaskList,
     team_name: &str,
@@ -892,8 +896,9 @@ fn run_post_sprint_review(
                 // Commit follow-up tasks so next planning phase sees them
                 let commit_msg =
                     format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
-                if let Ok(true) = commit_files_in_worktree(
+                if let Ok(true) = commit_files_in_worktree_on_branch(
                     feature_worktree,
+                    sprint_branch,
                     &[&config.files_tasks, &config.files_chat],
                     &commit_msg,
                 ) {

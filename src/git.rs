@@ -185,15 +185,65 @@ pub(crate) fn commit_files_in_worktree(
     commit_files_in(worktree_root, &synced_refs, message)
 }
 
+fn ensure_branch_checked_out(repo_dir: &Path, branch: &str) -> Result<(), String> {
+    let target = branch.trim();
+    if target.is_empty() {
+        return Err("branch name is empty".to_string());
+    }
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .map_err(|e| format!("git rev-parse failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git rev-parse failed: {}", stderr.trim()));
+    }
+
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if current == target {
+        return Ok(());
+    }
+
+    let checkout = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["checkout", target])
+        .output()
+        .map_err(|e| format!("git checkout failed: {}", e))?;
+
+    if checkout.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&checkout.stderr);
+        Err(format!("git checkout failed: {}", stderr.trim()))
+    }
+}
+
+pub(crate) fn commit_files_in_worktree_on_branch(
+    worktree_root: &Path,
+    branch: &str,
+    paths: &[&str],
+    message: &str,
+) -> Result<bool, String> {
+    ensure_branch_checked_out(worktree_root, branch)?;
+    commit_files_in_worktree(worktree_root, paths, message)
+}
+
 /// Commit task assignment changes to git.
 ///
 /// # Arguments
+/// * `sprint_branch` - Sprint/feature branch name to commit on
 /// * `tasks_file` - Path to the team's tasks.md file
 /// * `sprint_history_file` - Path to the team's sprint-history.json file
 /// * `team_name` - Formatted team name for commit message (e.g., "Greenfield")
 /// * `sprint_number` - The historical sprint number for this team
 pub(crate) fn commit_task_assignments(
     worktree_root: &Path,
+    sprint_branch: &str,
     tasks_file: &str,
     sprint_history_file: &str,
     team_state_file: &str,
@@ -202,8 +252,9 @@ pub(crate) fn commit_task_assignments(
 ) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("{} Sprint {}: task assignments", team_name, sprint_number);
-    if commit_files_in_worktree(
+    if commit_files_in_worktree_on_branch(
         worktree_root,
+        sprint_branch,
         &[
             tasks_file,
             sprint_history_file,
@@ -220,19 +271,22 @@ pub(crate) fn commit_task_assignments(
 /// Commit sprint completion (updated tasks and released assignments).
 ///
 /// # Arguments
+/// * `sprint_branch` - Sprint/feature branch name to commit on
 /// * `tasks_file` - Path to the team's tasks.md file
 /// * `team_name` - Formatted team name for commit message (e.g., "Greenfield")
 /// * `sprint_number` - The historical sprint number for this team
 pub(crate) fn commit_sprint_completion(
     worktree_root: &Path,
+    sprint_branch: &str,
     tasks_file: &str,
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
     let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("{} Sprint {}: completed", team_name, sprint_number);
-    if commit_files_in_worktree(
+    if commit_files_in_worktree_on_branch(
         worktree_root,
+        sprint_branch,
         &[tasks_file, assignments_path.as_str()],
         &commit_msg,
     )? {
@@ -276,5 +330,51 @@ pub(crate) fn get_git_log_range_in(
     } else {
         // If range is invalid (no commits), return empty string
         Ok(String::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_branch_checked_out;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn run_git(repo_dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_dir)
+            .args(args)
+            .output()
+            .expect("failed to run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    #[test]
+    fn test_ensure_branch_checked_out_switches_branch() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo_dir = temp.path();
+
+        run_git(repo_dir, &["init"]);
+        run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
+        run_git(repo_dir, &["config", "user.email", "swarm-test@example.com"]);
+
+        fs::write(repo_dir.join("README.md"), "hello").expect("write file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "init"]);
+        run_git(repo_dir, &["branch", "feature"]);
+
+        ensure_branch_checked_out(repo_dir, "feature")
+            .expect("should checkout feature branch");
+        let branch = run_git(repo_dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(branch.trim(), "feature");
     }
 }
