@@ -23,6 +23,7 @@ pub mod tui;
 pub mod engine;
 pub mod lifecycle;
 pub mod log;
+pub mod merge_agent;
 pub mod planning;
 pub mod prompt;
 pub mod shutdown;

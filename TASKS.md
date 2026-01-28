@@ -12,7 +12,7 @@
 ### Merge Agent Implementation
 
 - [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
-- [ ] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
+- [x] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
 - [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
 
 ### Agent Worktree Lifecycle

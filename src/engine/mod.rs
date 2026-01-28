@@ -19,6 +19,11 @@ pub use claude::ClaudeEngine;
 pub use codex::CodexEngine;
 pub use stub::StubEngine;
 
+/// Get the configured co-author line for commit messages.
+pub(crate) fn coauthor_line() -> String {
+    util::generate_coauthor_line()
+}
+
 /// Result of engine execution.
 #[derive(Debug)]
 pub struct EngineResult {
