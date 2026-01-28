@@ -86,6 +86,8 @@ pub struct Config {
     pub sprints_max: usize,
     /// Project name for multi-project mode.
     pub project: Option<String>,
+    /// Target branch for base/merge operations (defaults to auto-detected main/master).
+    pub target_branch: Option<String>,
 }
 
 impl Default for Config {
@@ -102,6 +104,7 @@ impl Default for Config {
             engine_stub_mode: false,
             sprints_max: 0,
             project: None,
+            target_branch: None,
         }
     }
 }
@@ -215,6 +218,9 @@ impl Config {
         if let Some(ref project) = args.project {
             self.project = Some(project.clone());
         }
+        if let Some(ref target) = args.target_branch {
+            self.target_branch = Some(target.clone());
+        }
     }
 
     /// Merge values from another config (for file-based config).
@@ -228,6 +234,7 @@ impl Config {
         self.engine_types = other.engine_types.clone();
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
+        self.target_branch = other.target_branch.clone();
     }
 
     /// Generate default swarm.toml content.

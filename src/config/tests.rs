@@ -206,6 +206,7 @@ fn test_config_default() {
     assert_eq!(config.engine_types, vec![EngineType::Claude]);
     assert!(!config.engine_stub_mode);
     assert_eq!(config.sprints_max, 0);
+    assert_eq!(config.target_branch, None);
 }
 
 #[test]
@@ -296,6 +297,18 @@ fn test_parse_args_engine_list() {
 }
 
 #[test]
+fn test_parse_args_target_branch() {
+    let args = vec![
+        "swarm".to_string(),
+        "--target-branch".to_string(),
+        "develop".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.target_branch, Some("develop".to_string()));
+}
+
+#[test]
 fn test_config_apply_cli_engine_list() {
     let mut config = Config::default();
     let cli = CliArgs {
@@ -304,6 +317,17 @@ fn test_config_apply_cli_engine_list() {
     };
     config.apply_cli(&cli);
     assert_eq!(config.engine_types, vec![EngineType::Codex, EngineType::Claude]);
+}
+
+#[test]
+fn test_config_apply_cli_target_branch() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        target_branch: Some("mainline".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.target_branch, Some("mainline".to_string()));
 }
 
 #[test]
