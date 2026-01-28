@@ -155,6 +155,15 @@ pub(crate) fn run_sprint(
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
     worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
         .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+    let mut team_state = team::TeamState::load(&team_name)
+        .map_err(|e| format!("failed to load team state: {}", e))?;
+    team_state
+        .set_feature_branch(&sprint_branch)
+        .map_err(|e| format!("failed to set team state feature branch: {}", e))?;
+    team_state
+        .save()
+        .map_err(|e| format!("failed to save team state: {}", e))?;
+    let team_state_path = team_state.path().to_string_lossy().to_string();
 
     // Write updated tasks
     fs::write(&config.files_tasks, task_list.to_string())
@@ -208,6 +217,7 @@ pub(crate) fn run_sprint(
     commit_task_assignments(
         &config.files_tasks,
         sprint_history_path.to_str().unwrap_or(""),
+        team_state_path.as_str(),
         &formatted_team,
         historical_sprint,
     )?;

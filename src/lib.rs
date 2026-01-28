@@ -11,6 +11,7 @@
 //! - `.swarm-hug/<team>/chat.md` - Team's chat log
 //! - `.swarm-hug/<team>/loop/` - Team's agent logs
 //! - `.swarm-hug/<team>/worktrees/` - Team's git worktrees
+//! - `.swarm-hug/<team>/team-state.json` - Team's sprint feature branch state
 //! - `.swarm-hug/assignments.toml` - Agent-to-team assignments
 
 pub mod agent;

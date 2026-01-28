@@ -9,6 +9,12 @@
 - [x] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
 - [x] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
 
+### Merge Agent Implementation
+
+- [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
+- [ ] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
+- [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
+
 ### Agent Worktree Lifecycle
 
 - [x] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
@@ -19,12 +25,6 @@
 
 - [ ] (#8) Implement agent-to-feature-branch merge after task completion using `--no-ff` (blocked by #5)
 - [ ] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
-
-### Merge Agent Implementation
-
-- [ ] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
-- [ ] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
-- [ ] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
 
 ### Sprint Workflow Updates
 
@@ -38,7 +38,7 @@
 ### Configuration
 
 - [x] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
-- [ ] (#23) Store sprint/feature branch name in team state for reference during merge operations (blocked by #3)
+- [x] (#23) Store sprint/feature branch name in team state for reference during merge operations
 
 ### Testing
 
