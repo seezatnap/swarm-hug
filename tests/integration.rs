@@ -72,6 +72,16 @@ fn git_stdout(repo: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+/// Canonicalize a path for comparison purposes.
+/// On macOS, /var is a symlink to /private/var, so we need to canonicalize
+/// paths before comparing them with git worktree list output.
+fn canonical_path_str(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
 fn init_git_repo(path: &Path) {
     let mut cmd = Command::new("git");
     cmd.arg("init").current_dir(path);
@@ -482,12 +492,14 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
         let agent_worktree = worktrees[0].path.clone();
 
         let worktree_list = git_stdout(&repo_path, &["worktree", "list", "--porcelain"]);
+        let feature_canonical = canonical_path_str(&feature_worktree);
+        let agent_canonical = canonical_path_str(&agent_worktree);
         assert!(
-            worktree_list.contains(&format!("worktree {}", feature_worktree.display())),
+            worktree_list.contains(&format!("worktree {}", feature_canonical)),
             "feature worktree should be registered"
         );
         assert!(
-            worktree_list.contains(&format!("worktree {}", agent_worktree.display())),
+            worktree_list.contains(&format!("worktree {}", agent_canonical)),
             "agent worktree should be registered"
         );
 
@@ -515,11 +527,11 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
 
         let worktree_list_after = git_stdout(&repo_path, &["worktree", "list", "--porcelain"]);
         assert!(
-            !worktree_list_after.contains(&format!("worktree {}", agent_worktree.display())),
+            !worktree_list_after.contains(&format!("worktree {}", agent_canonical)),
             "agent worktree should be deregistered"
         );
         assert!(
-            worktree_list_after.contains(&format!("worktree {}", feature_worktree.display())),
+            worktree_list_after.contains(&format!("worktree {}", feature_canonical)),
             "feature worktree should remain"
         );
 
