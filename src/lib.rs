@@ -29,6 +29,8 @@ pub mod prompt;
 pub mod process;
 pub mod process_group;
 pub mod process_registry;
+pub mod run_context;
+pub mod run_hash;
 pub mod shutdown;
 pub mod task;
 pub mod team;
