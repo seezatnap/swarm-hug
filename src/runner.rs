@@ -1019,6 +1019,13 @@ fn run_post_sprint_review(
         return Ok(());
     }
 
+    // Construct worktree-relative chat.md path for follow-up tasks commit
+    let worktree_chat_path = feature_worktree
+        .join(".swarm-hug")
+        .join(team_name)
+        .join("chat.md");
+    let worktree_chat_str = worktree_chat_path.to_str().unwrap_or("");
+
     // Get current tasks content
     let tasks_content = task_list.to_string();
 
@@ -1070,7 +1077,7 @@ fn run_post_sprint_review(
                     "Sprint review added {} follow-up task(s)",
                     formatted_follow_ups.len()
                 );
-                if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &msg) {
+                if let Err(e) = chat::write_message(worktree_chat_str, "ScrumMaster", &msg) {
                     eprintln!("  warning: failed to write chat: {}", e);
                 }
 
@@ -1081,7 +1088,7 @@ fn run_post_sprint_review(
                 if let Ok(true) = commit_files_in_worktree_on_branch(
                     feature_worktree,
                     sprint_branch,
-                    &[tasks_path_str, &config.files_chat],
+                    &[tasks_path_str, worktree_chat_str],
                     &commit_msg,
                 ) {
                     println!("  Committed follow-up tasks to git.");
