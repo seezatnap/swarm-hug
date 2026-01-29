@@ -26,3 +26,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Implement the missing `src/process_group.rs` (`spawn_in_new_process_group`) and wire `claude.rs`/`codex.rs` spawns to use it; #4 is marked complete but the module/function aren’t present. (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running.
