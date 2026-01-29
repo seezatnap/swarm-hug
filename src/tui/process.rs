@@ -3,12 +3,55 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use crate::process::kill_process_tree;
 
 use super::message::TuiMessage;
 use super::run::run_tui;
 use super::tail::tail_chat_to_tui;
+
+#[cfg(unix)]
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
+const GRACEFUL_SHUTDOWN_POLL: Duration = Duration::from_millis(100);
+
+fn graceful_stop_child(child_pid: u32, child: &mut std::process::Child) {
+    // If the child already exited, there's nothing to do.
+    if let Ok(Some(_)) = child.try_wait() {
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        // Ask the swarm subprocess to shut down cleanly so it can terminate agents.
+        unsafe {
+            // Use the process group so only the swarm subprocess gets the signal.
+            let pgid = -(child_pid as i32);
+            libc::kill(pgid, libc::SIGINT);
+        }
+
+        let deadline = Instant::now() + GRACEFUL_SHUTDOWN_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
+                    thread::sleep(GRACEFUL_SHUTDOWN_POLL);
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    // Fall back to a hard kill if graceful shutdown doesn't complete in time.
+    kill_process_tree(child_pid);
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 /// Run the TUI with a subprocess that does the actual work.
 ///
@@ -86,12 +129,7 @@ pub fn run_tui_with_subprocess(
 
         loop {
             if stop_for_proc.load(Ordering::SeqCst) {
-                // Kill the entire process tree
-                kill_process_tree(child_pid);
-                // Also try the normal kill
-                let _ = child.kill();
-                // Wait for it to actually exit
-                let _ = child.wait();
+                graceful_stop_child(child_pid, &mut child);
                 break;
             }
 
