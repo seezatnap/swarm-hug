@@ -6,6 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::EngineType;
+use crate::process_registry::PROCESS_REGISTRY;
 
 use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
@@ -96,13 +97,13 @@ impl Engine for CodexEngine {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn codex: {}", e), 1),
         };
+        let pid = child.id();
+        PROCESS_REGISTRY.register(pid);
 
         // Write prompt to stdin
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(prompt.as_bytes());
         }
-
-        let pid = child.id();
 
         // Take stdout and stderr for streaming
         let stdout = child.stdout.take();
@@ -169,11 +170,13 @@ impl Engine for CodexEngine {
                     let stderr_output = stderr_handle.join().unwrap_or_default();
                     let exit_code = status.code().unwrap_or(1);
 
-                    if status.success() {
-                        return EngineResult::success(stdout_output);
+                    let result = if status.success() {
+                        EngineResult::success(stdout_output)
                     } else {
-                        return EngineResult::failure(stderr_output, exit_code);
-                    }
+                        EngineResult::failure(stderr_output, exit_code)
+                    };
+                    PROCESS_REGISTRY.unregister(pid);
+                    return result;
                 }
                 Ok(None) => {
                     let elapsed = start.elapsed();
@@ -185,6 +188,7 @@ impl Engine for CodexEngine {
                             let _ = child.wait();
                             let _ = stdout_handle.join();
                             let _ = stderr_handle.join();
+                            PROCESS_REGISTRY.unregister(pid);
                             let mins = elapsed.as_secs() / 60;
                             return EngineResult::failure(
                                 format!("agent timed out after {} minutes (pid {})", mins, pid),
@@ -206,6 +210,8 @@ impl Engine for CodexEngine {
                     thread::sleep(Duration::from_millis(100));
                 }
                 Err(e) => {
+                    let _ = child.wait();
+                    PROCESS_REGISTRY.unregister(pid);
                     return EngineResult::failure(format!("failed to wait for codex: {}", e), 1);
                 }
             }
