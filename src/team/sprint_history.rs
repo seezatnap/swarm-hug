@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{SPRINT_HISTORY_FILE, SWARM_HUG_DIR};
 
@@ -42,6 +42,36 @@ impl SprintHistory {
         })
     }
 
+    /// Load sprint history from an explicit path.
+    ///
+    /// This method loads sprint history from a specified path instead of
+    /// deriving it from the team name. Useful when loading from a worktree
+    /// or non-standard location.
+    ///
+    /// Creates a new history with 0 sprints if the file doesn't exist,
+    /// supporting the first-sprint case where no history file exists yet.
+    ///
+    /// The team name is extracted from the JSON content if the file exists,
+    /// otherwise it defaults to "unknown" (callers should set it if needed
+    /// before saving).
+    pub fn load_from(path: &Path) -> Result<Self, String> {
+        let (total_sprints, team_name) = if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+            let sprints = Self::parse_json(&content)?;
+            let team = Self::parse_team_name(&content).unwrap_or_else(|| "unknown".to_string());
+            (sprints, team)
+        } else {
+            (0, "unknown".to_string())
+        };
+
+        Ok(Self {
+            team_name,
+            total_sprints,
+            path: path.to_path_buf(),
+        })
+    }
+
     /// Parse the total_sprints from JSON content.
     fn parse_json(content: &str) -> Result<usize, String> {
         // Simple JSON parsing for {"total_sprints": N}
@@ -70,6 +100,52 @@ impl SprintHistory {
         }
 
         Err("missing total_sprints in sprint history".to_string())
+    }
+
+    /// Parse the team name from JSON content.
+    ///
+    /// Returns None if the team field is not found or cannot be parsed.
+    fn parse_team_name(content: &str) -> Option<String> {
+        let content = content.trim();
+
+        // Find "team": "value"
+        if let Some(idx) = content.find("\"team\"") {
+            let after_key = &content[idx + 6..]; // Skip past "team"
+            if let Some(colon_idx) = after_key.find(':') {
+                let after_colon = after_key[colon_idx + 1..].trim_start();
+                // Parse the string value
+                if let Some(stripped) = after_colon.strip_prefix('"') {
+                    let mut chars = stripped.chars();
+                    let mut result = String::new();
+                    let mut escaped = false;
+                    for ch in chars.by_ref() {
+                        if escaped {
+                            let decoded = match ch {
+                                'n' => '\n',
+                                'r' => '\r',
+                                't' => '\t',
+                                '\\' => '\\',
+                                '"' => '"',
+                                other => other,
+                            };
+                            result.push(decoded);
+                            escaped = false;
+                            continue;
+                        }
+                        if ch == '\\' {
+                            escaped = true;
+                            continue;
+                        }
+                        if ch == '"' {
+                            return Some(result);
+                        }
+                        result.push(ch);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Peek at the next sprint number without mutating state.
@@ -368,5 +444,110 @@ mod tests {
             assert_eq!(sprint_num1, peeked);
             assert_eq!(history1.total_sprints, history2.total_sprints);
         });
+    }
+
+    #[test]
+    fn test_load_from_nonexistent_file() {
+        with_temp_cwd(|| {
+            // Load from a path that doesn't exist (first sprint case)
+            let path = PathBuf::from("custom/path/sprint-history.json");
+            let history = SprintHistory::load_from(&path).unwrap();
+
+            // Should create default history with 0 sprints
+            assert_eq!(history.total_sprints, 0);
+            assert_eq!(history.team_name, "unknown");
+            assert_eq!(history.path, path);
+        });
+    }
+
+    #[test]
+    fn test_load_from_existing_file() {
+        with_temp_cwd(|| {
+            // Create a sprint history file at a custom path
+            let custom_dir = PathBuf::from("worktree/swarm-hug/my-team");
+            fs::create_dir_all(&custom_dir).unwrap();
+            let path = custom_dir.join("sprint-history.json");
+
+            // Write existing history
+            let content = r#"{
+  "team": "my-team",
+  "total_sprints": 5
+}
+"#;
+            fs::write(&path, content).unwrap();
+
+            // Load from explicit path
+            let history = SprintHistory::load_from(&path).unwrap();
+
+            assert_eq!(history.total_sprints, 5);
+            assert_eq!(history.team_name, "my-team");
+            assert_eq!(history.path, path);
+        });
+    }
+
+    #[test]
+    fn test_load_from_and_save() {
+        with_temp_cwd(|| {
+            // Create directory for custom path
+            let custom_dir = PathBuf::from("sprint-worktree/data");
+            fs::create_dir_all(&custom_dir).unwrap();
+            let path = custom_dir.join("sprint-history.json");
+
+            // Load from non-existent file (first sprint)
+            let mut history = SprintHistory::load_from(&path).unwrap();
+            assert_eq!(history.total_sprints, 0);
+
+            // Increment and save
+            history.increment();
+            history.increment();
+            history.save().unwrap();
+
+            // Reload and verify
+            let reloaded = SprintHistory::load_from(&path).unwrap();
+            assert_eq!(reloaded.total_sprints, 2);
+        });
+    }
+
+    #[test]
+    fn test_load_from_preserves_team_name_from_file() {
+        with_temp_cwd(|| {
+            let custom_dir = PathBuf::from("alt-location");
+            fs::create_dir_all(&custom_dir).unwrap();
+            let path = custom_dir.join("sprint-history.json");
+
+            // Write history with specific team name
+            let content = r#"{"team": "alpha-squad", "total_sprints": 10}"#;
+            fs::write(&path, content).unwrap();
+
+            let history = SprintHistory::load_from(&path).unwrap();
+            assert_eq!(history.team_name, "alpha-squad");
+            assert_eq!(history.total_sprints, 10);
+        });
+    }
+
+    #[test]
+    fn test_parse_team_name() {
+        // Valid JSON with team
+        let result = SprintHistory::parse_team_name(r#"{"team": "test-team", "total_sprints": 1}"#);
+        assert_eq!(result, Some("test-team".to_string()));
+
+        // With whitespace
+        let result = SprintHistory::parse_team_name(r#"{
+            "team": "spaced-team",
+            "total_sprints": 5
+        }"#);
+        assert_eq!(result, Some("spaced-team".to_string()));
+
+        // Missing team field
+        let result = SprintHistory::parse_team_name(r#"{"total_sprints": 1}"#);
+        assert_eq!(result, None);
+
+        // Empty team name
+        let result = SprintHistory::parse_team_name(r#"{"team": "", "total_sprints": 1}"#);
+        assert_eq!(result, Some("".to_string()));
+
+        // Team name with escaped characters
+        let result = SprintHistory::parse_team_name(r#"{"team": "test\"team", "total_sprints": 1}"#);
+        assert_eq!(result, Some("test\"team".to_string()));
     }
 }
