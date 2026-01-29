@@ -6,8 +6,8 @@
 
 ## Worktree Module Updates
 
-- [ ] (#2) Update `src/worktree/mod.rs` to modify `agent_branch_name()` to accept `RunContext` parameter and use `ctx.agent_branch()` for namespaced branch names; update `src/worktree/create.rs` to accept `RunContext` parameter in `create_worktrees_in()` replacing the project string, generate branch names using `ctx.agent_branch(initial)` and paths using the namespaced branch name [5 pts] (blocked by #1)
-- [ ] (#3) Update `src/worktree/cleanup.rs` cleanup functions to accept `RunContext` parameter, use `ctx.agent_branch()` for matching worktrees/branches during cleanup, ensuring cleanup only affects current run's artifacts (matched by hash); update related worktree tests in `src/worktree/` to use `RunContext` [5 pts] (blocked by #1)
+- [A] (#2) Update `src/worktree/mod.rs` to modify `agent_branch_name()` to accept `RunContext` parameter and use `ctx.agent_branch()` for namespaced branch names; update `src/worktree/create.rs` to accept `RunContext` parameter in `create_worktrees_in()` replacing the project string, generate branch names using `ctx.agent_branch(initial)` and paths using the namespaced branch name [5 pts] (blocked by #1)
+- [A] (#3) Update `src/worktree/cleanup.rs` cleanup functions to accept `RunContext` parameter, use `ctx.agent_branch()` for matching worktrees/branches during cleanup, ensuring cleanup only affects current run's artifacts (matched by hash); update related worktree tests in `src/worktree/` to use `RunContext` [5 pts] (blocked by #1)
 
 ## Runner Integration
 
