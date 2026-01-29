@@ -14,10 +14,10 @@ Let me now produce the task breakdown as requested. The user specifically asked 
 
 ## Testing
 
-- [ ] (#3) Add automated test `test_followup_tasks_written_to_worktree()` that verifies: (a) follow-up tasks appear in sprint worktree's tasks.md, (b) main repo tasks.md unchanged, (c) main repo chat.md unchanged, (d) commit exists in sprint branch history [5 pts] (blocked by #2)
+- [A] (#3) Add automated test `test_followup_tasks_written_to_worktree()` that verifies: (a) follow-up tasks appear in sprint worktree's tasks.md, (b) main repo tasks.md unchanged, (c) main repo chat.md unchanged, (d) commit exists in sprint branch history [5 pts] (blocked by #2)
 
 - [ ] (#4) Manual verification: run full sprint to completion, verify "Sprint review added N follow-up task(s)" message appears, main repo shows no uncommitted changes, sprint branch tasks.md contains "## Follow-up tasks" section, and commit exists in history [5 pts] (blocked by #3)
 
 ## Validation
 
-- [ ] (#5) Run `cargo test` and `cargo clippy` to ensure no test failures or new warnings introduced by the path fixes [4 pts] (blocked by #2)
+- [A] (#5) Run `cargo test` and `cargo clippy` to ensure no test failures or new warnings introduced by the path fixes [4 pts] (blocked by #2)
