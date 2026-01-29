@@ -167,25 +167,40 @@ pub(crate) fn run_sprint(
     // Print sprint start banner (after worktree creation to ensure we have a valid sprint)
     print_sprint_start_banner(&formatted_team, historical_sprint);
 
-    // NOW load and save state files (after worktree is created)
-    // Note: Task #5 will update these to write to the sprint worktree instead of main repo
-    let mut sprint_history = team::SprintHistory::load(&team_name)?;
+    // Construct the sprint worktree swarm directory path
+    // All sprint state files are written here instead of the main repo
+    let worktree_swarm_dir = feature_worktree_path
+        .join(team::SWARM_HUG_DIR)
+        .join(&team_name);
+
+    // Load sprint history from worktree (creates default if first sprint)
+    let worktree_history_path = worktree_swarm_dir.join(team::SPRINT_HISTORY_FILE);
+    let mut sprint_history = team::SprintHistory::load_from(&worktree_history_path)?;
+    // Set team name in case this is first sprint (load_from uses "unknown" for new files)
+    if sprint_history.team_name == "unknown" {
+        sprint_history.team_name = team_name.clone();
+    }
     sprint_history.increment();
     sprint_history.save()?;
 
-    let mut team_state = team::TeamState::load(&team_name)
-        .map_err(|e| format!("failed to load team state: {}", e))?;
+    // Load team state from worktree (creates default if first sprint)
+    let worktree_state_path = worktree_swarm_dir.join(team::TEAM_STATE_FILE);
+    let mut team_state = team::TeamState::load_from(&worktree_state_path)
+        .map_err(|e| format!("failed to load team state from worktree: {}", e))?;
     team_state
         .set_feature_branch(&sprint_branch)
         .map_err(|e| format!("failed to set team state feature branch: {}", e))?;
     team_state
         .save()
-        .map_err(|e| format!("failed to save team state: {}", e))?;
+        .map_err(|e| format!("failed to save team state to worktree: {}", e))?;
     let team_state_path = team_state.path().to_string_lossy().to_string();
 
-    // Write updated tasks
-    fs::write(&config.files_tasks, task_list.to_string())
-        .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
+    // Write updated tasks to worktree
+    let worktree_tasks_path = worktree_swarm_dir.join("tasks.md");
+    fs::create_dir_all(&worktree_swarm_dir)
+        .map_err(|e| format!("failed to create worktree swarm dir: {}", e))?;
+    fs::write(&worktree_tasks_path, task_list.to_string())
+        .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
     // Collect assignments
     let assignments: Vec<(char, String)> = task_list
@@ -231,12 +246,12 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("failed to write chat: {}", e))?;
 
     // Commit assignment changes to git so worktrees can see them
-    let sprint_history_path = team::Team::new(&team_name).sprint_history_path();
+    // Use worktree paths for all sprint state files
     commit_task_assignments(
         &feature_worktree_path,
         &sprint_branch,
-        &config.files_tasks,
-        sprint_history_path.to_str().unwrap_or(""),
+        worktree_tasks_path.to_str().unwrap_or(""),
+        worktree_history_path.to_str().unwrap_or(""),
         team_state_path.as_str(),
         &formatted_team,
         historical_sprint,
@@ -758,9 +773,9 @@ pub(crate) fn run_sprint(
     );
     drop(tracker_guard);
 
-    // Write final task state
-    fs::write(&config.files_tasks, task_list.to_string())
-        .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
+    // Write final task state to worktree
+    fs::write(&worktree_tasks_path, task_list.to_string())
+        .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
     // Clean up worktrees after sprint completes
     // This ensures worktrees are recreated fresh from the feature branch on the next sprint
@@ -798,7 +813,7 @@ pub(crate) fn run_sprint(
     commit_sprint_completion(
         &feature_worktree_path,
         &sprint_branch,
-        &config.files_tasks,
+        worktree_tasks_path.to_str().unwrap_or(""),
         &formatted_team,
         historical_sprint,
     )?;
@@ -816,12 +831,13 @@ pub(crate) fn run_sprint(
             &task_list,
             &formatted_team,
             historical_sprint,
+            &worktree_tasks_path,
         )?;
     }
 
     // Reload task list to get latest counts (post-sprint review may have added tasks)
-    let final_content = fs::read_to_string(&config.files_tasks)
-        .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
+    let final_content = fs::read_to_string(&worktree_tasks_path)
+        .map_err(|e| format!("failed to read {}: {}", worktree_tasks_path.display(), e))?;
     let final_task_list = TaskList::parse(&final_content);
     let remaining_tasks = final_task_list.unassigned_count() + final_task_list.assigned_count();
     let total_tasks = final_task_list.tasks.len();
@@ -863,13 +879,13 @@ pub(crate) fn run_sprint(
             eprintln!("  warning: failed to write merge start to chat: {}", e);
         }
         let merge_cleanup_paths = vec![
-            PathBuf::from(&config.files_tasks),
+            worktree_tasks_path.clone(),
             PathBuf::from(format!(
                 "{}/{}",
                 team::SWARM_HUG_DIR,
                 team::ASSIGNMENTS_FILE
             )),
-            sprint_history_path.clone(),
+            worktree_history_path.clone(),
             PathBuf::from(&team_state_path),
         ];
         merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths)
@@ -969,6 +985,7 @@ fn run_post_sprint_review(
     task_list: &TaskList,
     team_name: &str,
     sprint_number: usize,
+    worktree_tasks_path: &Path,
 ) -> Result<(), String> {
     // Get git log from sprint start to now
     let git_log = get_git_log_range_in(feature_worktree, sprint_start_commit, "HEAD")?;
@@ -1005,8 +1022,8 @@ fn run_post_sprint_review(
                     formatted_follow_ups.len()
                 );
 
-                // Append follow-up tasks to TASKS.md
-                let mut current_content = fs::read_to_string(&config.files_tasks)
+                // Append follow-up tasks to TASKS.md in worktree
+                let mut current_content = fs::read_to_string(worktree_tasks_path)
                     .unwrap_or_default();
 
                 // Ensure newline before appending
@@ -1022,7 +1039,7 @@ fn run_post_sprint_review(
                     println!("    {}", task);
                 }
 
-                fs::write(&config.files_tasks, current_content)
+                fs::write(worktree_tasks_path, current_content)
                     .map_err(|e| format!("failed to write follow-up tasks: {}", e))?;
 
                 // Write to chat
@@ -1037,10 +1054,11 @@ fn run_post_sprint_review(
                 // Commit follow-up tasks so next planning phase sees them
                 let commit_msg =
                     format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
+                let tasks_path_str = worktree_tasks_path.to_str().unwrap_or("");
                 if let Ok(true) = commit_files_in_worktree_on_branch(
                     feature_worktree,
                     sprint_branch,
-                    &[&config.files_tasks, &config.files_chat],
+                    &[tasks_path_str, &config.files_chat],
                     &commit_msg,
                 ) {
                     println!("  Committed follow-up tasks to git.");
