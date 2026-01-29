@@ -169,6 +169,8 @@ impl Engine for CodexEngine {
                     let stdout_output = stdout_handle.join().unwrap_or_default();
                     let stderr_output = stderr_handle.join().unwrap_or_default();
                     let exit_code = status.code().unwrap_or(1);
+                    let _ = child.wait();
+                    PROCESS_REGISTRY.unregister(pid);
 
                     let result = if status.success() {
                         EngineResult::success(stdout_output)
@@ -190,6 +192,7 @@ impl Engine for CodexEngine {
                             let _ = stderr_handle.join();
                             PROCESS_REGISTRY.unregister(pid);
                             let mins = elapsed.as_secs() / 60;
+                            PROCESS_REGISTRY.unregister(pid);
                             return EngineResult::failure(
                                 format!("agent timed out after {} minutes (pid {})", mins, pid),
                                 124, // Standard timeout exit code

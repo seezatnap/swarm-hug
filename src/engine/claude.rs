@@ -131,6 +131,7 @@ impl Engine for ClaudeEngine {
                             let _ = child.wait();
                             PROCESS_REGISTRY.unregister(pid);
                             let mins = elapsed.as_secs() / 60;
+                            PROCESS_REGISTRY.unregister(pid);
                             return EngineResult::failure(
                                 format!("agent timed out after {} minutes (pid {})", mins, pid),
                                 124, // Standard timeout exit code
