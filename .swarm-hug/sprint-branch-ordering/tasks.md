@@ -4,13 +4,13 @@ I understand. The user is asking me to convert the PRD about "Sprint Branch Crea
 
 ## Sprint History Module
 
-- [ ] (#1) Add `peek_next_sprint()` method to `SprintHistory` struct in `src/team/sprint_history.rs` that returns `total_sprints + 1` without mutating state, and add `increment()` method to separate mutation from the existing `next_sprint()` logic [4 pts]
+- [A] (#1) Add `peek_next_sprint()` method to `SprintHistory` struct in `src/team/sprint_history.rs` that returns `total_sprints + 1` without mutating state, and add `increment()` method to separate mutation from the existing `next_sprint()` logic [4 pts]
 
-- [ ] (#2) Add `load_from(path: &Path)` method to `SprintHistory` struct that loads from an explicit path instead of deriving from team name, supporting both existing file and first-sprint (file not exists) cases [5 pts]
+- [A] (#2) Add `load_from(path: &Path)` method to `SprintHistory` struct that loads from an explicit path instead of deriving from team name, supporting both existing file and first-sprint (file not exists) cases [5 pts]
 
 ## Team State Module
 
-- [ ] (#3) Add `load_from(path: &Path)` method to `TeamState` struct in `src/team/state.rs` that loads from an explicit path instead of deriving from team name, with support for creating default state when file doesn't exist [5 pts]
+- [B] (#3) Add `load_from(path: &Path)` method to `TeamState` struct in `src/team/state.rs` that loads from an explicit path instead of deriving from team name, with support for creating default state when file doesn't exist [5 pts]
 
 ## Runner Reordering
 
