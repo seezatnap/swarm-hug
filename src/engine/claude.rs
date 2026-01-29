@@ -5,8 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::EngineType;
+use crate::process::kill_process_tree;
 use crate::process_group::spawn_in_new_process_group;
 use crate::process_registry::PROCESS_REGISTRY;
+use crate::shutdown;
 
 use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, output_to_result, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
@@ -125,6 +127,13 @@ impl Engine for ClaudeEngine {
                     // Process still running
                     let elapsed = start.elapsed();
 
+                    if shutdown::requested() {
+                        kill_process_tree(pid);
+                        let _ = child.wait();
+                        PROCESS_REGISTRY.unregister(pid);
+                        return EngineResult::failure("Shutdown requested", 130);
+                    }
+
                     // Check for timeout
                     if let Some(timeout_duration) = timeout {
                         if elapsed >= timeout_duration {
@@ -181,5 +190,42 @@ mod tests {
         let engine = ClaudeEngine::with_timeout(1800);
         assert_eq!(engine.timeout_secs, 1800);
         assert_eq!(engine.engine_type(), EngineType::Claude);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_claude_engine_shutdown_requested() {
+        use std::fs;
+        use std::fs::File;
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        use tempfile::TempDir;
+
+        let _cwd_guard = crate::testutil::CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::shutdown::test_lock();
+        crate::shutdown::reset();
+
+        let cwd = std::env::current_dir().expect("current dir");
+        let temp = TempDir::new_in(cwd).expect("temp dir");
+        let script_path = temp.path().join("fake-claude.sh");
+        let mut file = File::create(&script_path).expect("create script");
+        writeln!(file, "#!/bin/sh").expect("write shebang");
+        writeln!(file, "cat >/dev/null").expect("write stdin drain");
+        writeln!(file, "sleep 5").expect("write sleep");
+        drop(file);
+
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+
+        crate::shutdown::request();
+        let engine = ClaudeEngine::with_path(script_path.to_string_lossy().to_string());
+        let result = engine.execute("Aaron", "test shutdown", temp.path(), 0, None);
+        crate::shutdown::reset();
+
+        assert!(!result.success);
+        assert_eq!(result.exit_code, 130, "unexpected result: {:?}", result);
+        assert_eq!(result.error.as_deref(), Some("Shutdown requested"));
     }
 }
