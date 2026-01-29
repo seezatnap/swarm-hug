@@ -25,6 +25,8 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use crate::process_registry::PROCESS_REGISTRY;
+
 /// Global flag indicating shutdown has been requested.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -56,6 +58,7 @@ pub fn register_handler() -> Result<(), String> {
             eprintln!("Interrupt received. Gracefully ending sprint...");
             eprintln!("(Press Ctrl+C {} more time(s) to force quit)", MAX_INTERRUPTS - count);
             SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+            PROCESS_REGISTRY.kill_all();
         } else {
             eprintln!("(Press Ctrl+C {} more time(s) to force quit)", MAX_INTERRUPTS - count);
         }

@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::EngineType;
+use crate::process_registry::PROCESS_REGISTRY;
 
 use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, output_to_result, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
@@ -87,13 +88,14 @@ impl Engine for ClaudeEngine {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn claude: {}", e), 1),
         };
+        let pid = child.id();
+        PROCESS_REGISTRY.register(pid);
 
         // Write prompt to stdin
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(prompt.as_bytes());
         }
 
-        let pid = child.id();
         let start = std::time::Instant::now();
         let log_interval = Duration::from_secs(WAIT_LOG_INTERVAL_SECS);
         let mut next_log = log_interval;
@@ -108,8 +110,15 @@ impl Engine for ClaudeEngine {
             match child.try_wait() {
                 Ok(Some(_status)) => {
                     match child.wait_with_output() {
-                        Ok(output) => return output_to_result(output),
-                        Err(e) => return EngineResult::failure(format!("failed to get output: {}", e), 1),
+                        Ok(output) => {
+                            let result = output_to_result(output);
+                            PROCESS_REGISTRY.unregister(pid);
+                            return result;
+                        }
+                        Err(e) => {
+                            PROCESS_REGISTRY.unregister(pid);
+                            return EngineResult::failure(format!("failed to get output: {}", e), 1);
+                        }
                     }
                 }
                 Ok(None) => {
@@ -122,6 +131,7 @@ impl Engine for ClaudeEngine {
                             let _ = child.kill();
                             let _ = child.wait();
                             let mins = elapsed.as_secs() / 60;
+                            PROCESS_REGISTRY.unregister(pid);
                             return EngineResult::failure(
                                 format!("agent timed out after {} minutes (pid {})", mins, pid),
                                 124, // Standard timeout exit code
@@ -142,6 +152,8 @@ impl Engine for ClaudeEngine {
                     thread::sleep(Duration::from_millis(100));
                 }
                 Err(e) => {
+                    let _ = child.wait();
+                    PROCESS_REGISTRY.unregister(pid);
                     return EngineResult::failure(format!("failed to wait for claude: {}", e), 1);
                 }
             }
