@@ -372,6 +372,98 @@ fn test_merge_agent_conflict_surfaces_files() {
 }
 
 #[test]
+fn test_merge_agent_conflict_in_run_reports_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    fs::write(&tasks_path, "# Tasks\n\n- [ ] Task one\n").expect("write TASKS.md");
+    fs::write(repo_path.join("conflict.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut checkout_feature = Command::new("git");
+    checkout_feature
+        .args(["checkout", "-b", "alpha-sprint-1"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feature);
+    fs::write(repo_path.join("conflict.txt"), "feature change\n").expect("write feature");
+    commit_all(repo_path, "feature change");
+
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+    fs::write(repo_path.join("conflict.txt"), "target change\n").expect("write target");
+    commit_all(repo_path, "target change");
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--max-agents",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_cmd.output().expect("run swarm");
+    assert!(
+        !output.status.success(),
+        "expected merge conflict to fail run\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+    assert!(
+        stderr.contains("merge agent failed"),
+        "expected merge agent failure, stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("conflict.txt"),
+        "expected conflict file in stderr:\n{}",
+        stderr
+    );
+
+    let mut diff_cmd = Command::new("git");
+    diff_cmd
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(repo_path);
+    let diff_output = run_success(&mut diff_cmd);
+    let conflicts = String::from_utf8_lossy(&diff_output.stdout);
+    assert!(
+        conflicts.trim().is_empty(),
+        "merge conflicts should be cleared, got: {}",
+        conflicts
+    );
+}
+
+#[test]
 fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
     with_temp_cwd(|repo_path| {
         let repo_path = repo_path.to_path_buf();
