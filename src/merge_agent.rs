@@ -233,6 +233,10 @@ fn stub_merge_feature_branch(
         .arg("-C")
         .arg(repo_root)
         .args(["merge", "--no-ff", feature_branch])
+        .env("GIT_AUTHOR_NAME", "Swarm ScrumMaster")
+        .env("GIT_AUTHOR_EMAIL", "scrummaster@swarm.local")
+        .env("GIT_COMMITTER_NAME", "Swarm ScrumMaster")
+        .env("GIT_COMMITTER_EMAIL", "scrummaster@swarm.local")
         .output()
         .map_err(|e| format!("failed to run git merge: {}", e))?;
 

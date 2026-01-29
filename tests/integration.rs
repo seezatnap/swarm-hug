@@ -371,24 +371,17 @@ fn test_merge_agent_conflict_surfaces_files() {
     );
 }
 
+/// Test that merge conflicts during sprint-to-target merge are properly reported.
+///
+/// Note: This test uses the direct merge_agent API since the full swarm run now
+/// cleans up pre-existing sprint branches (to handle failed sprints). The lower-level
+/// test `test_merge_agent_conflict_surfaces_files` also tests this scenario.
 #[test]
 fn test_merge_agent_conflict_in_run_reports_error() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();
-    let team_name = "alpha";
 
     init_git_repo(repo_path);
-    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
-
-    let mut team_init_cmd = Command::new(swarm_bin);
-    team_init_cmd
-        .args(["project", "init", team_name])
-        .current_dir(repo_path);
-    run_success(&mut team_init_cmd);
-
-    let team_root = repo_path.join(".swarm-hug").join(team_name);
-    let tasks_path = team_root.join("tasks.md");
-    fs::write(&tasks_path, "# Tasks\n\n- [ ] Task one\n").expect("write TASKS.md");
     fs::write(repo_path.join("conflict.txt"), "base\n").expect("write base");
     commit_all(repo_path, "init");
 
@@ -398,14 +391,16 @@ fn test_merge_agent_conflict_in_run_reports_error() {
         .current_dir(repo_path);
     run_success(&mut rename_cmd);
 
+    // Create feature branch with changes
     let mut checkout_feature = Command::new("git");
     checkout_feature
-        .args(["checkout", "-b", "alpha-sprint-1"])
+        .args(["checkout", "-b", "test-sprint-1"])
         .current_dir(repo_path);
     run_success(&mut checkout_feature);
     fs::write(repo_path.join("conflict.txt"), "feature change\n").expect("write feature");
     commit_all(repo_path, "feature change");
 
+    // Create conflicting changes on main
     let mut checkout_main = Command::new("git");
     checkout_main
         .args(["checkout", "main"])
@@ -414,42 +409,28 @@ fn test_merge_agent_conflict_in_run_reports_error() {
     fs::write(repo_path.join("conflict.txt"), "target change\n").expect("write target");
     commit_all(repo_path, "target change");
 
-    let mut run_cmd = Command::new(swarm_bin);
-    run_cmd
-        .args([
-            "--project",
-            team_name,
-            "--stub",
-            "--max-sprints",
-            "1",
-            "--tasks-per-agent",
-            "1",
-            "--max-agents",
-            "1",
-            "--no-tui",
-            "run",
-        ])
-        .current_dir(repo_path);
-    let output = run_cmd.output().expect("run swarm");
+    // Use the merge_agent directly to test conflict detection
+    let engine = swarm::engine::StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
+    let err = swarm::merge_agent::ensure_feature_merged(
+        &engine,
+        "test-sprint-1",
+        "main",
+        repo_path,
+    )
+    .expect_err("expected merge conflict");
+
     assert!(
-        !output.status.success(),
-        "expected merge conflict to fail run\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr_raw = String::from_utf8_lossy(&output.stderr);
-    let stderr = strip_ansi(&stderr_raw);
-    assert!(
-        stderr.contains("merge agent failed"),
-        "expected merge agent failure, stderr:\n{}",
-        stderr
+        err.contains("merge conflicts"),
+        "expected conflict error, got: {}",
+        err
     );
     assert!(
-        stderr.contains("conflict.txt"),
-        "expected conflict file in stderr:\n{}",
-        stderr
+        err.contains("conflict.txt"),
+        "expected conflict file name in error, got: {}",
+        err
     );
 
+    // Verify merge was aborted properly
     let mut diff_cmd = Command::new("git");
     diff_cmd
         .args(["diff", "--name-only", "--diff-filter=U"])
@@ -1208,4 +1189,153 @@ fn test_agent_merges_go_to_sprint_branch_not_target() {
         2,
         "Both tasks should be completed"
     );
+}
+
+/// Test that the sprint-to-target merge is authored by Swarm ScrumMaster, not an agent.
+#[test]
+fn test_sprint_merge_authored_by_scrummaster() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init");
+
+    // Get the initial commit before the sprint
+    let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    // Get the merge commit that brought the sprint branch into the target
+    // Look for the merge commit after the initial commit
+    let merge_log = git_stdout(
+        repo_path,
+        &[
+            "log",
+            "--format=%an <%ae>",
+            "--merges",
+            "-1",
+            &format!("{}..HEAD", initial_commit),
+        ],
+    );
+
+    assert!(
+        merge_log.contains("Swarm ScrumMaster"),
+        "Sprint-to-target merge should be authored by Swarm ScrumMaster, got: {}",
+        merge_log
+    );
+    assert!(
+        !merge_log.contains("Agent"),
+        "Sprint-to-target merge should NOT be authored by an Agent, got: {}",
+        merge_log
+    );
+}
+
+/// Test that a pre-existing feature worktree from a failed sprint is cleaned up.
+#[test]
+fn test_failed_sprint_worktree_cleanup_on_restart() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+        let team_name = "alpha";
+
+        init_git_repo(&repo_path);
+        let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+        let mut team_init_cmd = Command::new(swarm_bin);
+        team_init_cmd
+            .args(["project", "init", team_name])
+            .current_dir(&repo_path);
+        run_success(&mut team_init_cmd);
+
+        let team_root = repo_path.join(".swarm-hug").join(team_name);
+        let worktrees_dir = team_root.join("worktrees");
+
+        // Write tasks for multiple sprints
+        write_team_tasks_multi_sprint(&team_root);
+        commit_all(&repo_path, "init");
+
+        // Get the current branch name (could be master or main depending on git config)
+        let target_branch = git_stdout(&repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+
+        // Create a "leftover" feature worktree to simulate a failed sprint
+        // This simulates what would happen if a previous sprint crashed mid-way
+        let leftover_branch = format!("{}-sprint-1", team_name);
+        let leftover_worktree = worktree::create_feature_worktree_in(
+            &worktrees_dir,
+            &leftover_branch,
+            &target_branch,
+        )
+        .expect("create leftover worktree");
+
+        // Add a file to the leftover worktree to make it "dirty"
+        fs::write(leftover_worktree.join("leftover.txt"), "leftover content")
+            .expect("write leftover file");
+        commit_all(&leftover_worktree, "leftover commit");
+
+        // Verify the leftover worktree exists
+        assert!(
+            leftover_worktree.exists(),
+            "leftover worktree should exist before run"
+        );
+
+        // Run a sprint - this should clean up the old worktree and create a fresh one
+        let mut run_cmd = Command::new(swarm_bin);
+        run_cmd
+            .args([
+                "--project",
+                team_name,
+                "--stub",
+                "--max-sprints",
+                "1",
+                "--tasks-per-agent",
+                "1",
+                "--no-tui",
+                "run",
+            ])
+            .current_dir(&repo_path);
+        let output = run_success(&mut run_cmd);
+        let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+        // Verify the sprint ran successfully
+        assert!(
+            stdout.contains("Sprint 1: assigned"),
+            "Sprint should have run successfully. Output:\n{}",
+            stdout
+        );
+
+        // Verify tasks were completed (proving the sprint actually ran)
+        let tasks_content = fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+        let task_list = TaskList::parse(&tasks_content);
+        assert!(
+            task_list.completed_count() >= 2,
+            "Tasks should be completed after sprint"
+        );
+
+        // The leftover file should NOT be in the final result since the worktree was recreated fresh
+        // (Note: in stub mode the worktree is cleaned up after sprint, so we can't check this directly)
+    });
 }

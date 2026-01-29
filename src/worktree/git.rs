@@ -466,6 +466,10 @@ fn merge_feature_branch_in(
             &format!("Merge branch '{}' into {}", feature, target),
             feature,
         ])
+        .env("GIT_AUTHOR_NAME", "Swarm ScrumMaster")
+        .env("GIT_AUTHOR_EMAIL", "scrummaster@swarm.local")
+        .env("GIT_COMMITTER_NAME", "Swarm ScrumMaster")
+        .env("GIT_COMMITTER_EMAIL", "scrummaster@swarm.local")
         .output();
 
     match merge {

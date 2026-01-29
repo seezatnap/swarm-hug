@@ -154,6 +154,14 @@ pub(crate) fn run_sprint(
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
+
+    // Clean up any existing feature worktree from a failed previous sprint
+    // This ensures we start fresh from the target branch
+    if let Err(e) = worktree::cleanup_feature_worktree(worktrees_dir, &sprint_branch, true) {
+        // Log but don't fail - the worktree might not exist
+        eprintln!("  note: pre-sprint feature worktree cleanup: {}", e);
+    }
+
     let feature_worktree_path =
         worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
             .map_err(|e| format!("failed to create feature worktree: {}", e))?;
