@@ -698,6 +698,7 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "libc",
+ "once_cell",
  "rand",
  "ratatui",
  "tempfile",

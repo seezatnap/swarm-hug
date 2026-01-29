@@ -1,60 +1,28 @@
 # Tasks
 
-## Current Task
+## Current Session
 
-- [x] (#32) BUG: Agent prompt instructs agents to merge directly to main repo instead of letting runner handle merge to sprint branch; Fixed agent.md to merge into sprint branch worktree instead of main repo; Added integration test `test_agent_merges_go_to_sprint_branch_not_target`
-- [x] (#33) Sprint-to-target merge should be authored by Swarm ScrumMaster (not an agent); Added GIT_AUTHOR/COMMITTER env vars to merge functions
-- [x] (#34) Clean up pre-existing feature worktree before starting a sprint (handles failed sprints); Added pre-sprint cleanup in runner.rs
-## Worktree Overhaul
+- [x] (#5) Extract shared `kill_process_tree(pid)` function to `src/process.rs` that sends SIGTERM to process group, waits 100ms, sends SIGKILL to process group, and uses pkill as backup for children; include Windows taskkill implementation; update TUI and plain text modes to use this shared function [5 pts]
 
-### Feature/Sprint Branch Management
+## Phase 1: Critical Fixes
 
-- [x] (#1) Add `--target-branch` CLI flag to specify base/merge target branch (defaults to auto-detected main/master)
-- [x] (#2) Implement target branch auto-detection logic (check for main, then master, then current branch)
-- [x] (#3) Create feature/sprint branch creation function that forks from target branch (e.g., `greenfield-sprint-1`)
-- [x] (#4) Add feature branch worktree creation under `.swarm-hug/<project>/worktrees/<sprint-name>`
+- [x] (#1) Fix zombie processes in both engines by adding `child.wait()` after all `child.kill()` calls in `src/engine/claude.rs` and `src/engine/codex.rs`, and fix Codex streaming thread joins to ensure stdout/stderr reader threads are joined on timeout exit path [5 pts]
 
-### Agent Worktree Lifecycle
+## Phase 2: Process Registry
 
-- [x] (#7) Update agent branch naming convention to use `agent-<name>` format (e.g., `agent-aaron`)
-- [x] (#5) Modify agent worktree creation to fork from feature/sprint branch instead of target branch (blocked by #3)
-- [x] (#6) Implement agent worktree recreation logic - delete and recreate fresh from feature branch after each task completion (blocked by #5)
+- [x] (#2) Create `src/process_registry.rs` module with thread-safe `ProcessRegistry` struct using `Mutex<HashSet<u32>>`, implementing `new()`, `register(pid)`, `unregister(pid)`, `all_pids()`, and `kill_all()` methods, plus a global `PROCESS_REGISTRY` static using `lazy_static` or `once_cell` [5 pts]
+- [ ] (#3) Integrate process registry into both claude.rs and codex.rs engines: register PID immediately after `Command::spawn()`, unregister PID after `child.wait()` on all exit paths (success, timeout, shutdown, error), and wire `PROCESS_REGISTRY.kill_all()` to the shutdown handler in `src/shutdown.rs` [5 pts]
 
-### Task Merge Flow
+## Phase 3: Process Group Management
 
-- [x] (#8) Implement agent-to-feature-branch merge after task completion using `--no-ff` (blocked by #5)
-- [x] (#9) Add agent worktree cleanup after successful merge to feature branch; Handle merge conflicts during agent-to-feature merge - surface errors in CHAT.md without crashing (blocked by #8)
+- [ ] (#4) Create `src/process_group.rs` helper module with `spawn_in_new_process_group()` function that uses `pre_exec` with `libc::setpgid(0, 0)` on Unix and standard spawn on Windows, then update both claude.rs and codex.rs engine spawn calls to use this helper [5 pts]
 
-### Merge Agent Implementation
+## Phase 4: Signal Propagation
 
-- [x] (#11) Create merge agent prompt template in `prompts/` directory for feature-to-target merges
-- [x] (#12) Implement merge agent execution logic that handles feature-to-target branch merging; Add conflict resolution guidance in merge agent prompt - preserve upstream, focus on getting code/tests out of conflict (blocked by #11)
-- [x] (#14) Integrate merge agent invocation at sprint completion (blocked by #12, #3)
+- [ ] (#6) Add shutdown check to engine polling loops in both claude.rs and codex.rs that calls `shutdown::requested()` and terminates subprocess gracefully when triggered, returning appropriate shutdown error result with exit code 130 [4 pts] (blocked by #3)
+- [ ] (#7) Implement graceful signal escalation in `kill_subprocess()` helper: send SIGTERM first, wait 100ms, check if still running with `try_wait()`, send SIGKILL if needed, always call `child.wait()` to reap; use this helper in both timeout and shutdown paths in both engines [5 pts] (blocked by #1)
 
-### Sprint Workflow Updates
+## Phase 5: Testing
 
-- [x] (#15) Ensure sprint planning commits occur within feature/sprint branch; Ensure postmortem commits occur within feature/sprint branch; Ensure sprint close commits occur within feature/sprint branch (blocked by #4)
-
-### Sprint Completion Flow
-
-- [x] (#18) Implement feature branch merge to target branch at sprint completion using merge agent (blocked by #14)
-- [x] (#19) Add feature branch deletion after successful merge to target; Add feature branch worktree cleanup after merge (blocked by #18)
-
-### Configuration
-
-- [x] (#21) Add `target_branch` field to config struct with default of `None`; Update config parsing to handle `--target-branch` CLI override (blocked by #1)
-- [x] (#23) Store sprint/feature branch name in team state for reference during merge operations
-
-### Testing
-
-- [x] (#24) Add unit tests for target branch auto-detection logic (blocked by #2)
-- [x] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
-- [x] (#27) Add test for `--target-branch` flag override behavior
-
-### Documentation
-
-- [ ] (#28) Update README.md with new worktree workflow documentation (blocked by #18)
-
-### Maintenance
-
-- [ ] (#31) Refactor src/runner.rs to split modules (file >1000 LOC)
+- [ ] (#8) Add integration tests for subprocess cleanup: test `test_engine_timeout_no_zombie` that spawns engine with short timeout and verifies no zombie processes remain; test `test_shutdown_kills_subprocess` that sets shutdown flag and verifies subprocess terminates within 500ms [5 pts] (blocked by #1, #6, #7)
+- [ ] (#9) Add multi-instance isolation tests: test `test_multi_instance_isolation` with two ProcessRegistry instances verifying kill_all on one doesn't affect the other; test `test_process_registry_thread_safety` with concurrent register/unregister/kill_all operations verifying no race conditions [5 pts] (blocked by #2)

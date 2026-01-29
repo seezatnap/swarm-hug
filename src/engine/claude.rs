@@ -120,6 +120,7 @@ impl Engine for ClaudeEngine {
                     if let Some(timeout_duration) = timeout {
                         if elapsed >= timeout_duration {
                             let _ = child.kill();
+                            let _ = child.wait();
                             let mins = elapsed.as_secs() / 60;
                             return EngineResult::failure(
                                 format!("agent timed out after {} minutes (pid {})", mins, pid),
