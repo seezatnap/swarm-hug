@@ -14,7 +14,7 @@ I understand. The user is asking me to convert the PRD about "Sprint Branch Crea
 
 ## Runner Reordering
 
-- [ ] (#4) Reorder `run_sprint()` in `src/runner.rs` to create sprint branch/worktree FIRST before any file writes: determine sprint number using `peek_next_sprint()`, compute sprint branch name, then call `create_feature_worktree_in()` before loading/saving any state files [5 pts] (blocked by #1)
+- [x] (#4) Reorder `run_sprint()` in `src/runner.rs` to create sprint branch/worktree FIRST before any file writes: determine sprint number using `peek_next_sprint()`, compute sprint branch name, then call `create_feature_worktree_in()` before loading/saving any state files [5 pts] (blocked by #1) (A)
 
 - [ ] (#5) Update `run_sprint()` file write operations to use sprint worktree paths: construct `worktree_swarm_dir` from feature worktree path, use `load_from()` methods to load state from worktree, and write `sprint-history.json`, `team-state.json`, and `tasks.md` to the worktree instead of main repo [5 pts] (blocked by #2, #3, #4)
 
