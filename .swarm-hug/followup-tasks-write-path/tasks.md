@@ -10,7 +10,7 @@ Let me now produce the task breakdown as requested. The user specifically asked 
 
 ## Commit Path Fix
 
-- [A] (#2) Update `commit_files_in_worktree_on_branch()` call to use worktree-relative chat path instead of `config.files_chat`, ensuring both tasks.md and chat.md are committed from the worktree context (line 1084) [4 pts] (blocked by #1)
+- [x] (#2) Update `commit_files_in_worktree_on_branch()` call to use worktree-relative chat path instead of `config.files_chat`, ensuring both tasks.md and chat.md are committed from the worktree context (line 1084) [4 pts] (A) - already completed in commit 9169468 as part of task #1
 
 ## Testing
 
