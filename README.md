@@ -1,6 +1,6 @@
 ![swarm-hug](https://github.com/user-attachments/assets/2eced3f3-5518-431b-bf24-fd648f7041c9)
 
-A sprint analogy for agent orchestration, in a cli interface.
+A CLI interface for agents working in sprints.
 
 ## Quick Start
 
