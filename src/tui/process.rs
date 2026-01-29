@@ -4,41 +4,11 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
+use crate::process::kill_process_tree;
+
 use super::message::TuiMessage;
 use super::run::run_tui;
 use super::tail::tail_chat_to_tui;
-
-/// Kill a process and all its children (process group).
-#[cfg(unix)]
-fn kill_process_tree(pid: u32) {
-    use std::process::Command;
-    // First try SIGTERM to the process group (negative PID)
-    let _ = Command::new("kill")
-        .args(["-TERM", "--", &format!("-{}", pid)])
-        .status();
-
-    // Give processes a moment to clean up
-    thread::sleep(Duration::from_millis(100));
-
-    // Then SIGKILL to make sure everything is dead
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{}", pid)])
-        .status();
-
-    // Also kill direct children that might have escaped
-    let _ = Command::new("pkill")
-        .args(["-KILL", "-P", &pid.to_string()])
-        .status();
-}
-
-#[cfg(not(unix))]
-fn kill_process_tree(pid: u32) {
-    // On Windows, use taskkill /T to kill tree
-    use std::process::Command;
-    let _ = Command::new("taskkill")
-        .args(["/F", "/T", "/PID", &pid.to_string()])
-        .status();
-}
 
 /// Run the TUI with a subprocess that does the actual work.
 ///
