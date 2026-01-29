@@ -72,12 +72,34 @@ impl SprintHistory {
         Err("missing total_sprints in sprint history".to_string())
     }
 
+    /// Peek at the next sprint number without mutating state.
+    ///
+    /// Returns `total_sprints + 1`, which is the sprint number that would be
+    /// assigned if `increment()` were called. Use this to determine the sprint
+    /// branch name before any files are written.
+    pub fn peek_next_sprint(&self) -> usize {
+        self.total_sprints + 1
+    }
+
+    /// Increment the sprint count.
+    ///
+    /// This should be called after the sprint branch is created but before
+    /// saving the history. Separates mutation from `peek_next_sprint()` to
+    /// allow determining the sprint number before committing to it.
+    pub fn increment(&mut self) {
+        self.total_sprints += 1;
+    }
+
     /// Increment the sprint count and return the new sprint number.
     ///
     /// This should be called at the START of a sprint. The returned value
     /// is the sprint number to use for this sprint's commits.
+    ///
+    /// Note: This is a convenience method that combines `increment()` and
+    /// returns the result. For the new sprint initialization flow, prefer
+    /// using `peek_next_sprint()` followed by `increment()` separately.
     pub fn next_sprint(&mut self) -> usize {
-        self.total_sprints += 1;
+        self.increment();
         self.total_sprints
     }
 
@@ -264,6 +286,87 @@ mod tests {
                 let history = SprintHistory::load("session-team").unwrap();
                 assert_eq!(history.total_sprints, 8);
             }
+        });
+    }
+
+    #[test]
+    fn test_peek_next_sprint_does_not_mutate() {
+        with_temp_cwd(|| {
+            let history = SprintHistory::load("peek-team").unwrap();
+            assert_eq!(history.total_sprints, 0);
+
+            // Peek should return 1 (next sprint number)
+            assert_eq!(history.peek_next_sprint(), 1);
+            // State should remain unchanged
+            assert_eq!(history.total_sprints, 0);
+
+            // Peek again - same result, still no mutation
+            assert_eq!(history.peek_next_sprint(), 1);
+            assert_eq!(history.total_sprints, 0);
+        });
+    }
+
+    #[test]
+    fn test_peek_next_sprint_after_increments() {
+        with_temp_cwd(|| {
+            let mut history = SprintHistory::load("peek-increment-team").unwrap();
+
+            // Initially at 0, peek shows 1
+            assert_eq!(history.peek_next_sprint(), 1);
+
+            // After increment, peek shows 2
+            history.increment();
+            assert_eq!(history.total_sprints, 1);
+            assert_eq!(history.peek_next_sprint(), 2);
+
+            // After another increment, peek shows 3
+            history.increment();
+            assert_eq!(history.total_sprints, 2);
+            assert_eq!(history.peek_next_sprint(), 3);
+        });
+    }
+
+    #[test]
+    fn test_increment_mutates_state() {
+        with_temp_cwd(|| {
+            let mut history = SprintHistory::load("increment-team").unwrap();
+            assert_eq!(history.total_sprints, 0);
+
+            history.increment();
+            assert_eq!(history.total_sprints, 1);
+
+            history.increment();
+            assert_eq!(history.total_sprints, 2);
+
+            history.increment();
+            assert_eq!(history.total_sprints, 3);
+        });
+    }
+
+    #[test]
+    fn test_peek_and_increment_equivalent_to_next_sprint() {
+        with_temp_cwd(|| {
+            // Verify that peek + increment gives same result as next_sprint
+            let mut history1 = SprintHistory::load("equiv-team1").unwrap();
+            let mut history2 = SprintHistory::load("equiv-team2").unwrap();
+
+            // Using next_sprint
+            let sprint_num1 = history1.next_sprint();
+
+            // Using peek + increment
+            let peeked = history2.peek_next_sprint();
+            history2.increment();
+
+            assert_eq!(sprint_num1, peeked);
+            assert_eq!(history1.total_sprints, history2.total_sprints);
+
+            // Repeat for second sprint
+            let sprint_num1 = history1.next_sprint();
+            let peeked = history2.peek_next_sprint();
+            history2.increment();
+
+            assert_eq!(sprint_num1, peeked);
+            assert_eq!(history1.total_sprints, history2.total_sprints);
         });
     }
 }
