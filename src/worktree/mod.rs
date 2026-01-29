@@ -1,8 +1,11 @@
 //! Git worktree management.
 //!
 //! Manages git worktrees and branches for agents. Each agent gets:
-//! - A worktree directory: `worktrees/agent-<INITIAL>-<name>`
-//! - A dedicated branch: `agent-<lowercase_name>`
+//! - A worktree directory: `worktrees/{project}-agent-{name}-{hash}`
+//! - A dedicated branch: `{project}-agent-{name}-{hash}`
+//!
+//! Branch and worktree names are namespaced by project and run hash to allow
+//! parallel sprints across different projects and safe restarts.
 //!
 //! In multi-team mode, worktrees are created under `.swarm-hug/<team>/worktrees/`.
 
@@ -22,7 +25,7 @@ pub use cleanup::{
     cleanup_agent_worktree, cleanup_agent_worktrees, cleanup_feature_worktree, cleanup_worktrees,
     cleanup_worktrees_in, delete_branch, CleanupSummary,
 };
-pub use create::{create_feature_worktree_in, create_worktrees, create_worktrees_in};
+pub use create::{create_feature_worktree_in, create_worktrees_in};
 pub use git::{
     agent_branch_exists, agent_branch_has_changes, agent_branch_name, branch_is_merged,
     create_feature_branch, create_feature_branch_in, delete_agent_branch, merge_agent_branch,
@@ -34,14 +37,46 @@ pub use list::{list_agent_branches, list_worktrees, AgentBranch};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_context::RunContext;
 
     #[test]
-    fn test_agent_branch_name() {
-        assert_eq!(agent_branch_name('A'), Some("agent-aaron".to_string()));
-        assert_eq!(agent_branch_name('B'), Some("agent-betty".to_string()));
-        assert_eq!(agent_branch_name('Z'), Some("agent-zane".to_string()));
-        assert_eq!(agent_branch_name('a'), Some("agent-aaron".to_string()));
-        assert_eq!(agent_branch_name('1'), None);
+    fn test_agent_branch_name_with_context() {
+        let ctx = RunContext::new("greenfield", 1);
+        let branch = agent_branch_name(&ctx, 'A');
+        assert!(branch.starts_with("greenfield-agent-aaron-"));
+        assert_eq!(branch.len(), "greenfield-agent-aaron-".len() + 6);
+    }
+
+    #[test]
+    fn test_agent_branch_name_different_initials() {
+        let ctx = RunContext::new("greenfield", 1);
+        let branch_a = agent_branch_name(&ctx, 'A');
+        let branch_b = agent_branch_name(&ctx, 'B');
+        let branch_z = agent_branch_name(&ctx, 'Z');
+
+        assert!(branch_a.starts_with("greenfield-agent-aaron-"));
+        assert!(branch_b.starts_with("greenfield-agent-betty-"));
+        assert!(branch_z.starts_with("greenfield-agent-zane-"));
+
+        // All should share the same hash
+        let hash = ctx.hash();
+        assert!(branch_a.ends_with(hash));
+        assert!(branch_b.ends_with(hash));
+        assert!(branch_z.ends_with(hash));
+    }
+
+    #[test]
+    fn test_agent_branch_name_lowercase_initial() {
+        let ctx = RunContext::new("greenfield", 1);
+        let branch = agent_branch_name(&ctx, 'a');
+        assert!(branch.starts_with("greenfield-agent-aaron-"));
+    }
+
+    #[test]
+    fn test_agent_branch_name_invalid_initial() {
+        let ctx = RunContext::new("greenfield", 1);
+        let branch = agent_branch_name(&ctx, '1');
+        assert!(branch.starts_with("greenfield-agent-unknown-"));
     }
 
     #[test]
