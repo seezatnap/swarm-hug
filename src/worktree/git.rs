@@ -271,6 +271,16 @@ fn agent_branch_has_changes_in(
     branch_has_changes_in(repo_root, &branch, target)
 }
 
+fn agent_branch_has_changes_with_ctx(
+    repo_root: &Path,
+    ctx: &RunContext,
+    initial: char,
+    target: &str,
+) -> Result<bool, String> {
+    let branch = agent_branch_name(ctx, initial);
+    branch_has_changes_in(repo_root, &branch, target)
+}
+
 /// Merge an agent branch into the current branch.
 /// Returns MergeResult indicating success, conflict, or error.
 pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeResult {
@@ -319,6 +329,83 @@ pub fn merge_agent_branch_in(
 
         // Check if branch has changes
         match agent_branch_has_changes_in(repo_root, initial, target) {
+            Ok(false) => return MergeResult::NoChanges,
+            Err(e) => return MergeResult::Error(e),
+            Ok(true) => {}
+        }
+    }
+
+    // Get agent name for commit message
+    let agent_name = crate::agent::name_from_initial(initial).unwrap_or("Unknown");
+
+    // Attempt merge with --no-ff
+    let merge = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["merge", "--no-ff", "-m", &format!("Merge {}", branch), &branch])
+        .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
+        .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
+        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .output();
+
+    match merge {
+        Err(e) => MergeResult::Error(format!("merge command failed: {}", e)),
+        Ok(output) if output.status.success() => MergeResult::Success,
+        Ok(_) => {
+            // Check for conflicts
+            let conflicts = get_merge_conflicts_in(repo_root);
+            if !conflicts.is_empty() {
+                // Abort the merge
+                let _ = Command::new("git")
+                    .arg("-C")
+                    .arg(repo_root)
+                    .args(["merge", "--abort"])
+                    .output();
+                MergeResult::Conflict(conflicts)
+            } else {
+                MergeResult::Error("merge failed".to_string())
+            }
+        }
+    }
+}
+
+/// Merge an agent branch into the target branch using RunContext for namespaced branch names.
+/// Returns MergeResult indicating success, conflict, or error.
+pub fn merge_agent_branch_in_with_ctx(
+    repo_root: &Path,
+    ctx: &RunContext,
+    initial: char,
+    target_branch: Option<&str>,
+) -> MergeResult {
+    let branch = agent_branch_name(ctx, initial);
+
+    // Check if branch exists
+    match branch_exists(repo_root, &branch) {
+        Ok(true) => {}
+        Ok(false) => return MergeResult::NoBranch,
+        Err(e) => return MergeResult::Error(e),
+    }
+
+    // If target branch specified, checkout first
+    if let Some(target) = target_branch {
+        let checkout = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["checkout", target])
+            .output();
+
+        if let Err(e) = checkout {
+            return MergeResult::Error(format!("checkout failed: {}", e));
+        }
+        let checkout = checkout.unwrap();
+        if !checkout.status.success() {
+            let stderr = String::from_utf8_lossy(&checkout.stderr);
+            return MergeResult::Error(format!("checkout failed: {}", stderr));
+        }
+
+        // Check if branch has changes
+        match agent_branch_has_changes_with_ctx(repo_root, ctx, initial, target) {
             Ok(false) => return MergeResult::NoChanges,
             Err(e) => return MergeResult::Error(e),
             Ok(true) => {}

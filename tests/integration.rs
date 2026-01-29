@@ -8,6 +8,7 @@ use tempfile::TempDir;
 use swarm::chat;
 use swarm::engine::StubEngine;
 use swarm::merge_agent;
+use swarm::run_context::RunContext;
 use swarm::task::{TaskList, TaskStatus};
 use swarm::worktree;
 
@@ -488,8 +489,9 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
         )
         .expect("create feature worktree");
 
+        let run_ctx = RunContext::new(team_name, 1);
         let assignments = vec![('A', "Task one".to_string())];
-        let worktrees = worktree::create_worktrees_in(&worktrees_dir, &assignments, &feature_branch)
+        let worktrees = worktree::create_worktrees_in(&worktrees_dir, &assignments, &feature_branch, &run_ctx)
             .expect("create agent worktree");
         assert_eq!(worktrees.len(), 1);
         let agent_worktree = worktrees[0].path.clone();
@@ -507,13 +509,18 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
         );
 
         let agent_branch = git_stdout(&agent_worktree, &["rev-parse", "--abbrev-ref", "HEAD"]);
-        assert_eq!(agent_branch, "agent-aaron");
+        let expected_branch_prefix = format!("{}-agent-aaron-", team_name);
+        assert!(
+            agent_branch.starts_with(&expected_branch_prefix),
+            "agent branch '{}' should start with '{}'",
+            agent_branch, expected_branch_prefix
+        );
 
         fs::write(agent_worktree.join("agent.txt"), "agent change").expect("write agent file");
         commit_all(&agent_worktree, "Agent commit");
 
         let merge_result =
-            worktree::merge_agent_branch_in(&feature_worktree, 'A', Some(&feature_branch));
+            worktree::merge_agent_branch_in_with_ctx(&feature_worktree, &run_ctx, 'A', Some(&feature_branch));
         assert!(matches!(merge_result, worktree::MergeResult::Success));
 
         let merge_parents = git_stdout(&feature_worktree, &["rev-list", "--parents", "-n", "1", "HEAD"]);
@@ -524,7 +531,7 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
             fs::read_to_string(feature_worktree.join("agent.txt")).expect("read merged file");
         assert_eq!(merged_content, "agent change");
 
-        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true)
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &run_ctx)
             .expect("cleanup agent worktree");
         assert!(!agent_worktree.exists(), "agent worktree should be removed");
 
@@ -538,9 +545,10 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
             "feature worktree should remain"
         );
 
-        let agent_branch_list = git_stdout(&repo_path, &["branch", "--list", "agent-aaron"]);
+        // The agent branch should be deleted - check that no branch matching the pattern exists
+        let all_branches = git_stdout(&repo_path, &["branch", "--list"]);
         assert!(
-            agent_branch_list.trim().is_empty(),
+            !all_branches.contains(&format!("{}-agent-aaron-", team_name)),
             "agent branch should be deleted"
         );
     });

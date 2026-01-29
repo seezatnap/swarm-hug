@@ -15,6 +15,7 @@ use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
 use swarm::merge_agent;
 use swarm::planning;
+use swarm::run_context::RunContext;
 use swarm::shutdown;
 use swarm::task::TaskList;
 use swarm::team::{self, Assignments};
@@ -294,6 +295,9 @@ pub(crate) fn run_sprint(
         color::number(agent_count)
     );
 
+    // Create run context for namespaced artifacts (worktrees, branches)
+    let run_ctx = RunContext::new(&team_name, historical_sprint as u32);
+
     // Clean up any existing worktrees for assigned agents before creating new ones
     // This ensures a clean slate from the feature branch for each sprint
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
@@ -301,6 +305,7 @@ pub(crate) fn run_sprint(
         worktrees_dir,
         &assigned_initials,
         true, // Also delete branches so they're recreated fresh from the feature branch
+        &run_ctx,
     );
     if cleanup_summary.cleaned_count() > 0 {
         println!(
@@ -318,7 +323,7 @@ pub(crate) fn run_sprint(
 
     // Create worktrees for assigned agents
     let worktrees: Vec<Worktree> =
-        worktree::create_worktrees_in(worktrees_dir, &assignments, &sprint_branch)
+        worktree::create_worktrees_in(worktrees_dir, &assignments, &sprint_branch, &run_ctx)
             .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Build a map from initial to worktree path (owned for thread safety)
@@ -388,6 +393,7 @@ pub(crate) fn run_sprint(
         let feature_worktree_path = feature_worktree_path.clone();
         let sprint_branch = sprint_branch.clone();
         let worktree_lock = Arc::clone(&worktree_lock);
+        let run_ctx = run_ctx.clone();
         // Clone engine config for this thread
         let thread_engine_types = engine_types.clone();
         let thread_engine_stub_mode = engine_stub_mode;
@@ -566,8 +572,9 @@ pub(crate) fn run_sprint(
                     }
                     let merge_result = {
                         let _guard = worktree_lock.lock().unwrap();
-                        worktree::merge_agent_branch_in(
+                        worktree::merge_agent_branch_in_with_ctx(
                             &feature_worktree_path,
+                            &run_ctx,
                             initial,
                             Some(&sprint_branch),
                         )
@@ -611,7 +618,7 @@ pub(crate) fn run_sprint(
                         }
                         let cleanup_result = {
                             let _guard = worktree_lock.lock().unwrap();
-                            worktree::cleanup_agent_worktree(&worktrees_dir, initial, true)
+                            worktree::cleanup_agent_worktree(&worktrees_dir, initial, true, &run_ctx)
                         };
                         if let Err(e) = cleanup_result {
                             let msg = format!("Worktree cleanup failed: {}", e);
@@ -680,6 +687,7 @@ pub(crate) fn run_sprint(
                             &worktrees_dir,
                             &recreate_assignments,
                             &sprint_branch,
+                            &run_ctx,
                         )
                     };
                     match recreate_result {
@@ -806,6 +814,7 @@ pub(crate) fn run_sprint(
         worktrees_dir,
         &assigned_initials,
         true, // Also delete branches
+        &run_ctx,
     );
     if cleanup_summary.cleaned_count() > 0 {
         println!(
