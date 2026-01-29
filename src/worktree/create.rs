@@ -42,6 +42,7 @@ pub(super) fn worktree_is_registered(repo_root: &Path, path: &Path) -> Result<bo
 
 /// Legacy worktree path without namespacing.
 /// Format: agent-{INITIAL}-{name} (e.g., agent-A-Aaron)
+#[cfg(test)]
 pub(super) fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
     root.join(format!("agent-{}-{}", initial, name))
 }

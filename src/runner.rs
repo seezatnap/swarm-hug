@@ -986,6 +986,7 @@ pub(crate) fn run_sprint(
 }
 
 /// Run post-sprint review to identify follow-up tasks.
+#[allow(clippy::too_many_arguments)]
 fn run_post_sprint_review(
     config: &Config,
     engine: &dyn engine::Engine,
