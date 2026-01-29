@@ -2,7 +2,7 @@
 
 ## Current Task
 
-- [x] (#31) Add an integration test that exercises merge-agent conflict resolution (conflict path currently untested)
+- [x] (#32) BUG: Agent prompt instructs agents to merge directly to main repo instead of letting runner handle merge to sprint branch; Fixed agent.md to merge into sprint branch worktree instead of main repo; Added integration test `test_agent_merges_go_to_sprint_branch_not_target`
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management

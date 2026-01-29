@@ -1132,3 +1132,80 @@ fn test_chat_history_persists_across_sprints_in_single_run() {
         "Sprint 1 plan should appear before Sprint 2 plan in chat history"
     );
 }
+
+/// Test that agent work is merged to sprint branch, not directly to target branch.
+/// This verifies the worktree workflow: agents merge to sprint branch, then sprint branch
+/// merges to target at sprint completion.
+#[test]
+fn test_agent_merges_go_to_sprint_branch_not_target() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init");
+
+    // Get the initial commit on master before the sprint
+    let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    // Get the merge commits on main since the initial commit
+    let merge_log = git_stdout(
+        repo_path,
+        &["log", "--oneline", "--merges", &format!("{}..HEAD", initial_commit)],
+    );
+
+    // Should NOT have individual agent merge commits on the target branch
+    // (those should only be on the sprint branch, which then merges to target)
+
+    // The merge from sprint branch should mention the sprint branch, not agent branches
+    // In stub mode, the sprint branch is merged after all agents complete
+    assert!(
+        !merge_log.contains("Merge agent-"),
+        "Target branch should not have direct agent merge commits. Got:\n{}",
+        merge_log
+    );
+
+    // Verify that the sprint completion commit exists (indicating sprint was merged)
+    let log = git_stdout(repo_path, &["log", "--oneline", "-10"]);
+    assert!(
+        log.contains("Alpha Sprint 1: completed") || log.contains("alpha-sprint-1"),
+        "Target branch should have sprint completion commit. Got:\n{}",
+        log
+    );
+
+    // Verify that agent work content is present (it should have been merged via sprint branch)
+    // The stub engine doesn't create actual files, but the task list should show completion
+    let tasks_content = fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        2,
+        "Both tasks should be completed"
+    );
+}

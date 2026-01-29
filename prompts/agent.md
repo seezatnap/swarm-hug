@@ -97,24 +97,29 @@ git diff --stat --cached
 git commit -m "type(scope): {{task_short}}{{co_author}}" --author="Agent {{agent_name}} <agent-{{agent_initial}}@swarm.local>"
 ```
 
-### Step 3: Find the main repository path
+### Step 3: Find the main repository and sprint branch
 ```bash
 MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
+# Read the sprint/feature branch from team state
+SPRINT_BRANCH=$(grep -o '"feature_branch": *"[^"]*"' "$MAIN_REPO/{{team_dir}}/team-state.json" | sed 's/.*: *"//;s/"$//')
+SPRINT_WORKTREE="$MAIN_REPO/{{team_dir}}/worktrees/$SPRINT_BRANCH"
 ```
 
-### Step 4: Merge your branch into main (run from main repo)
+### Step 4: Merge your branch into the sprint branch (NOT main!)
+**IMPORTANT**: You must merge into the sprint branch worktree, not the main repository. The sprint branch will be merged into main only when the entire sprint is complete.
+
 ```bash
-GIT_AUTHOR_NAME="Agent {{agent_name}}" GIT_AUTHOR_EMAIL="agent-{{agent_initial}}@swarm.local" GIT_COMMITTER_NAME="Agent {{agent_name}}" GIT_COMMITTER_EMAIL="agent-{{agent_initial}}@swarm.local" git -C "$MAIN_REPO" merge agent-{{agent_name_lower}} --no-ff -m "Merge agent-{{agent_name_lower}}: {{task_short}}{{co_author}}"
+GIT_AUTHOR_NAME="Agent {{agent_name}}" GIT_AUTHOR_EMAIL="agent-{{agent_initial}}@swarm.local" GIT_COMMITTER_NAME="Agent {{agent_name}}" GIT_COMMITTER_EMAIL="agent-{{agent_initial}}@swarm.local" git -C "$SPRINT_WORKTREE" merge agent-{{agent_name_lower}} --no-ff -m "Merge agent-{{agent_name_lower}}: {{task_short}}{{co_author}}"
 ```
 
-### Step 5: Reset your branch to match main (prepares you for next task)
+### Step 5: Reset your branch to match the sprint branch (prepares you for next task)
 ```bash
 git reset --hard HEAD
-git pull "$MAIN_REPO" main --rebase 2>/dev/null || git reset --hard $(git -C "$MAIN_REPO" rev-parse HEAD)
+git fetch "$SPRINT_WORKTREE" "$SPRINT_BRANCH" 2>/dev/null && git reset --hard FETCH_HEAD || git reset --hard $(git -C "$SPRINT_WORKTREE" rev-parse HEAD)
 ```
 
 ## If Step 4 (merge) has conflicts
-1. Go to the main repo: `cd "$MAIN_REPO"`
+1. Go to the sprint worktree: `cd "$SPRINT_WORKTREE"`
 2. Check which files have conflicts: `git status`
 3. Open each conflicted file, understand the context, and resolve the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
 4. Stage resolved files: `git add <file>`
