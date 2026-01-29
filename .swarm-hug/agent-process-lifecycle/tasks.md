@@ -2,7 +2,7 @@
 
 ## Phase 1: Critical Fixes
 
-- [A] (#1) Fix zombie processes in both engines by adding `child.wait()` after all `child.kill()` calls in `src/engine/claude.rs` and `src/engine/codex.rs`, and fix Codex streaming thread joins to ensure stdout/stderr reader threads are joined on timeout exit path [5 pts]
+- [x] (#1) Fix zombie processes in both engines by adding `child.wait()` after all `child.kill()` calls in `src/engine/claude.rs` and `src/engine/codex.rs`, and fix Codex streaming thread joins to ensure stdout/stderr reader threads are joined on timeout exit path [5 pts] (A)
 
 ## Phase 2: Process Registry
 
@@ -11,8 +11,8 @@
 
 ## Phase 3: Process Group Management
 
-- [A] (#4) Create `src/process_group.rs` helper module with `spawn_in_new_process_group()` function that uses `pre_exec` with `libc::setpgid(0, 0)` on Unix and standard spawn on Windows, then update both claude.rs and codex.rs engine spawn calls to use this helper [5 pts]
-- [B] (#5) Extract shared `kill_process_tree(pid)` function to `src/process.rs` that sends SIGTERM to process group, waits 100ms, sends SIGKILL to process group, and uses pkill as backup for children; include Windows taskkill implementation; update TUI and plain text modes to use this shared function [5 pts]
+- [x] (#4) Create `src/process_group.rs` helper module with `spawn_in_new_process_group()` function that uses `pre_exec` with `libc::setpgid(0, 0)` on Unix and standard spawn on Windows, then update both claude.rs and codex.rs engine spawn calls to use this helper [5 pts] (A)
+- [x] (#5) Extract shared `kill_process_tree(pid)` function to `src/process.rs` that sends SIGTERM to process group, waits 100ms, sends SIGKILL to process group, and uses pkill as backup for children; include Windows taskkill implementation; update TUI and plain text modes to use this shared function [5 pts] (B)
 
 ## Phase 4: Signal Propagation
 
