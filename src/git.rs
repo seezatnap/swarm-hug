@@ -2,8 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use swarm::team;
-
 fn git_repo_root() -> Result<PathBuf, String> {
     let output = process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -266,7 +264,6 @@ pub(crate) fn commit_task_assignments(
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
-    let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("{} Sprint {}: task assignments", team_name, sprint_number);
     if commit_files_in_worktree_on_branch(
         worktree_root,
@@ -275,7 +272,6 @@ pub(crate) fn commit_task_assignments(
             tasks_file,
             sprint_history_file,
             team_state_file,
-            assignments_path.as_str(),
         ],
         &commit_msg,
     )? {
@@ -284,7 +280,7 @@ pub(crate) fn commit_task_assignments(
     Ok(())
 }
 
-/// Commit sprint completion (updated tasks and released assignments).
+/// Commit sprint completion (updated tasks).
 ///
 /// # Arguments
 /// * `sprint_branch` - Sprint/feature branch name to commit on
@@ -298,12 +294,11 @@ pub(crate) fn commit_sprint_completion(
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
-    let assignments_path = format!("{}/{}", team::SWARM_HUG_DIR, team::ASSIGNMENTS_FILE);
     let commit_msg = format!("{} Sprint {}: completed", team_name, sprint_number);
     if commit_files_in_worktree_on_branch(
         worktree_root,
         sprint_branch,
-        &[tasks_file, assignments_path.as_str()],
+        &[tasks_file],
         &commit_msg,
     )? {
         println!("  Committed sprint completion to git.");

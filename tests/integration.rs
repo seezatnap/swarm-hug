@@ -249,18 +249,6 @@ fn test_swarm_run_stub_integration() {
     assert!(tail[5].contains("Merge agent: starting"));
     assert!(tail[6].contains("Merge agent: completed"));
 
-    // Agents are unassigned after each sprint completes so they are available for next sprint
-    let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
-    let assignments_content = fs::read_to_string(&assignments_path).expect("read assignments.toml");
-    assert!(
-        !assignments_content.contains("A = \"alpha\""),
-        "agent A should be unassigned after sprint"
-    );
-    assert!(
-        !assignments_content.contains("B = \"alpha\""),
-        "agent B should be unassigned after sprint"
-    );
-
     let output_dir = team_root.join("loop");
     assert!(output_dir.join("turn1-agentA.md").exists());
     assert!(output_dir.join("turn1-agentB.md").exists());
@@ -645,26 +633,6 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
     assert!(
         chat_content.contains("Sprint 3 plan:"),
         "Chat should contain Sprint 3 plan"
-    );
-
-    // Verify agents were released after all sprints (assignments should be empty)
-    let assignments_path = repo_path.join(".swarm-hug").join("assignments.toml");
-    let assignments_content =
-        fs::read_to_string(&assignments_path).expect("read assignments.toml");
-    assert!(
-        !assignments_content.contains("A = \"alpha\""),
-        "Agent A should be unassigned after all sprints"
-    );
-    assert!(
-        !assignments_content.contains("B = \"alpha\""),
-        "Agent B should be unassigned after all sprints"
-    );
-
-    // Verify release messages were logged for each sprint
-    assert!(
-        stdout.contains("Released 2 agent assignment(s)"),
-        "Should release agents after each sprint. Output: {}",
-        stdout
     );
 
     // Verify post-sprint review was attempted (stub engine makes no git changes, so review is skipped)
