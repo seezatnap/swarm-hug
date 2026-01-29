@@ -24,4 +24,4 @@
 - [x] (#8) Run `cargo clippy` and fix any new warnings; run `cargo test` and ensure all tests pass; perform manual verification of parallel projects, restart scenarios, and cleanup behavior; document any migration steps for old-style `agent-*` worktrees [4 pts] (blocked by #7) (A)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#9) Fix remaining clippy warnings: replace `.last()` with `.next_back()` in `src/run_context.rs` test code (lines 198-199)
+- [A] (#9) Fix remaining clippy warnings: replace `.last()` with `.next_back()` in `src/run_context.rs` test code (lines 198-199)
