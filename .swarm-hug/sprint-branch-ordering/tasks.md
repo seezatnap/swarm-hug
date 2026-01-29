@@ -20,9 +20,9 @@ I understand. The user is asking me to convert the PRD about "Sprint Branch Crea
 
 ## Testing
 
-- [A] (#6) Add integration test `test_sprint_init_keeps_target_branch_clean` that creates a repo with tasks.md, starts a sprint, and asserts main branch has no uncommitted changes while sprint branch has all state files committed [5 pts] (blocked by #5)
+- [x] (#6) Add integration test `test_sprint_init_keeps_target_branch_clean` that creates a repo with tasks.md, starts a sprint, and asserts main branch has no uncommitted changes while sprint branch has all state files committed [5 pts] (blocked by #5) (A)
 
-- [A] (#7) Add integration test `test_first_sprint_creates_files_in_sprint_branch` that creates a repo with no existing sprint-history.json or team-state.json, starts first sprint, and asserts files are created only in sprint branch [4 pts] (blocked by #5)
+- [x] (#7) Add integration test `test_first_sprint_creates_files_in_sprint_branch` that creates a repo with no existing sprint-history.json or team-state.json, starts first sprint, and asserts files are created only in sprint branch [4 pts] (blocked by #5) (A)
 
 ## Validation
 
