@@ -3,5 +3,3 @@
 # An agent can only be assigned to one team at a time.
 
 [agents]
-A = "sprint-branch-ordering"
-B = "sprint-branch-ordering"
