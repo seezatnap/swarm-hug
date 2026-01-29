@@ -8,10 +8,9 @@ use swarm::team::{self, Team};
 pub fn cmd_init(config: &Config) -> Result<(), String> {
     println!("Initializing swarm repo...");
 
-    // Create .swarm-hug root directory and assignments file
+    // Create .swarm-hug root directory
     team::init_root()?;
     println!("  Created .swarm-hug/");
-    println!("  Created .swarm-hug/assignments.toml");
     println!("  Created .swarm-hug/.gitignore");
 
     // If a project is specified, initialize that project's directory

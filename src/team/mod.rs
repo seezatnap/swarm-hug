@@ -63,6 +63,12 @@ pub fn init_root() -> Result<(), String> {
     fs::create_dir_all(&root)
         .map_err(|e| format!("failed to create {}: {}", root.display(), e))?;
 
+    // Migration: delete assignments.toml if it exists (obsolete since project-namespaced worktrees)
+    let assignments_path = root.join("assignments.toml");
+    if assignments_path.exists() {
+        let _ = fs::remove_file(&assignments_path);
+    }
+
     // Create .gitignore if it doesn't exist
     let gitignore_path = root.join(".gitignore");
     if !gitignore_path.exists() {
@@ -138,6 +144,22 @@ mod tests {
 
             let content = fs::read_to_string(&gitignore_path).unwrap();
             assert_eq!(content, custom_content, "existing .gitignore should be preserved");
+        });
+    }
+
+    #[test]
+    fn test_init_root_deletes_assignments_toml() {
+        with_temp_cwd(|| {
+            // Create .swarm-hug directory with legacy assignments.toml
+            fs::create_dir_all(SWARM_HUG_DIR).unwrap();
+            let assignments_path = PathBuf::from(SWARM_HUG_DIR).join("assignments.toml");
+            fs::write(&assignments_path, "[agents]\nA = \"test\"\n").unwrap();
+            assert!(assignments_path.exists(), "assignments.toml should exist before init");
+
+            // init_root should delete assignments.toml (migration)
+            init_root().unwrap();
+
+            assert!(!assignments_path.exists(), "assignments.toml should be deleted by init_root");
         });
     }
 }
