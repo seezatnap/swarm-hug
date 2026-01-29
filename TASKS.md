@@ -6,8 +6,8 @@
 
 ## Phase 2: Process Registry
 
-- [ ] (#2) Create `src/process_registry.rs` module with thread-safe `ProcessRegistry` struct using `Mutex<HashSet<u32>>`, implementing `new()`, `register(pid)`, `unregister(pid)`, `all_pids()`, and `kill_all()` methods, plus a global `PROCESS_REGISTRY` static using `lazy_static` or `once_cell` [5 pts]
-- [ ] (#3) Integrate process registry into both claude.rs and codex.rs engines: register PID immediately after `Command::spawn()`, unregister PID after `child.wait()` on all exit paths (success, timeout, shutdown, error), and wire `PROCESS_REGISTRY.kill_all()` to the shutdown handler in `src/shutdown.rs` [5 pts] (blocked by #2)
+- [x] (#2) Create `src/process_registry.rs` module with thread-safe `ProcessRegistry` struct using `Mutex<HashSet<u32>>`, implementing `new()`, `register(pid)`, `unregister(pid)`, `all_pids()`, and `kill_all()` methods, plus a global `PROCESS_REGISTRY` static using `lazy_static` or `once_cell` [5 pts]
+- [ ] (#3) Integrate process registry into both claude.rs and codex.rs engines: register PID immediately after `Command::spawn()`, unregister PID after `child.wait()` on all exit paths (success, timeout, shutdown, error), and wire `PROCESS_REGISTRY.kill_all()` to the shutdown handler in `src/shutdown.rs` [5 pts]
 
 ## Phase 3: Process Group Management
 
