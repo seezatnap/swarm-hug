@@ -2,7 +2,7 @@
 
 ## Infrastructure
 
-- [A] (#1) Create `src/run_hash.rs` module with `generate_run_hash()` function (6-char alphanumeric, git-branch-safe) including unit tests for length, uniqueness, and character validity; create `src/run_context.rs` with `RunContext` struct containing project, sprint_number, and run_hash fields plus `new()`, `sprint_branch()`, `agent_branch()`, and `hash()` methods with full unit test coverage; add both module exports to `src/lib.rs` [5 pts]
+- [x] (#1) Create `src/run_hash.rs` module with `generate_run_hash()` function (6-char alphanumeric, git-branch-safe) including unit tests for length, uniqueness, and character validity; create `src/run_context.rs` with `RunContext` struct containing project, sprint_number, and run_hash fields plus `new()`, `sprint_branch()`, `agent_branch()`, and `hash()` methods with full unit test coverage; add both module exports to `src/lib.rs` [5 pts] (A)
 
 ## Worktree Module Updates
 
