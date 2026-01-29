@@ -15,7 +15,7 @@
 
 ## Assignments Removal
 
-- [A] (#5) Delete `src/team/assignments.rs` module entirely; remove `assignments` module export and `ASSIGNMENTS_FILE` constant from `src/team/mod.rs`; remove all `release_assignments_for_project()` calls and assignment checking logic from `src/runner.rs`; delete assignment-related tests [5 pts] (blocked by #4)
+- [x] (#5) Delete `src/team/assignments.rs` module entirely; remove `assignments` module export and `ASSIGNMENTS_FILE` constant from `src/team/mod.rs`; remove all `release_assignments_for_project()` calls and assignment checking logic from `src/runner.rs`; delete assignment-related tests [5 pts] (blocked by #4) (A)
 - [ ] (#6) Remove assignments.toml from git commit file lists in `src/git.rs`; remove any assignment display logic from `src/commands/projects.rs`; remove assignments.toml initialization from `src/commands/init.rs`; add migration logic to delete `.swarm-hug/assignments.toml` if it exists on first run [5 pts] (blocked by #5)
 
 ## Testing and Validation
