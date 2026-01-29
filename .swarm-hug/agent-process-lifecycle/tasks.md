@@ -29,3 +29,7 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Add CodexEngine cleanup integration coverage for timeout and shutdown paths to mirror the Claude tests
+- [ ] (#13) Add the missing ProcessRegistry multi-instance isolation and thread-safety tests; they’re marked complete but no tests exist
