@@ -20,5 +20,5 @@
 
 ## Testing and Validation
 
-- [A] (#7) Write integration tests for parallel project execution (two projects with same agents running concurrently without conflict), restart isolation (cancelled sprint creates new hash, old artifacts remain), and cleanup scope (cleanup only affects current run's hash); verify all existing tests pass with updated signatures [5 pts] (blocked by #4, #5, #6)
+- [x] (#7) Write integration tests for parallel project execution (two projects with same agents running concurrently without conflict), restart isolation (cancelled sprint creates new hash, old artifacts remain), and cleanup scope (cleanup only affects current run's hash); verify all existing tests pass with updated signatures [5 pts] (blocked by #4, #5, #6) (A)
 - [ ] (#8) Run `cargo clippy` and fix any new warnings; run `cargo test` and ensure all tests pass; perform manual verification of parallel projects, restart scenarios, and cleanup behavior; document any migration steps for old-style `agent-*` worktrees [4 pts] (blocked by #7)
