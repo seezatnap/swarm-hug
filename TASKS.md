@@ -2,7 +2,7 @@
 
 ## Current Task
 
-- [x] (#26) Add integration test for merge agent conflict resolution scenario (blocked by #14)
+- [x] (#31) Add an integration test that exercises merge-agent conflict resolution (conflict path currently untested)
 ## Worktree Overhaul
 
 ### Feature/Sprint Branch Management
