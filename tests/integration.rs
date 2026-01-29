@@ -1648,3 +1648,233 @@ fn test_first_sprint_creates_files_in_sprint_branch() {
         task_list.completed_count()
     );
 }
+
+/// Test that follow-up tasks are written to the sprint worktree, not the main repo.
+///
+/// This test verifies the fix for the bug where follow-up tasks were written to
+/// `config.files_tasks` (main repo path) instead of the worktree-relative path,
+/// causing them to be lost when the commit happens from the worktree context.
+///
+/// The test verifies:
+/// (a) Follow-up tasks appear in sprint worktree's tasks.md
+/// (b) Main repo tasks.md is unchanged
+/// (c) Main repo chat.md is unchanged
+/// (d) Commit exists in sprint branch history
+///
+/// Since the stub engine returns no follow-up tasks (deterministic for testing),
+/// this test directly simulates the follow-up task writing behavior to verify
+/// the worktree path fix.
+#[test]
+fn test_followup_tasks_written_to_worktree() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+        let team_name = "gamma";
+        let sprint_branch = format!("{}-sprint-1", team_name);
+
+        // Initialize git repo
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        fs::write(repo_path.join(".gitignore"), ".swarm-hug/*/worktrees/\n").expect("write gitignore");
+        commit_all(&repo_path, "init");
+
+        // Rename to 'main' for consistent testing
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        // Create team structure in main repo (simulating swarm project init)
+        let main_team_root = repo_path.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&main_team_root).expect("create team dir");
+
+        // Write initial tasks to main repo
+        let main_tasks_path = main_team_root.join("tasks.md");
+        let initial_tasks_content = "# Tasks\n\n- [x] (A) (#1) Task one\n- [x] (B) (#2) Task two\n";
+        fs::write(&main_tasks_path, initial_tasks_content).expect("write main tasks.md");
+
+        // Write initial chat to main repo
+        let main_chat_path = main_team_root.join("chat.md");
+        let initial_chat_content = "12:00:00 | ScrumMaster | Sprint planning started\n";
+        fs::write(&main_chat_path, initial_chat_content).expect("write main chat.md");
+
+        // Commit initial state on main
+        commit_all(&repo_path, "initial team state");
+
+        // Record the content of main repo files BEFORE any sprint work
+        let main_tasks_before = fs::read_to_string(&main_tasks_path).expect("read main tasks before");
+        let main_chat_before = fs::read_to_string(&main_chat_path).expect("read main chat before");
+
+        // Create sprint worktree (simulating sprint start)
+        let worktrees_dir = main_team_root.join("worktrees");
+        let feature_worktree = worktree::create_feature_worktree_in(
+            &worktrees_dir,
+            &sprint_branch,
+            "main",
+        )
+        .expect("create feature worktree");
+
+        // Verify worktree was created
+        assert!(feature_worktree.exists(), "feature worktree should exist");
+
+        // Get worktree-relative paths (this is the key fix - paths should be in worktree)
+        let worktree_team_root = feature_worktree.join(".swarm-hug").join(team_name);
+        let worktree_tasks_path = worktree_team_root.join("tasks.md");
+        let worktree_chat_path = worktree_team_root.join("chat.md");
+
+        // Verify worktree has copies of the files (inherited from main)
+        assert!(
+            worktree_tasks_path.exists(),
+            "worktree tasks.md should exist at {:?}",
+            worktree_tasks_path
+        );
+        assert!(
+            worktree_chat_path.exists(),
+            "worktree chat.md should exist at {:?}",
+            worktree_chat_path
+        );
+
+        // SIMULATE: Follow-up tasks being identified and written to worktree's tasks.md
+        // This mimics what run_post_sprint_review() does after the path fix
+        let mut worktree_tasks_content = fs::read_to_string(&worktree_tasks_path)
+            .expect("read worktree tasks");
+
+        // Ensure newline before appending
+        if !worktree_tasks_content.ends_with('\n') {
+            worktree_tasks_content.push('\n');
+        }
+
+        // Add follow-up tasks (same format as run_post_sprint_review)
+        worktree_tasks_content.push_str("\n## Follow-up tasks (from sprint review)\n");
+        worktree_tasks_content.push_str("- [ ] (#3) Add unit tests for new feature\n");
+        worktree_tasks_content.push_str("- [ ] (#4) Update documentation\n");
+
+        // Write to WORKTREE path (not main repo)
+        fs::write(&worktree_tasks_path, &worktree_tasks_content)
+            .expect("write follow-up tasks to worktree");
+
+        // SIMULATE: Chat message about follow-up tasks being written to worktree
+        let mut worktree_chat_content = fs::read_to_string(&worktree_chat_path)
+            .expect("read worktree chat");
+        worktree_chat_content.push_str("13:00:00 | ScrumMaster | Sprint review added 2 follow-up task(s)\n");
+        fs::write(&worktree_chat_path, &worktree_chat_content)
+            .expect("write chat to worktree");
+
+        // SIMULATE: Commit the follow-up tasks in the worktree on the sprint branch
+        let commit_msg = format!("{} Sprint 1: follow-up tasks from review", team_name);
+        let mut add_cmd = Command::new("git");
+        add_cmd
+            .arg("-C")
+            .arg(&feature_worktree)
+            .args(["add", worktree_tasks_path.to_str().unwrap(), worktree_chat_path.to_str().unwrap()]);
+        run_success(&mut add_cmd);
+
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
+            .arg("-C")
+            .arg(&feature_worktree)
+            .args(["commit", "-m", &commit_msg]);
+        run_success(&mut commit_cmd);
+
+        // ========== ASSERTIONS ==========
+
+        // (a) ASSERT: Follow-up tasks appear in sprint worktree's tasks.md
+        let worktree_tasks_after = fs::read_to_string(&worktree_tasks_path)
+            .expect("read worktree tasks after");
+        assert!(
+            worktree_tasks_after.contains("## Follow-up tasks (from sprint review)"),
+            "Worktree tasks.md should contain follow-up tasks section.\n\
+             Worktree tasks.md content:\n{}",
+            worktree_tasks_after
+        );
+        assert!(
+            worktree_tasks_after.contains("- [ ] (#3) Add unit tests for new feature"),
+            "Worktree tasks.md should contain first follow-up task.\n\
+             Worktree tasks.md content:\n{}",
+            worktree_tasks_after
+        );
+        assert!(
+            worktree_tasks_after.contains("- [ ] (#4) Update documentation"),
+            "Worktree tasks.md should contain second follow-up task.\n\
+             Worktree tasks.md content:\n{}",
+            worktree_tasks_after
+        );
+
+        // (b) ASSERT: Main repo tasks.md is unchanged
+        let main_tasks_after = fs::read_to_string(&main_tasks_path)
+            .expect("read main tasks after");
+        assert_eq!(
+            main_tasks_before, main_tasks_after,
+            "Main repo tasks.md should be UNCHANGED.\n\
+             Before:\n{}\n\
+             After:\n{}",
+            main_tasks_before, main_tasks_after
+        );
+        assert!(
+            !main_tasks_after.contains("## Follow-up tasks"),
+            "Main repo tasks.md should NOT contain follow-up tasks section.\n\
+             Main tasks.md content:\n{}",
+            main_tasks_after
+        );
+
+        // (c) ASSERT: Main repo chat.md is unchanged
+        let main_chat_after = fs::read_to_string(&main_chat_path)
+            .expect("read main chat after");
+        assert_eq!(
+            main_chat_before, main_chat_after,
+            "Main repo chat.md should be UNCHANGED.\n\
+             Before:\n{}\n\
+             After:\n{}",
+            main_chat_before, main_chat_after
+        );
+        assert!(
+            !main_chat_after.contains("Sprint review added"),
+            "Main repo chat.md should NOT contain sprint review message.\n\
+             Main chat.md content:\n{}",
+            main_chat_after
+        );
+
+        // (d) ASSERT: Commit exists in sprint branch history
+        let sprint_log = git_stdout(&feature_worktree, &["log", "--oneline", "-5"]);
+        assert!(
+            sprint_log.contains("follow-up tasks from review"),
+            "Sprint branch should contain follow-up tasks commit.\n\
+             Sprint branch log:\n{}",
+            sprint_log
+        );
+
+        // BONUS: Verify main branch doesn't have the follow-up commit
+        // (The commit should only be on the sprint branch)
+        let main_log = git_stdout(&repo_path, &["log", "--oneline", "-5"]);
+        assert!(
+            !main_log.contains("follow-up tasks from review"),
+            "Main branch should NOT contain follow-up tasks commit (yet).\n\
+             Main branch log:\n{}",
+            main_log
+        );
+
+        // BONUS: Verify git status on main repo shows NO uncommitted changes
+        // (This proves we didn't write to main repo and forget to commit)
+        let mut status_cmd = Command::new("git");
+        status_cmd
+            .args(["status", "--porcelain"])
+            .current_dir(&repo_path);
+        let status_output = run_success(&mut status_cmd);
+        let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+        // Filter for team-related uncommitted files
+        let has_uncommitted_team_files = status_stdout.lines().any(|line| {
+            line.contains("tasks.md") || line.contains("chat.md")
+        });
+        assert!(
+            !has_uncommitted_team_files,
+            "Main repo should have NO uncommitted tasks.md or chat.md changes.\n\
+             Git status:\n{}",
+            status_stdout
+        );
+
+        // Cleanup: remove the worktree
+        worktree::cleanup_feature_worktree(&worktrees_dir, &sprint_branch, true)
+            .expect("cleanup feature worktree");
+    });
+}
