@@ -15,10 +15,11 @@ use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger};
 use swarm::merge_agent;
 use swarm::planning;
+use swarm::agent::INITIALS;
 use swarm::run_context::RunContext;
 use swarm::shutdown;
 use swarm::task::TaskList;
-use swarm::team::{self, Assignments};
+use swarm::team;
 use swarm::worktree::{self, Worktree};
 
 use crate::git::{
@@ -26,7 +27,7 @@ use crate::git::{
     get_current_commit_in, get_git_log_range_in,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
-use crate::project::{project_name_for_config, release_assignments_for_project};
+use crate::project::project_name_for_config;
 
 type TaskResult = (char, String, bool, Option<String>, Option<Duration>);
 
@@ -81,15 +82,13 @@ pub(crate) fn run_sprint(
         return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
-    let team_name = project_name_for_config(config);
-    let mut assignments_state = Assignments::load()?;
-
     let tasks_per_agent = config.agents_tasks_per_agent;
     let agents_needed = assignable.div_ceil(tasks_per_agent);
     let agent_cap = agents_needed.min(config.agents_max_count);
-    let initials = assignments_state.available_for_team(&team_name, agent_cap);
+    // With project-namespaced worktrees, all agents are available for any project
+    let initials: Vec<char> = INITIALS.iter().take(agent_cap).copied().collect();
     if initials.is_empty() {
-        println!("No available agents for team '{}'.", team_name);
+        println!("No agents available.");
         return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
     let agent_count = initials.len();
@@ -257,21 +256,6 @@ pub(crate) fn run_sprint(
         if !assigned_initials.contains(initial) {
             assigned_initials.push(*initial);
         }
-    }
-    if !assigned_initials.is_empty() {
-        for initial in &assigned_initials {
-            if let Some(existing) = assignments_state.get_team(*initial) {
-                if existing != team_name.as_str() {
-                    return Err(format!(
-                        "Agent {} is already assigned to team '{}'",
-                        initial, existing
-                    ));
-                }
-            } else {
-                assignments_state.assign(*initial, &team_name)?;
-            }
-        }
-        assignments_state.save()?;
     }
 
     // Write sprint plan to chat
@@ -840,18 +824,7 @@ pub(crate) fn run_sprint(
         );
     }
 
-    // Release agent assignments after sprint completes
-    // This ensures agents are available for the next sprint or other teams
-    match release_assignments_for_project(&team_name, &assigned_initials) {
-        Ok(released) => {
-            if released > 0 {
-                println!("  Released {} agent assignment(s)", released);
-            }
-        }
-        Err(e) => eprintln!("  warning: failed to release agent assignments: {}", e),
-    }
-
-    // Commit sprint completion (updated tasks and released assignments)
+    // Commit sprint completion
     commit_sprint_completion(
         &feature_worktree_path,
         &sprint_branch,
@@ -922,11 +895,6 @@ pub(crate) fn run_sprint(
         }
         let merge_cleanup_paths = vec![
             worktree_tasks_path.clone(),
-            PathBuf::from(format!(
-                "{}/{}",
-                team::SWARM_HUG_DIR,
-                team::ASSIGNMENTS_FILE
-            )),
             worktree_history_path.clone(),
             PathBuf::from(&team_state_path),
         ];

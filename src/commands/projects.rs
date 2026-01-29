@@ -1,10 +1,9 @@
 use std::fs;
 
-use swarm::agent;
 use swarm::config::{self, Config};
 use swarm::engine;
 use swarm::planning;
-use swarm::team::{self, Assignments, Team};
+use swarm::team::{self, Team};
 
 /// Task completion counts for a project.
 struct TaskCounts {
@@ -37,7 +36,7 @@ fn count_tasks(team: &Team) -> TaskCounts {
     TaskCounts { completed, total }
 }
 
-/// List all projects and their assigned agents.
+/// List all projects and their task status.
 pub fn cmd_projects(_config: &Config) -> Result<(), String> {
     if !team::root_exists() {
         println!("No .swarm-hug/ directory found. Run 'swarm init' first.");
@@ -45,7 +44,6 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
     }
 
     let projects = team::list_teams()?;
-    let assignments = Assignments::load()?;
 
     if projects.is_empty() {
         println!("No projects found. Use 'swarm project init <name>' to create one.");
@@ -71,20 +69,6 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
 
     println!("Projects:");
     for (p, counts) in &project_data {
-        let agents = assignments.project_agents(&p.name);
-        let agent_str = if agents.is_empty() {
-            "(no agents assigned)".to_string()
-        } else {
-            agents
-                .iter()
-                .map(|&i| {
-                    let name = agent::name_from_initial(i).unwrap_or("?");
-                    format!("{} ({})", name, i)
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-
         // Format task completion status
         let task_status = if counts.total == 0 {
             String::new()
@@ -94,17 +78,7 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
             format!(" [{}/{} Tasks Complete]", counts.completed, counts.total)
         };
 
-        println!("  {}{} - {}", p.name, task_status, agent_str);
-    }
-
-    // Show available agents
-    let available = assignments.next_available(5);
-    if !available.is_empty() {
-        println!("\nNext available agents:");
-        for i in available {
-            let name = agent::name_from_initial(i).unwrap_or("?");
-            println!("  {} - {}", i, name);
-        }
+        println!("  {}{}", p.name, task_status);
     }
 
     Ok(())
