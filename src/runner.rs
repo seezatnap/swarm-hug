@@ -195,10 +195,33 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("failed to save team state to worktree: {}", e))?;
     let team_state_path = team_state.path().to_string_lossy().to_string();
 
-    // Write updated tasks to worktree
+    // Ensure worktree swarm dir exists
     let worktree_tasks_path = worktree_swarm_dir.join("tasks.md");
     fs::create_dir_all(&worktree_swarm_dir)
         .map_err(|e| format!("failed to create worktree swarm dir: {}", e))?;
+
+    // Re-read task list from worktree to get any completions from previous sprints
+    // that may have been committed to the sprint branch but not yet merged to main
+    if worktree_tasks_path.exists() {
+        let worktree_content = fs::read_to_string(&worktree_tasks_path)
+            .map_err(|e| format!("failed to read {}: {}", worktree_tasks_path.display(), e))?;
+        let worktree_task_list = TaskList::parse(&worktree_content);
+
+        // Merge: keep completed tasks from worktree, apply new assignments from task_list
+        for worktree_task in &worktree_task_list.tasks {
+            if let swarm::task::TaskStatus::Completed(initial) = worktree_task.status {
+                // Find matching task in our list and mark it completed
+                for task in &mut task_list.tasks {
+                    if task.description == worktree_task.description {
+                        task.status = swarm::task::TaskStatus::Completed(initial);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Write merged task list to worktree
     fs::write(&worktree_tasks_path, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
