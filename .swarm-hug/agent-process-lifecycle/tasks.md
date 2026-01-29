@@ -16,7 +16,7 @@
 
 ## Phase 4: Signal Propagation
 
-- [ ] (#6) Add shutdown check to engine polling loops in both claude.rs and codex.rs that calls `shutdown::requested()` and terminates subprocess gracefully when triggered, returning appropriate shutdown error result with exit code 130 [4 pts] (blocked by #3)
+- [x] (#6) Add shutdown check to engine polling loops in both claude.rs and codex.rs that calls `shutdown::requested()` and terminates subprocess gracefully when triggered, returning appropriate shutdown error result with exit code 130 [4 pts] (blocked by #3) (A)
 - [x] (#7) Implement graceful signal escalation in `kill_subprocess()` helper: send SIGTERM first, wait 100ms, check if still running with `try_wait()`, send SIGKILL if needed, always call `child.wait()` to reap; use this helper in both timeout and shutdown paths in both engines [5 pts] (blocked by #1) (A)
 
 ## Phase 5: Testing
@@ -28,4 +28,4 @@
 - [x] (#10) Implement the missing `src/process_group.rs` (`spawn_in_new_process_group`) and wire `claude.rs`/`codex.rs` spawns to use it; #4 is marked complete but the module/function aren’t present. (B)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running.
+- [x] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running. (A)

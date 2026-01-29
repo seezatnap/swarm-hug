@@ -36,6 +36,14 @@ static INTERRUPT_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Maximum number of interrupts before force-quitting.
 const MAX_INTERRUPTS: usize = 3;
 
+#[cfg(test)]
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Register the Ctrl+C handler.
 ///
 /// Should be called once at program startup. Sets up the signal handler
@@ -151,6 +159,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_request_and_check() {
+        let _guard = test_lock();
         reset();
         assert!(!requested());
 
@@ -163,6 +172,7 @@ mod tests {
 
     #[test]
     fn test_interrupt_count() {
+        let _guard = test_lock();
         reset();
         assert_eq!(interrupt_count(), 0);
 
@@ -176,6 +186,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_signal_local() {
+        let _guard = test_lock();
         reset();
         let signal = ShutdownSignal::new();
 
@@ -187,6 +198,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_signal_global() {
+        let _guard = test_lock();
         reset();
         let signal = ShutdownSignal::global();
 
@@ -201,6 +213,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_signal_clone() {
+        let _guard = test_lock();
         reset();
         let signal1 = ShutdownSignal::new();
         let signal2 = signal1.clone();
@@ -216,6 +229,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_signal_thread_safe() {
+        let _guard = test_lock();
         reset();
         let signal = ShutdownSignal::new();
         let flag = signal.flag();
