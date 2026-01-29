@@ -71,10 +71,26 @@ pub(crate) fn sync_paths_to_worktree(
     let cwd = std::env::current_dir().map_err(|e| format!("failed to get cwd: {}", e))?;
     let mut synced = Vec::new();
 
+    // Canonicalize worktree_root for comparison
+    let worktree_root_canonical = worktree_root
+        .canonicalize()
+        .unwrap_or_else(|_| worktree_root.to_path_buf());
+
     for path in paths {
         let Some((relative, source)) = resolve_repo_relative_path(path, &cwd, &repo_root)? else {
             continue;
         };
+
+        // Check if the source file is already inside the worktree
+        // If so, compute relative path from worktree root instead of repo root
+        // and skip the copy (file is already in place)
+        if source.starts_with(&worktree_root_canonical) {
+            // File is already in the worktree - compute relative path from worktree root
+            if let Ok(worktree_relative) = source.strip_prefix(&worktree_root_canonical) {
+                synced.push(worktree_relative.to_string_lossy().to_string());
+            }
+            continue;
+        }
 
         let dest = worktree_root.join(&relative);
         if dest != source {
