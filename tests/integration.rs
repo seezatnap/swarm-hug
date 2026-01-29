@@ -1485,3 +1485,166 @@ fn test_sprint_init_keeps_target_branch_clean() {
         task_list.completed_count()
     );
 }
+
+/// Test that the first sprint creates state files only in the sprint branch.
+/// When a repo has no existing sprint-history.json or team-state.json,
+/// the first sprint should create these files in the sprint branch (not main).
+///
+/// This is a specific case of the sprint branch ordering fix, where we verify:
+/// 1. No sprint state files exist before the sprint starts
+/// 2. After sprint initialization, these files are created in the sprint branch
+/// 3. The target branch remains clean (no uncommitted changes)
+/// 4. After the sprint completes and merges, the files are in committed history
+#[test]
+fn test_first_sprint_creates_files_in_sprint_branch() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "beta";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write only tasks - no sprint-history.json or team-state.json
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init with tasks only");
+
+    // Rename default branch to 'main' for consistent testing
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    // PRECONDITION: Verify sprint state files do NOT exist before sprint
+    let main_sprint_history = team_root.join("sprint-history.json");
+    let main_team_state = team_root.join("team-state.json");
+    assert!(
+        !main_sprint_history.exists(),
+        "sprint-history.json should NOT exist before first sprint"
+    );
+    assert!(
+        !main_team_state.exists(),
+        "team-state.json should NOT exist before first sprint"
+    );
+
+    // Run the first sprint
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+    // Verify the sprint ran successfully
+    assert!(
+        stdout.contains("Sprint 1: assigned"),
+        "Sprint should have run successfully. Output:\n{}",
+        stdout
+    );
+
+    // KEY ASSERTION 1: Main branch should have NO uncommitted changes
+    // This proves files weren't written to main before branch creation
+    let mut status_cmd = Command::new("git");
+    status_cmd
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path);
+    let status_output = run_success(&mut status_cmd);
+    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+    assert!(
+        status_stdout.trim().is_empty(),
+        "Target branch should have no uncommitted changes after first sprint.\n\
+         This indicates sprint files were NOT written to main before branch creation.\n\
+         Expected: clean working tree\n\
+         Got git status:\n{}",
+        status_stdout
+    );
+
+    // KEY ASSERTION 2: Sprint state files should NOT be untracked on main
+    // (they should only exist as committed files from the merged sprint branch)
+    let mut status_untracked_cmd = Command::new("git");
+    status_untracked_cmd
+        .args(["status", "--porcelain", "-u"])
+        .current_dir(repo_path);
+    let untracked_output = run_success(&mut status_untracked_cmd);
+    let untracked_stdout = String::from_utf8_lossy(&untracked_output.stdout);
+
+    let has_untracked_sprint_files = untracked_stdout.lines().any(|line| {
+        line.contains("sprint-history.json") || line.contains("team-state.json")
+    });
+    assert!(
+        !has_untracked_sprint_files,
+        "Sprint state files should NOT be untracked on main after first sprint.\n\
+         They should be committed via the sprint branch merge.\n\
+         Got git status:\n{}",
+        untracked_stdout
+    );
+
+    // KEY ASSERTION 3: The sprint state files should now exist (from merged sprint branch)
+    // After the sprint completes and is merged, the files should be in committed history
+    assert!(
+        main_sprint_history.exists(),
+        "sprint-history.json should exist after sprint completes (from merged sprint branch)"
+    );
+    assert!(
+        main_team_state.exists(),
+        "team-state.json should exist after sprint completes (from merged sprint branch)"
+    );
+
+    // KEY ASSERTION 4: Verify these files are tracked (committed), not untracked
+    let mut ls_files_cmd = Command::new("git");
+    ls_files_cmd
+        .args(["ls-files", "--error-unmatch", ".swarm-hug/beta/sprint-history.json"])
+        .current_dir(repo_path);
+    let ls_files_result = ls_files_cmd.output().expect("git ls-files failed");
+    assert!(
+        ls_files_result.status.success(),
+        "sprint-history.json should be tracked in git (committed via sprint branch)"
+    );
+
+    let mut ls_files_team_cmd = Command::new("git");
+    ls_files_team_cmd
+        .args(["ls-files", "--error-unmatch", ".swarm-hug/beta/team-state.json"])
+        .current_dir(repo_path);
+    let ls_files_team_result = ls_files_team_cmd.output().expect("git ls-files failed");
+    assert!(
+        ls_files_team_result.status.success(),
+        "team-state.json should be tracked in git (committed via sprint branch)"
+    );
+
+    // KEY ASSERTION 5: Verify the git log shows the sprint was properly created and merged
+    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10"]);
+    assert!(
+        main_log.contains("Beta Sprint 1: task assignments") ||
+        main_log.contains("beta-sprint-1"),
+        "Target branch should contain sprint commits after merge.\n\
+         Git log:\n{}",
+        main_log
+    );
+
+    // KEY ASSERTION 6: Verify tasks were completed (proves sprint actually ran)
+    let tasks_content = fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert!(
+        task_list.completed_count() >= 2,
+        "Tasks should be completed after first sprint. Got {} completed.",
+        task_list.completed_count()
+    );
+}
