@@ -11,6 +11,7 @@ You are the scrum master reviewing the work completed during a sprint. Your job 
 
 - Only add follow-up tasks for REAL issues found in the code changes
 - Don't add tasks for things already in TASKS.md
+- Do NOT add merge-related tasks (e.g., "merge branch X to main") - merging happens automatically after this review
 - Be specific about what needs to be done
 - Keep task descriptions concise
 - Use the checkbox format: `- [ ] Task description`
