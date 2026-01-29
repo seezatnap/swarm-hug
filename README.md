@@ -27,7 +27,13 @@ As such, you should only run this in a sandbox. This script will set up a [Lima]
 * Start a project: `swarm init project greenfield --with-prd ./prds/greenfield.md`
 * Start swarmin': `swarm run --project greenfield`
 
-<img width="894" height="573" alt="Screenshot 2026-01-25 at 9 31 44 PM" src="https://github.com/user-attachments/assets/4ebb039f-63b1-4cb2-9e37-9188e29c8fe0" />
+<img width="782" height="598" alt="image" src="https://github.com/user-attachments/assets/247e370d-12e7-468a-9665-6531a08c7cfa" />
+
+## Worktrees
+
+Each sprint is worked on in isolation using a git worktree. If all goes well, it'll be merged back into `main` once work is complete.
+
+<img width="797" height="405" alt="image" src="https://github.com/user-attachments/assets/c19cf6a8-b868-4c1f-b321-f6d311191db3" />
 
 ## CLI Usage
 
