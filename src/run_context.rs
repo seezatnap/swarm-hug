@@ -195,8 +195,8 @@ mod tests {
         let agent = ctx.agent_branch('A');
 
         // Extract hash from both (last 6 characters)
-        let sprint_hash = sprint.split('-').last().unwrap();
-        let agent_hash = agent.split('-').last().unwrap();
+        let sprint_hash = sprint.split('-').next_back().unwrap();
+        let agent_hash = agent.split('-').next_back().unwrap();
         assert_eq!(sprint_hash, agent_hash);
     }
 
