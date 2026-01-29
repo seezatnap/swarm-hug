@@ -27,6 +27,7 @@ pub mod merge_agent;
 pub mod planning;
 pub mod prompt;
 pub mod process;
+pub mod process_group;
 pub mod process_registry;
 pub mod shutdown;
 pub mod task;

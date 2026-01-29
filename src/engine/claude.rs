@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::EngineType;
+use crate::process_group::spawn_in_new_process_group;
 use crate::process_registry::PROCESS_REGISTRY;
 
 use super::{Engine, EngineResult};
@@ -83,7 +84,7 @@ impl Engine for ClaudeEngine {
             }
         }
 
-        let mut child = match cmd.spawn() {
+        let mut child = match spawn_in_new_process_group(&mut cmd) {
             Ok(c) => c,
             Err(e) => return EngineResult::failure(format!("failed to spawn claude: {}", e), 1),
         };
