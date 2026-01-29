@@ -2,6 +2,14 @@
 
 A CLI interface for agents working in sprints.
 
+## Why does this exist
+
+I believe that agents need managment and process. This is an experiment in giving them that, through agile-like processes. We get a planner, who takes a PRD and organizes it into reasonably-scoped tasks. A scrum master, who assigns logical tickets to different agents to keep them from blocking and stomping on each others' work. And finally we have a revision cycle in the form of a sprint post-mortem, in which an agent can review the sprint's work and create follow-ups to align back to the PRD.
+
+<img width="1999" height="1116" alt="image" src="https://github.com/user-attachments/assets/10fc105b-1053-49a5-85f5-690d098b34c7" />
+
+Is this overkill? Probably. I don't assume that sprints are the ultimate form of project management, nor the one most appropriate for agents. But agents have human qualities, and it seems, at least anecdotally, that human processes can help them to stay organized and on track.
+
 ## Quick Start
 
 `swarm` will spawn agents that run in "automatic" mode (they will take actions without any confirmation); they will run arbitrary commands, and might make catastrophic mistakes, like deleting your home folder. Who knows! 
