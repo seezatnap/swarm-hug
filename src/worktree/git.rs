@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::run_context::RunContext;
+
 pub(super) fn git_repo_root() -> Result<PathBuf, String> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -110,15 +112,29 @@ pub(super) fn find_worktrees_with_branch(
     Ok(parse_worktrees_with_branch(&stdout, branch))
 }
 
-/// Get the branch name for an agent.
+/// Get the branch name for an agent with project namespace and run hash.
+/// Format: {project}-agent-{name}-{hash} (e.g., greenfield-agent-aaron-a3f8k2)
+///
+/// This is the preferred function for creating agent branch names when you have
+/// a `RunContext`. For legacy code paths that don't yet have context, use
+/// `agent_branch_name_legacy()`.
+pub fn agent_branch_name(ctx: &RunContext, initial: char) -> String {
+    ctx.agent_branch(initial)
+}
+
+/// Legacy agent branch name without project namespace.
 /// Format: agent-<lowercase_name> (e.g., agent-aaron)
-pub fn agent_branch_name(initial: char) -> Option<String> {
+///
+/// This function is deprecated and will be removed once all callers are
+/// updated to use `agent_branch_name()` with `RunContext`.
+/// Used by internal functions that haven't been migrated to RunContext yet.
+pub(super) fn agent_branch_name_legacy(initial: char) -> Option<String> {
     let name = crate::agent::name_from_initial(initial)?;
     Some(format!("agent-{}", name.to_lowercase()))
 }
 
 fn agent_branch_exists_in(repo_root: &Path, initial: char) -> bool {
-    let branch = match agent_branch_name(initial) {
+    let branch = match agent_branch_name_legacy(initial) {
         Some(b) => b,
         None => return false,
     };
@@ -250,7 +266,7 @@ fn agent_branch_has_changes_in(
     initial: char,
     target: &str,
 ) -> Result<bool, String> {
-    let branch = agent_branch_name(initial)
+    let branch = agent_branch_name_legacy(initial)
         .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
     branch_has_changes_in(repo_root, &branch, target)
 }
@@ -272,7 +288,7 @@ pub fn merge_agent_branch_in(
     initial: char,
     target_branch: Option<&str>,
 ) -> MergeResult {
-    let branch = match agent_branch_name(initial) {
+    let branch = match agent_branch_name_legacy(initial) {
         Some(b) => b,
         None => return MergeResult::Error(format!("invalid agent initial: {}", initial)),
     };
@@ -593,7 +609,7 @@ pub fn merge_all_agent_branches(initials: &[char], target_branch: &str) -> Merge
 /// Delete an agent's branch.
 /// Returns Ok(true) if deleted, Ok(false) if branch didn't exist.
 pub fn delete_agent_branch(initial: char) -> Result<bool, String> {
-    let branch = agent_branch_name(initial)
+    let branch = agent_branch_name_legacy(initial)
         .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
 
     if !agent_branch_exists(initial) {

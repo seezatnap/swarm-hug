@@ -9,6 +9,7 @@ use super::git::{
     git_repo_root, registered_worktrees,
 };
 use super::Worktree;
+use crate::run_context::RunContext;
 
 pub(super) fn worktrees_dir_abs(worktrees_dir: &Path, repo_root: &Path) -> PathBuf {
     if worktrees_dir.is_absolute() {
@@ -39,17 +40,51 @@ pub(super) fn worktree_is_registered(repo_root: &Path, path: &Path) -> Result<bo
     Ok(is_registered_path(&registered, &abs))
 }
 
+/// Legacy worktree path without namespacing.
+/// Format: agent-{INITIAL}-{name} (e.g., agent-A-Aaron)
 pub(super) fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
     root.join(format!("agent-{}-{}", initial, name))
 }
 
-/// Create worktrees in the specified directory.
+/// Worktree path using the namespaced branch name from RunContext.
+/// Format: {branch_name} (e.g., greenfield-agent-aaron-a3f8k2)
+pub(super) fn worktree_path_with_context(root: &Path, ctx: &RunContext, initial: char) -> PathBuf {
+    let branch = ctx.agent_branch(initial);
+    root.join(branch)
+}
+
+/// Create worktrees in the specified directory with project-namespaced branch names.
+///
 /// The `worktrees_dir` should be the full path to the worktrees directory
 /// (e.g., ".swarm-hug/authentication/worktrees" in multi-team mode).
+///
+/// The `ctx` parameter provides the project name and run hash used to create
+/// namespaced branch and worktree names, ensuring isolation between projects
+/// and sprint runs.
+///
+/// # Arguments
+/// * `worktrees_dir` - Directory where worktrees will be created
+/// * `assignments` - List of (agent_initial, task_description) tuples
+/// * `base_branch` - Branch to base agent branches on
+/// * `ctx` - RunContext with project name and run hash for namespacing
+///
+/// # Examples
+/// ```ignore
+/// let ctx = RunContext::new("greenfield", 1);
+/// let worktrees = create_worktrees_in(
+///     Path::new(".swarm-hug/greenfield/worktrees"),
+///     &[('A', "Task 1".to_string())],
+///     "greenfield-sprint-1-abc123",
+///     &ctx,
+/// )?;
+/// // Creates worktree at: .swarm-hug/greenfield/worktrees/greenfield-agent-aaron-abc123
+/// // With branch: greenfield-agent-aaron-abc123
+/// ```
 pub fn create_worktrees_in(
     worktrees_dir: &Path,
     assignments: &[(char, String)],
     base_branch: &str,
+    ctx: &RunContext,
 ) -> Result<Vec<Worktree>, String> {
     let mut created = Vec::new();
     let mut seen = HashSet::new();
@@ -77,11 +112,11 @@ pub fn create_worktrees_in(
             continue;
         }
         let name = crate::agent::name_from_initial(upper).unwrap_or("Unknown");
-        let path = worktree_path(&worktrees_dir, upper, name);
-        let path_str = path.to_string_lossy().to_string();
 
-        let branch = agent_branch_name(upper)
-            .ok_or_else(|| format!("invalid agent initial: {}", upper))?;
+        // Use namespaced branch and path from RunContext
+        let branch = agent_branch_name(ctx, upper);
+        let path = worktree_path_with_context(&worktrees_dir, ctx, upper);
+        let path_str = path.to_string_lossy().to_string();
 
         // If worktree already exists, remove it first to ensure a fresh start
         if is_registered_path(&registered, &path) {
@@ -215,11 +250,9 @@ pub fn create_feature_worktree_in(
     Ok(path)
 }
 
-/// Legacy function for backwards compatibility.
-/// Creates worktrees under `base/worktrees/`.
-pub fn create_worktrees(base: &Path, assignments: &[(char, String)]) -> Result<Vec<Worktree>, String> {
-    create_worktrees_in(&base.join("worktrees"), assignments, "HEAD")
-}
+// Note: Legacy create_worktrees() function removed.
+// All worktree creation now requires RunContext for proper namespacing.
+// Use create_worktrees_in() with a RunContext instead.
 
 #[cfg(test)]
 mod tests {
@@ -227,9 +260,10 @@ mod tests {
     use std::path::Path;
     use std::process::{Command, Output};
 
+    use crate::run_context::RunContext;
     use crate::testutil::with_temp_cwd;
 
-    use super::{create_feature_worktree_in, create_worktrees_in, worktree_path};
+    use super::{create_feature_worktree_in, create_worktrees_in, worktree_path, worktree_path_with_context};
 
     fn run_git(args: &[&str]) -> Output {
         let output = Command::new("git")
@@ -274,10 +308,42 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree_path() {
+    fn test_worktree_path_legacy() {
         let root = Path::new("/tmp/worktrees");
         let path = worktree_path(root, 'A', "Aaron");
         assert_eq!(path, Path::new("/tmp/worktrees/agent-A-Aaron"));
+    }
+
+    #[test]
+    fn test_worktree_path_with_context() {
+        let root = Path::new("/tmp/worktrees");
+        let ctx = RunContext::new("greenfield", 1);
+        let path = worktree_path_with_context(root, &ctx, 'A');
+
+        // Path should be: /tmp/worktrees/greenfield-agent-aaron-{hash}
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with("/tmp/worktrees/greenfield-agent-aaron-"));
+        assert_eq!(
+            path_str.len(),
+            "/tmp/worktrees/greenfield-agent-aaron-".len() + 6
+        );
+    }
+
+    #[test]
+    fn test_worktree_path_with_context_different_agents() {
+        let root = Path::new("/tmp/worktrees");
+        let ctx = RunContext::new("greenfield", 1);
+
+        let path_a = worktree_path_with_context(root, &ctx, 'A');
+        let path_b = worktree_path_with_context(root, &ctx, 'B');
+
+        assert!(path_a.to_string_lossy().contains("agent-aaron"));
+        assert!(path_b.to_string_lossy().contains("agent-betty"));
+
+        // Both should have the same hash
+        let hash = ctx.hash();
+        assert!(path_a.to_string_lossy().ends_with(hash));
+        assert!(path_b.to_string_lossy().ends_with(hash));
     }
 
     #[test]
@@ -322,14 +388,19 @@ mod tests {
                 .trim()
                 .to_string();
 
+            let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
             let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
                     .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
             let wt_path = &worktrees[0].path;
             assert!(wt_path.exists());
+
+            // Verify the worktree path uses namespaced name
+            let path_str = wt_path.to_string_lossy();
+            assert!(path_str.contains(&format!("alpha-agent-aaron-{}", ctx.hash())));
 
             let output = Command::new("git")
                 .arg("-C")
@@ -340,6 +411,16 @@ mod tests {
             assert!(output.status.success());
             let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(wt_commit, base_commit);
+
+            // Verify branch name is namespaced
+            let branch_output = Command::new("git")
+                .arg("-C")
+                .arg(wt_path)
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+                .expect("failed to run git rev-parse --abbrev-ref");
+            let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+            assert_eq!(branch, ctx.agent_branch('A'));
         });
     }
 
@@ -355,10 +436,12 @@ mod tests {
                 .trim()
                 .to_string();
 
+            // Use the same context for both creates to test recreation
+            let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
             let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
                     .expect("create worktrees");
             let wt_path = &worktrees[0].path;
 
@@ -366,8 +449,9 @@ mod tests {
             run_git_in(wt_path, &["add", "."]);
             run_git_in(wt_path, &["commit", "-m", "task commit"]);
 
+            // Recreate with same context - should reset to base_commit
             let worktrees_again =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1")
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
                     .expect("recreate worktree");
             let wt_path_again = &worktrees_again[0].path;
 
@@ -381,6 +465,45 @@ mod tests {
             let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(wt_commit, base_commit);
             assert!(!wt_path_again.join("task.txt").exists());
+        });
+    }
+
+    #[test]
+    fn test_create_worktrees_in_different_projects_no_conflict() {
+        with_temp_cwd(|| {
+            init_repo();
+            run_git(&["checkout", "-b", "base-branch"]);
+
+            let ctx1 = RunContext::new("greenfield", 1);
+            let ctx2 = RunContext::new("payments", 1);
+            let worktrees_dir = Path::new(".swarm-hug/worktrees");
+            let assignments = vec![('A', "Task one".to_string())];
+
+            // Create worktree for greenfield
+            let worktrees1 =
+                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx1)
+                    .expect("create greenfield worktrees");
+            assert_eq!(worktrees1.len(), 1);
+
+            // Create worktree for payments - should succeed without conflict
+            let worktrees2 =
+                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx2)
+                    .expect("create payments worktrees");
+            assert_eq!(worktrees2.len(), 1);
+
+            // Both worktrees should exist
+            assert!(worktrees1[0].path.exists());
+            assert!(worktrees2[0].path.exists());
+
+            // They should have different paths
+            assert_ne!(worktrees1[0].path, worktrees2[0].path);
+
+            // Verify branch names are different
+            let branch1 = ctx1.agent_branch('A');
+            let branch2 = ctx2.agent_branch('A');
+            assert_ne!(branch1, branch2);
+            assert!(branch1.starts_with("greenfield-agent-aaron-"));
+            assert!(branch2.starts_with("payments-agent-aaron-"));
         });
     }
 }
