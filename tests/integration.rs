@@ -1854,3 +1854,595 @@ fn test_followup_tasks_written_to_worktree() {
             .expect("cleanup feature worktree");
     });
 }
+
+// ============================================================================
+// Integration tests for project-namespaced worktrees with run hash isolation
+// ============================================================================
+
+/// Test parallel project execution: two projects with the same agents running
+/// concurrently without conflict.
+///
+/// This test verifies:
+/// 1. Two projects can run sprints simultaneously with overlapping agent assignments
+/// 2. Worktrees for each project are isolated by project name and run hash
+/// 3. Branches for each project are isolated by project name and run hash
+/// 4. Cleanup of one project doesn't affect the other
+#[test]
+fn test_parallel_projects_no_worktree_conflict() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        // Initialize git repo
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        fs::write(repo_path.join(".gitignore"), ".swarm-hug/\n").expect("write gitignore");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        // Setup common directory for testing
+        let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
+
+        // Create two different project contexts (simulating parallel runs)
+        let ctx_greenfield = RunContext::new("greenfield", 1);
+        let ctx_payments = RunContext::new("payments", 1);
+
+        // Both projects will use the same agent (Agent A)
+        let assignments = vec![('A', "Task one".to_string())];
+
+        // Create worktrees for greenfield project
+        let worktrees_greenfield = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_greenfield,
+        )
+        .expect("create greenfield worktrees");
+        assert_eq!(worktrees_greenfield.len(), 1);
+
+        // Create worktrees for payments project (same agent - should NOT conflict)
+        let worktrees_payments = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_payments,
+        )
+        .expect("create payments worktrees");
+        assert_eq!(worktrees_payments.len(), 1);
+
+        // Verify both worktrees exist simultaneously
+        let wt_greenfield = &worktrees_greenfield[0].path;
+        let wt_payments = &worktrees_payments[0].path;
+        assert!(
+            wt_greenfield.exists(),
+            "greenfield worktree should exist: {:?}",
+            wt_greenfield
+        );
+        assert!(
+            wt_payments.exists(),
+            "payments worktree should exist: {:?}",
+            wt_payments
+        );
+
+        // Verify they are different paths
+        assert_ne!(
+            wt_greenfield, wt_payments,
+            "worktree paths should be different"
+        );
+
+        // Verify branch names are different
+        let branch_greenfield = ctx_greenfield.agent_branch('A');
+        let branch_payments = ctx_payments.agent_branch('A');
+        assert_ne!(
+            branch_greenfield, branch_payments,
+            "branch names should be different"
+        );
+        assert!(
+            branch_greenfield.starts_with("greenfield-agent-aaron-"),
+            "greenfield branch should have greenfield prefix: {}",
+            branch_greenfield
+        );
+        assert!(
+            branch_payments.starts_with("payments-agent-aaron-"),
+            "payments branch should have payments prefix: {}",
+            branch_payments
+        );
+
+        // Verify each worktree is on the correct branch
+        let greenfield_branch_output = Command::new("git")
+            .arg("-C")
+            .arg(wt_greenfield)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .expect("get greenfield branch");
+        let greenfield_actual_branch = String::from_utf8_lossy(&greenfield_branch_output.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(
+            greenfield_actual_branch, branch_greenfield,
+            "greenfield worktree should be on greenfield branch"
+        );
+
+        let payments_branch_output = Command::new("git")
+            .arg("-C")
+            .arg(wt_payments)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .expect("get payments branch");
+        let payments_actual_branch = String::from_utf8_lossy(&payments_branch_output.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(
+            payments_actual_branch, branch_payments,
+            "payments worktree should be on payments branch"
+        );
+
+        // Clean up greenfield project - should NOT affect payments
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx_greenfield)
+            .expect("cleanup greenfield");
+
+        assert!(
+            !wt_greenfield.exists(),
+            "greenfield worktree should be removed"
+        );
+        assert!(wt_payments.exists(), "payments worktree should still exist");
+
+        // Clean up payments project
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx_payments)
+            .expect("cleanup payments");
+
+        assert!(!wt_payments.exists(), "payments worktree should be removed");
+    });
+}
+
+/// Test parallel projects with multiple agents: verifies complete isolation
+/// when two projects use the same set of agents simultaneously.
+#[test]
+fn test_parallel_projects_multiple_agents_isolated() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
+
+        let ctx_proj1 = RunContext::new("project1", 1);
+        let ctx_proj2 = RunContext::new("project2", 1);
+
+        // Both projects use agents A, B, and C
+        let assignments = vec![
+            ('A', "Task A".to_string()),
+            ('B', "Task B".to_string()),
+            ('C', "Task C".to_string()),
+        ];
+
+        // Create worktrees for both projects
+        let worktrees_proj1 = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_proj1,
+        )
+        .expect("create project1 worktrees");
+
+        let worktrees_proj2 = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_proj2,
+        )
+        .expect("create project2 worktrees");
+
+        assert_eq!(worktrees_proj1.len(), 3);
+        assert_eq!(worktrees_proj2.len(), 3);
+
+        // Verify all 6 worktrees exist (3 per project)
+        for wt in &worktrees_proj1 {
+            assert!(wt.path.exists(), "project1 worktree should exist: {:?}", wt.path);
+        }
+        for wt in &worktrees_proj2 {
+            assert!(wt.path.exists(), "project2 worktree should exist: {:?}", wt.path);
+        }
+
+        // Verify no path collisions
+        let proj1_paths: std::collections::HashSet<_> = worktrees_proj1.iter().map(|w| &w.path).collect();
+        let proj2_paths: std::collections::HashSet<_> = worktrees_proj2.iter().map(|w| &w.path).collect();
+        assert!(
+            proj1_paths.is_disjoint(&proj2_paths),
+            "worktree paths should not overlap"
+        );
+
+        // Clean up project1 completely
+        let proj1_initials: Vec<char> = worktrees_proj1.iter().map(|w| w.initial).collect();
+        let summary = worktree::cleanup_agent_worktrees(&worktrees_dir, &proj1_initials, true, &ctx_proj1);
+        assert_eq!(summary.cleaned_count(), 3);
+        assert!(!summary.has_errors());
+
+        // Verify project1 worktrees are gone but project2 worktrees remain
+        for wt in &worktrees_proj1 {
+            assert!(!wt.path.exists(), "project1 worktree should be removed: {:?}", wt.path);
+        }
+        for wt in &worktrees_proj2 {
+            assert!(wt.path.exists(), "project2 worktree should still exist: {:?}", wt.path);
+        }
+
+        // Clean up project2
+        let proj2_initials: Vec<char> = worktrees_proj2.iter().map(|w| w.initial).collect();
+        worktree::cleanup_agent_worktrees(&worktrees_dir, &proj2_initials, true, &ctx_proj2);
+    });
+}
+
+/// Test restart isolation: when a sprint is cancelled and restarted,
+/// a new hash is generated and old artifacts remain until explicitly cleaned up.
+///
+/// This test verifies:
+/// 1. Each RunContext generates a unique hash
+/// 2. Restarting (creating new RunContext for same project/sprint) creates new artifacts
+/// 3. Old artifacts from cancelled run remain untouched
+/// 4. Cleanup with old RunContext targets only old artifacts
+/// 5. Cleanup with new RunContext targets only new artifacts
+#[test]
+fn test_restart_isolation_new_hash_old_artifacts_remain() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
+        let assignments = vec![('A', "Task one".to_string())];
+
+        // Simulate first run (which gets cancelled)
+        let ctx_run1 = RunContext::new("greenfield", 1);
+        let run1_hash = ctx_run1.hash().to_string();
+
+        let worktrees_run1 = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_run1,
+        )
+        .expect("create run1 worktrees");
+
+        let wt_run1 = worktrees_run1[0].path.clone();
+        assert!(wt_run1.exists(), "run1 worktree should exist");
+
+        // Make a change in run1's worktree to simulate work in progress
+        fs::write(wt_run1.join("wip.txt"), "work in progress from run 1").expect("write wip");
+        Command::new("git")
+            .arg("-C")
+            .arg(&wt_run1)
+            .args(["add", "."])
+            .output()
+            .expect("git add");
+        Command::new("git")
+            .arg("-C")
+            .arg(&wt_run1)
+            .args(["commit", "-m", "WIP from run 1"])
+            .output()
+            .expect("git commit");
+
+        // Simulate restart: create new RunContext for same project/sprint
+        // This represents cancelling the sprint and starting over
+        let ctx_run2 = RunContext::new("greenfield", 1);
+        let run2_hash = ctx_run2.hash().to_string();
+
+        // Verify hashes are different
+        assert_ne!(
+            run1_hash, run2_hash,
+            "restarted sprint should have a different hash"
+        );
+
+        // Create worktrees for run2
+        let worktrees_run2 = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            "main",
+            &ctx_run2,
+        )
+        .expect("create run2 worktrees");
+
+        let wt_run2 = worktrees_run2[0].path.clone();
+        assert!(wt_run2.exists(), "run2 worktree should exist");
+
+        // KEY ASSERTION: Both worktrees should exist simultaneously
+        assert!(wt_run1.exists(), "run1 worktree should still exist after run2 creation");
+        assert!(wt_run2.exists(), "run2 worktree should exist");
+        assert_ne!(wt_run1, wt_run2, "run1 and run2 worktrees should be different paths");
+
+        // Verify run1's work is still there
+        assert!(
+            wt_run1.join("wip.txt").exists(),
+            "run1's WIP file should still exist"
+        );
+
+        // Verify run2 is clean (doesn't have run1's changes)
+        assert!(
+            !wt_run2.join("wip.txt").exists(),
+            "run2 worktree should NOT have run1's WIP file"
+        );
+
+        // Clean up run2 (the new run) - should NOT affect run1
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx_run2)
+            .expect("cleanup run2");
+
+        assert!(!wt_run2.exists(), "run2 worktree should be removed");
+        assert!(wt_run1.exists(), "run1 worktree should still exist after run2 cleanup");
+
+        // Now clean up run1
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx_run1)
+            .expect("cleanup run1");
+
+        assert!(!wt_run1.exists(), "run1 worktree should be removed after explicit cleanup");
+    });
+}
+
+/// Test cleanup scope: cleanup only affects artifacts from the current run's hash.
+///
+/// This test creates multiple runs with different hashes and verifies that cleanup
+/// operations are precisely scoped to only remove artifacts matching the given RunContext.
+#[test]
+fn test_cleanup_scope_only_affects_current_run_hash() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
+        let assignments = vec![
+            ('A', "Task A".to_string()),
+            ('B', "Task B".to_string()),
+        ];
+
+        // Create 3 runs with different hashes
+        let ctx1 = RunContext::new("project", 1);
+        let ctx2 = RunContext::new("project", 2);
+        let ctx3 = RunContext::new("project", 1); // Same project/sprint, different hash
+
+        // Record hashes for clarity
+        let hash1 = ctx1.hash().to_string();
+        let hash2 = ctx2.hash().to_string();
+        let hash3 = ctx3.hash().to_string();
+        assert_ne!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+        assert_ne!(hash2, hash3);
+
+        // Create worktrees for all 3 runs
+        let worktrees1 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
+            .expect("create worktrees1");
+        let worktrees2 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
+            .expect("create worktrees2");
+        let worktrees3 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx3)
+            .expect("create worktrees3");
+
+        // Verify all worktrees exist (6 total: 2 per run)
+        assert_eq!(worktrees1.len(), 2);
+        assert_eq!(worktrees2.len(), 2);
+        assert_eq!(worktrees3.len(), 2);
+
+        for wt in &worktrees1 {
+            assert!(wt.path.exists(), "ctx1 worktree should exist: {:?}", wt.path);
+        }
+        for wt in &worktrees2 {
+            assert!(wt.path.exists(), "ctx2 worktree should exist: {:?}", wt.path);
+        }
+        for wt in &worktrees3 {
+            assert!(wt.path.exists(), "ctx3 worktree should exist: {:?}", wt.path);
+        }
+
+        // Cleanup ctx1 - should ONLY affect ctx1's worktrees
+        let summary1 = worktree::cleanup_agent_worktrees(&worktrees_dir, &['A', 'B'], true, &ctx1);
+        assert_eq!(summary1.cleaned_count(), 2);
+        assert!(!summary1.has_errors());
+
+        // Verify ctx1 worktrees are removed, others remain
+        for wt in &worktrees1 {
+            assert!(!wt.path.exists(), "ctx1 worktree should be removed: {:?}", wt.path);
+        }
+        for wt in &worktrees2 {
+            assert!(wt.path.exists(), "ctx2 worktree should still exist after ctx1 cleanup: {:?}", wt.path);
+        }
+        for wt in &worktrees3 {
+            assert!(wt.path.exists(), "ctx3 worktree should still exist after ctx1 cleanup: {:?}", wt.path);
+        }
+
+        // Cleanup ctx3 - should ONLY affect ctx3's worktrees
+        let summary3 = worktree::cleanup_agent_worktrees(&worktrees_dir, &['A', 'B'], true, &ctx3);
+        assert_eq!(summary3.cleaned_count(), 2);
+
+        // Verify ctx3 worktrees are removed, ctx2 still remains
+        for wt in &worktrees3 {
+            assert!(!wt.path.exists(), "ctx3 worktree should be removed: {:?}", wt.path);
+        }
+        for wt in &worktrees2 {
+            assert!(wt.path.exists(), "ctx2 worktree should still exist after ctx3 cleanup: {:?}", wt.path);
+        }
+
+        // Finally cleanup ctx2
+        let summary2 = worktree::cleanup_agent_worktrees(&worktrees_dir, &['A', 'B'], true, &ctx2);
+        assert_eq!(summary2.cleaned_count(), 2);
+
+        for wt in &worktrees2 {
+            assert!(!wt.path.exists(), "ctx2 worktree should be removed: {:?}", wt.path);
+        }
+    });
+}
+
+/// Test that branch cleanup is also scoped by run hash.
+///
+/// Verifies that when deleting branches during cleanup, only branches
+/// matching the specific run hash are deleted.
+#[test]
+fn test_branch_cleanup_scoped_by_hash() {
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        commit_all(&repo_path, "init");
+
+        let mut rename_cmd = Command::new("git");
+        rename_cmd
+            .arg("-C")
+            .arg(&repo_path)
+            .args(["branch", "-M", "main"]);
+        run_success(&mut rename_cmd);
+
+        let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
+        let assignments = vec![('A', "Task A".to_string())];
+
+        // Create two runs
+        let ctx1 = RunContext::new("project", 1);
+        let ctx2 = RunContext::new("project", 1);
+
+        let branch1 = ctx1.agent_branch('A');
+        let branch2 = ctx2.agent_branch('A');
+
+        // Create worktrees for both runs
+        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
+            .expect("create worktrees ctx1");
+        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
+            .expect("create worktrees ctx2");
+
+        // Helper to check if a branch exists
+        let branch_exists = |branch: &str| -> bool {
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo_path)
+                .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{}", branch)])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        // Both branches should exist
+        assert!(branch_exists(&branch1), "branch1 should exist");
+        assert!(branch_exists(&branch2), "branch2 should exist");
+
+        // Cleanup ctx1 with branch deletion
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx1)
+            .expect("cleanup ctx1");
+
+        // branch1 should be deleted, branch2 should remain
+        assert!(!branch_exists(&branch1), "branch1 should be deleted after ctx1 cleanup");
+        assert!(branch_exists(&branch2), "branch2 should still exist after ctx1 cleanup");
+
+        // Cleanup ctx2 with branch deletion
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx2)
+            .expect("cleanup ctx2");
+
+        // Now both branches should be deleted
+        assert!(!branch_exists(&branch2), "branch2 should be deleted after ctx2 cleanup");
+    });
+}
+
+/// Test that the run hash is consistent across all artifacts within a single run.
+///
+/// Verifies that sprint branch, agent worktrees, and agent branches all share
+/// the same hash suffix within a single RunContext.
+#[test]
+fn test_run_hash_consistency_across_artifacts() {
+    let ctx = RunContext::new("myproject", 5);
+    let hash = ctx.hash();
+
+    // Sprint branch should end with the hash
+    let sprint_branch = ctx.sprint_branch();
+    assert!(
+        sprint_branch.ends_with(hash),
+        "sprint branch '{}' should end with hash '{}'",
+        sprint_branch,
+        hash
+    );
+    assert!(
+        sprint_branch.starts_with("myproject-sprint-5-"),
+        "sprint branch should have correct prefix"
+    );
+
+    // All agent branches should end with the same hash
+    for initial in 'A'..='Z' {
+        let agent_branch = ctx.agent_branch(initial);
+        assert!(
+            agent_branch.ends_with(hash),
+            "agent branch for {} '{}' should end with hash '{}'",
+            initial,
+            agent_branch,
+            hash
+        );
+    }
+
+    // Verify hash length is 6 characters
+    assert_eq!(hash.len(), 6, "hash should be 6 characters");
+
+    // Verify hash is alphanumeric lowercase
+    assert!(
+        hash.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+        "hash '{}' should be lowercase alphanumeric",
+        hash
+    );
+}
+
+/// Test that different projects with same sprint number get different hashes.
+///
+/// Even when two projects happen to be on the same sprint number, their
+/// RunContexts will have different hashes ensuring full isolation.
+#[test]
+fn test_different_projects_same_sprint_different_hashes() {
+    let ctx_alpha = RunContext::new("alpha", 1);
+    let ctx_beta = RunContext::new("beta", 1);
+
+    // Hashes should be different (statistically guaranteed)
+    assert_ne!(
+        ctx_alpha.hash(),
+        ctx_beta.hash(),
+        "different projects should have different hashes"
+    );
+
+    // Sprint branches should be completely different
+    assert_ne!(
+        ctx_alpha.sprint_branch(),
+        ctx_beta.sprint_branch(),
+        "sprint branches should be different"
+    );
+
+    // Agent branches should be completely different
+    assert_ne!(
+        ctx_alpha.agent_branch('A'),
+        ctx_beta.agent_branch('A'),
+        "agent branches should be different"
+    );
+
+    // Verify prefixes are correct
+    assert!(ctx_alpha.sprint_branch().starts_with("alpha-sprint-1-"));
+    assert!(ctx_beta.sprint_branch().starts_with("beta-sprint-1-"));
+}
