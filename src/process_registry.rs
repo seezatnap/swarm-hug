@@ -49,21 +49,7 @@ pub static PROCESS_REGISTRY: Lazy<ProcessRegistry> = Lazy::new(ProcessRegistry::
 
 #[cfg(unix)]
 fn kill_pid_gracefully(pid: u32) {
-    use std::thread;
-    use std::time::Duration;
-
-    // Try SIGTERM first for graceful shutdown.
-    unsafe {
-        libc::kill(pid as i32, libc::SIGTERM);
-    }
-
-    // Give the process a moment to exit.
-    thread::sleep(Duration::from_millis(100));
-
-    // Force kill if it's still around.
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
+    crate::process::kill_process_tree(pid);
 }
 
 #[cfg(windows)]
@@ -101,5 +87,42 @@ mod tests {
     fn kill_all_empty_no_panic() {
         let registry = ProcessRegistry::new();
         registry.kill_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_all_terminates_process_group() {
+        use crate::process_group::spawn_in_new_process_group;
+        use std::process::{Command, Stdio};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let registry = ProcessRegistry::new();
+
+        let mut cmd = Command::new("sleep");
+        cmd.arg("10")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let mut child = spawn_in_new_process_group(&mut cmd).expect("spawn sleep");
+        let pid = child.id();
+        registry.register(pid);
+
+        registry.kill_all();
+
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if start.elapsed() > Duration::from_secs(2) {
+                        panic!("process still running after kill_all");
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(err) => panic!("try_wait failed: {}", err),
+            }
+        }
     }
 }

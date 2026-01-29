@@ -2,6 +2,7 @@
 
 ## Current Session
 
+- [x] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running
 - [x] (#5) Extract shared `kill_process_tree(pid)` function to `src/process.rs` that sends SIGTERM to process group, waits 100ms, sends SIGKILL to process group, and uses pkill as backup for children; include Windows taskkill implementation; update TUI and plain text modes to use this shared function [5 pts]
 - [x] (#3) Integrate process registry into both claude.rs and codex.rs engines: register PID immediately after `Command::spawn()`, unregister PID after `child.wait()` on all exit paths (success, timeout, shutdown, error), and wire `PROCESS_REGISTRY.kill_all()` to the shutdown handler in `src/shutdown.rs` [5 pts]
 
