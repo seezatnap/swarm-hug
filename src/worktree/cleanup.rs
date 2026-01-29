@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::create::{worktree_is_registered, worktree_path, worktrees_dir_abs};
-use super::git::{agent_branch_name, delete_agent_branch, find_worktrees_with_branch, git_repo_root};
+use super::git::{agent_branch_name_legacy, delete_agent_branch, find_worktrees_with_branch, git_repo_root};
 use super::list::list_worktrees;
 
 /// Remove a worktree by its path (used when cleaning up worktrees with a specific branch).
@@ -178,7 +178,7 @@ pub fn cleanup_agent_worktree(
     if delete_branch {
         // Before deleting the branch, remove any worktrees that have it checked out
         // (this handles multi-team scenarios where another team's worktree uses this branch)
-        let branch = agent_branch_name(initial)
+        let branch = agent_branch_name_legacy(initial)
             .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
         if let Ok(worktrees_with_branch) = find_worktrees_with_branch(&repo_root, &branch) {
             for wt_path in worktrees_with_branch {
