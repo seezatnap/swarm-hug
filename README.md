@@ -4,7 +4,7 @@ A CLI interface for agents working in sprints.
 
 ## Why does this exist
 
-I believe that agents need managment and process. This is an experiment in giving them that, through agile-like processes. We get a planner, who takes a PRD and organizes it into reasonably-scoped tasks. A scrum master, who assigns logical tickets to different agents to keep them from blocking and stomping on each others' work. And finally we have a revision cycle in the form of a sprint post-mortem, in which an agent can review the sprint's work and create follow-ups to align back to the PRD.
+I believe that agents need managment and process. This is an experiment in giving them that, through agile-ish sprints. We get a planner, who takes a PRD and organizes it into reasonably-scoped tasks. A scrum master, who assigns logical tickets to different agents to keep them from blocking and stomping on each others' work. And finally we have a revision cycle in the form of a sprint post-mortem, in which an agent can review the sprint's work and create follow-ups to align back to the PRD.
 
 <img width="1999" height="1116" alt="image" src="https://github.com/user-attachments/assets/10fc105b-1053-49a5-85f5-690d098b34c7" />
 
