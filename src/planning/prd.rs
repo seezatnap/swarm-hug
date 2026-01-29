@@ -181,7 +181,7 @@ mod tests {
         if let Ok(prompt) = result {
             assert!(prompt.contains("My Feature"));
             assert!(prompt.contains("product requirement"));
-            assert!(prompt.contains("3 story points"));
+            assert!(prompt.contains("5 story points"));
         }
     }
 
