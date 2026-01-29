@@ -11,7 +11,7 @@
 
 ## Runner Integration
 
-- [ ] (#4) Update `src/runner.rs` to create `RunContext` at the start of `run_sprint()`, pass it to all worktree creation and cleanup calls, update sprint branch creation to use `ctx.sprint_branch()`, log the run hash at sprint start for visibility, and update all call sites that previously passed project string to pass `RunContext` instead [5 pts] (blocked by #2, #3)
+- [x] (#4) Update `src/runner.rs` to create `RunContext` at the start of `run_sprint()`, pass it to all worktree creation and cleanup calls, update sprint branch creation to use `ctx.sprint_branch()`, log the run hash at sprint start for visibility, and update all call sites that previously passed project string to pass `RunContext` instead [5 pts] (blocked by #2, #3) (A)
 
 ## Assignments Removal
 

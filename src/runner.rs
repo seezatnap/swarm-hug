@@ -142,8 +142,21 @@ pub(crate) fn run_sprint(
         return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
-    // Compute sprint branch name (sprint number was determined earlier via peek)
-    let sprint_branch = format!("{}-sprint-{}", team_name, historical_sprint);
+    // Create run context for namespaced artifacts (worktrees, branches)
+    // This is created early so the sprint branch uses the run hash
+    let run_ctx = RunContext::new(&team_name, historical_sprint as u32);
+
+    // Log run hash at sprint start for visibility
+    println!(
+        "{} {} Sprint {} (run {}): starting",
+        emoji::SPRINT,
+        color::info(&formatted_team),
+        color::number(historical_sprint),
+        color::info(run_ctx.hash())
+    );
+
+    // Compute sprint branch name using run context (includes run hash)
+    let sprint_branch = run_ctx.sprint_branch();
     let target_branch = config
         .target_branch
         .as_deref()
@@ -294,9 +307,6 @@ pub(crate) fn run_sprint(
         color::number(assigned),
         color::number(agent_count)
     );
-
-    // Create run context for namespaced artifacts (worktrees, branches)
-    let run_ctx = RunContext::new(&team_name, historical_sprint as u32);
 
     // Clean up any existing worktrees for assigned agents before creating new ones
     // This ensures a clean slate from the feature branch for each sprint
