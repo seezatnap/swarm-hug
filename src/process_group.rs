@@ -1,14 +1,16 @@
 use std::io;
 use std::process::{Child, Command};
 
-/// Spawn a command in a new process group when supported.
+/// Spawn a subprocess in a new process group (Unix) for easier cleanup.
 #[cfg(unix)]
 pub fn spawn_in_new_process_group(cmd: &mut Command) -> io::Result<Child> {
     use std::os::unix::process::CommandExt;
 
     unsafe {
         cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
+            if libc::setpgid(0, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
             Ok(())
         });
     }
@@ -16,7 +18,7 @@ pub fn spawn_in_new_process_group(cmd: &mut Command) -> io::Result<Child> {
     cmd.spawn()
 }
 
-/// Spawn a command on Windows (process groups are handled differently).
+/// Spawn a subprocess on Windows (process groups handled differently).
 #[cfg(windows)]
 pub fn spawn_in_new_process_group(cmd: &mut Command) -> io::Result<Child> {
     cmd.spawn()
@@ -28,11 +30,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn spawn_creates_new_process_group() {
+    fn spawn_in_new_process_group_sets_pgid() {
+        use std::io;
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new("sleep");
-        cmd.arg("10")
+        cmd.arg("5")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -41,7 +44,9 @@ mod tests {
         let pid = child.id() as i32;
 
         let pgid = unsafe { libc::getpgid(pid) };
-        assert!(pgid >= 0, "getpgid failed");
+        if pgid < 0 {
+            panic!("getpgid failed: {}", io::Error::last_os_error());
+        }
         assert_eq!(pgid, pid);
 
         let _ = child.kill();
@@ -50,7 +55,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn spawn_works_on_windows() {
+    fn spawn_in_new_process_group_spawns() {
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new("cmd");
