@@ -37,6 +37,38 @@ impl TeamState {
         })
     }
 
+    /// Load team state from an explicit path.
+    ///
+    /// Creates a new state with no feature branch if the file doesn't exist.
+    /// The team name is extracted from the JSON content if the file exists,
+    /// or derived from the parent directory name if it doesn't.
+    pub fn load_from(path: &Path) -> Result<Self, String> {
+        if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+            let (team_name, feature_branch) = Self::parse_json_full(&content)?;
+            Ok(Self {
+                team_name,
+                feature_branch: feature_branch.filter(|branch| !branch.trim().is_empty()),
+                path: path.to_path_buf(),
+            })
+        } else {
+            // Derive team name from parent directory (path is .swarm-hug/<team>/team-state.json)
+            let team_name = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| format!("cannot derive team name from path: {}", path.display()))?
+                .to_string();
+
+            Ok(Self {
+                team_name,
+                feature_branch: None,
+                path: path.to_path_buf(),
+            })
+        }
+    }
+
     /// Save team state to disk.
     pub fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
@@ -93,6 +125,37 @@ impl TeamState {
         }
 
         Ok(None)
+    }
+
+    /// Parse JSON content and extract both team name and feature branch.
+    fn parse_json_full(content: &str) -> Result<(String, Option<String>), String> {
+        let content = content.trim();
+        if !content.starts_with('{') || !content.ends_with('}') {
+            return Err("invalid team state JSON".to_string());
+        }
+
+        // Extract team name
+        let team_key = "\"team\"";
+        let team_name = if let Some(idx) = content.find(team_key) {
+            let after_key = &content[idx + team_key.len()..];
+            if let Some(colon_idx) = after_key.find(':') {
+                let after_colon = after_key[colon_idx + 1..].trim_start();
+                if after_colon.starts_with('"') {
+                    parse_json_string(after_colon)?
+                } else {
+                    return Err("invalid team value".to_string());
+                }
+            } else {
+                return Err("invalid team field".to_string());
+            }
+        } else {
+            return Err("missing team field in team state".to_string());
+        };
+
+        // Extract feature branch (reuse existing logic)
+        let feature_branch = Self::parse_json(content)?;
+
+        Ok((team_name, feature_branch))
     }
 
     fn to_json(&self) -> String {
@@ -206,5 +269,91 @@ mod tests {
             assert!(json.contains("\"team\": \"gamma\""));
             assert!(json.contains("\"feature_branch\": \"gamma-sprint-2\""));
         });
+    }
+
+    #[test]
+    fn test_team_state_load_from_existing() {
+        with_temp_cwd(|| {
+            // Create a team state file via the normal load/save path
+            let mut state = TeamState::load("load-from-team").unwrap();
+            state.set_feature_branch("load-from-sprint-1").unwrap();
+            state.save().unwrap();
+
+            // Now load using load_from with explicit path
+            let path = PathBuf::from(SWARM_HUG_DIR)
+                .join("load-from-team")
+                .join(TEAM_STATE_FILE);
+            let loaded = TeamState::load_from(&path).unwrap();
+
+            assert_eq!(loaded.team_name, "load-from-team");
+            assert_eq!(loaded.feature_branch, Some("load-from-sprint-1".to_string()));
+            assert_eq!(loaded.path(), &path);
+        });
+    }
+
+    #[test]
+    fn test_team_state_load_from_nonexistent() {
+        with_temp_cwd(|| {
+            // Create the parent directory but not the file
+            let team_dir = PathBuf::from(SWARM_HUG_DIR).join("new-load-from-team");
+            fs::create_dir_all(&team_dir).unwrap();
+
+            let path = team_dir.join(TEAM_STATE_FILE);
+            let loaded = TeamState::load_from(&path).unwrap();
+
+            // Team name should be derived from parent directory
+            assert_eq!(loaded.team_name, "new-load-from-team");
+            assert_eq!(loaded.feature_branch, None);
+            assert_eq!(loaded.path(), &path);
+        });
+    }
+
+    #[test]
+    fn test_team_state_load_from_save_and_reload() {
+        with_temp_cwd(|| {
+            // Create parent directory
+            let team_dir = PathBuf::from(SWARM_HUG_DIR).join("save-reload-team");
+            fs::create_dir_all(&team_dir).unwrap();
+            let path = team_dir.join(TEAM_STATE_FILE);
+
+            // Load from nonexistent file (creates default state)
+            let mut state = TeamState::load_from(&path).unwrap();
+            assert_eq!(state.team_name, "save-reload-team");
+            assert_eq!(state.feature_branch, None);
+
+            // Modify and save
+            state.set_feature_branch("save-reload-sprint-1").unwrap();
+            state.save().unwrap();
+
+            // Reload and verify
+            let reloaded = TeamState::load_from(&path).unwrap();
+            assert_eq!(reloaded.team_name, "save-reload-team");
+            assert_eq!(reloaded.feature_branch, Some("save-reload-sprint-1".to_string()));
+        });
+    }
+
+    #[test]
+    fn test_team_state_parse_json_full() {
+        // Valid JSON with feature branch
+        let (team, feature) = TeamState::parse_json_full(
+            r#"{"team": "alpha", "feature_branch": "alpha-sprint-1"}"#
+        ).unwrap();
+        assert_eq!(team, "alpha");
+        assert_eq!(feature, Some("alpha-sprint-1".to_string()));
+
+        // Valid JSON with null feature branch
+        let (team, feature) = TeamState::parse_json_full(
+            r#"{"team": "beta", "feature_branch": null}"#
+        ).unwrap();
+        assert_eq!(team, "beta");
+        assert_eq!(feature, None);
+
+        // Missing team field should error
+        let result = TeamState::parse_json_full(r#"{"feature_branch": "sprint-1"}"#);
+        assert!(result.is_err());
+
+        // Invalid JSON should error
+        let result = TeamState::parse_json_full("not json");
+        assert!(result.is_err());
     }
 }
