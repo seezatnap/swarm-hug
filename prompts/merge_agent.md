@@ -27,8 +27,10 @@ git -C "$MAIN_REPO" pull --ff-only || true
 ```
 If pulling is not appropriate, skip it and note why.
 
-3) Merge the feature branch:
+3) Merge the feature branch (as Swarm ScrumMaster):
 ```bash
+GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
+GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
 git -C "$MAIN_REPO" merge --no-ff {{feature_branch}}
 ```
 
@@ -37,8 +39,10 @@ git -C "$MAIN_REPO" merge --no-ff {{feature_branch}}
 - Resolve by preserving upstream intent; keep both changes when possible.
 - Run the repository's validation gate (build, lint, typecheck, tests). Use README or CI workflows to find commands.
 
-5) If the merge requires a manual commit:
+5) If the merge requires a manual commit (as Swarm ScrumMaster):
 ```bash
+GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
+GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
 git -C "$MAIN_REPO" commit -m "Merge branch '{{feature_branch}}' into {{target_branch}}{{co_author}}"
 ```
 

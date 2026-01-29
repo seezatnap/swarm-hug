@@ -849,7 +849,11 @@ pub(crate) fn run_sprint(
     } else if sprint_branch == target_branch {
         println!("  Skipping merge agent: feature branch matches target branch.");
     } else {
-        println!("  Merge agent: {} -> {}", sprint_branch, target_branch);
+        println!("  Merge agent: starting ({} -> {})", sprint_branch, target_branch);
+        let merge_msg = format!("Merge agent: starting ({} -> {})", sprint_branch, target_branch);
+        if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &merge_msg) {
+            eprintln!("  warning: failed to write merge start to chat: {}", e);
+        }
         let merge_cleanup_paths = vec![
             PathBuf::from(&config.files_tasks),
             PathBuf::from(format!(
@@ -878,6 +882,9 @@ pub(crate) fn run_sprint(
             )
             .map_err(|e| format!("merge agent failed: {}", e))?;
             println!("  Merge agent: completed");
+            if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
+                eprintln!("  warning: failed to write merge complete to chat: {}", e);
+            }
             let merged = worktree::branch_is_merged(&sprint_branch, target_branch)
                 .map_err(|e| format!("merge verification failed: {}", e))?;
             let mut merged_ok = merged;
@@ -929,6 +936,10 @@ pub(crate) fn run_sprint(
             let detail = merge_result
                 .error
                 .unwrap_or_else(|| "unknown error".to_string());
+            println!("  Merge agent: failed");
+            if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &format!("Merge agent: failed ({})", detail)) {
+                eprintln!("  warning: failed to write merge failure to chat: {}", e);
+            }
             return Err(format!("merge agent failed: {}", detail));
         }
     }
