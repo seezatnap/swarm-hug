@@ -60,9 +60,11 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
     let mut task_list = TaskList::parse(&content);
 
-    // Load sprint history to get historical sprint number
+    // Load sprint history and determine sprint number (peek, don't write yet)
     let team_name = project_name_for_config(config);
-    let mut sprint_history = team::SprintHistory::load(&team_name)?;
+    let sprint_history = team::SprintHistory::load(&team_name)?;
+    let historical_sprint = sprint_history.peek_next_sprint();
+    let formatted_team = sprint_history.formatted_team_name();
 
     // Unassign any incomplete tasks from previous sprints so they can be reassigned fresh
     let unassigned = task_list.unassign_all();
@@ -139,21 +141,17 @@ pub(crate) fn run_sprint(
         return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
     }
 
-    // Increment and save sprint history now that we have tasks assigned
-    let historical_sprint = sprint_history.next_sprint();
-    let formatted_team = sprint_history.formatted_team_name();
-    sprint_history.save()?;
-
-    // Print sprint start banner
-    print_sprint_start_banner(&formatted_team, historical_sprint);
-
-    // Create feature worktree for this sprint
+    // Compute sprint branch name (sprint number was determined earlier via peek)
     let sprint_branch = format!("{}-sprint-{}", team_name, historical_sprint);
     let target_branch = config
         .target_branch
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
+
+    // Create sprint branch/worktree FIRST, before any file writes
+    // This ensures all sprint setup files are written to the sprint worktree,
+    // not the target branch (main/master)
 
     // Clean up any existing feature worktree from a failed previous sprint
     // This ensures we start fresh from the target branch
@@ -165,6 +163,16 @@ pub(crate) fn run_sprint(
     let feature_worktree_path =
         worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
             .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+
+    // Print sprint start banner (after worktree creation to ensure we have a valid sprint)
+    print_sprint_start_banner(&formatted_team, historical_sprint);
+
+    // NOW load and save state files (after worktree is created)
+    // Note: Task #5 will update these to write to the sprint worktree instead of main repo
+    let mut sprint_history = team::SprintHistory::load(&team_name)?;
+    sprint_history.increment();
+    sprint_history.save()?;
+
     let mut team_state = team::TeamState::load(&team_name)
         .map_err(|e| format!("failed to load team state: {}", e))?;
     team_state
