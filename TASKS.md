@@ -20,7 +20,7 @@
 
 ## Phase 4: Signal Propagation
 
-- [ ] (#6) Add shutdown check to engine polling loops in both claude.rs and codex.rs that calls `shutdown::requested()` and terminates subprocess gracefully when triggered, returning appropriate shutdown error result with exit code 130 [4 pts] (blocked by #3)
+- [x] (#6) Add shutdown check to engine polling loops in both claude.rs and codex.rs that calls `shutdown::requested()` and terminates subprocess gracefully when triggered, returning appropriate shutdown error result with exit code 130 [4 pts] (blocked by #3)
 - [ ] (#7) Implement graceful signal escalation in `kill_subprocess()` helper: send SIGTERM first, wait 100ms, check if still running with `try_wait()`, send SIGKILL if needed, always call `child.wait()` to reap; use this helper in both timeout and shutdown paths in both engines [5 pts] (blocked by #1)
 
 ## Phase 5: Testing
