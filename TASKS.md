@@ -16,7 +16,7 @@
 
 ## Phase 3: Process Group Management
 
-- [ ] (#4) Create `src/process_group.rs` helper module with `spawn_in_new_process_group()` function that uses `pre_exec` with `libc::setpgid(0, 0)` on Unix and standard spawn on Windows, then update both claude.rs and codex.rs engine spawn calls to use this helper [5 pts]
+- [x] (#4) Create `src/process_group.rs` helper module with `spawn_in_new_process_group()` function that uses `pre_exec` with `libc::setpgid(0, 0)` on Unix and standard spawn on Windows, then update both claude.rs and codex.rs engine spawn calls to use this helper [5 pts]
 
 ## Phase 4: Signal Propagation
 
