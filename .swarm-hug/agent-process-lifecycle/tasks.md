@@ -21,7 +21,7 @@
 
 ## Phase 5: Testing
 
-- [ ] (#8) Add integration tests for subprocess cleanup: test `test_engine_timeout_no_zombie` that spawns engine with short timeout and verifies no zombie processes remain; test `test_shutdown_kills_subprocess` that sets shutdown flag and verifies subprocess terminates within 500ms [5 pts] (blocked by #1, #6, #7)
+- [x] (#8) Add integration tests for subprocess cleanup: test `test_engine_timeout_no_zombie` that spawns engine with short timeout and verifies no zombie processes remain; test `test_shutdown_kills_subprocess` that sets shutdown flag and verifies subprocess terminates within 500ms [5 pts] (blocked by #1, #6, #7) (A)
 - [x] (#9) Add multi-instance isolation tests: test `test_multi_instance_isolation` with two ProcessRegistry instances verifying kill_all on one doesn't affect the other; test `test_process_registry_thread_safety` with concurrent register/unregister/kill_all operations verifying no race conditions [5 pts] (blocked by #2) (B)
 
 ## Follow-up tasks (from sprint review)
@@ -29,3 +29,7 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#11) Update `ProcessRegistry::kill_all` on Unix to terminate the full process group for each registered PID (e.g., call `kill_process_tree` or signal `-pid`) so Ctrl+C shutdown doesn’t leave child processes running. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Add CodexEngine cleanup integration coverage for timeout and shutdown paths to mirror the Claude tests
+- [ ] (#13) Add the missing ProcessRegistry multi-instance isolation and thread-safety tests; they’re marked complete but no tests exist
