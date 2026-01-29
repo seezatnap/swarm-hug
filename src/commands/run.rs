@@ -152,6 +152,10 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
         args.push("--project".to_string());
         args.push(project.clone());
     }
+    if let Some(ref target_branch) = config.target_branch {
+        args.push("--target-branch".to_string());
+        args.push(target_branch.clone());
+    }
     if config.sprints_max > 0 {
         args.push("--max-sprints".to_string());
         args.push(config.sprints_max.to_string());
