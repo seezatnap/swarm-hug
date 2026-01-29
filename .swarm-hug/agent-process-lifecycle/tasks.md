@@ -21,7 +21,7 @@
 
 ## Phase 5: Testing
 
-- [A] (#8) Add integration tests for subprocess cleanup: test `test_engine_timeout_no_zombie` that spawns engine with short timeout and verifies no zombie processes remain; test `test_shutdown_kills_subprocess` that sets shutdown flag and verifies subprocess terminates within 500ms [5 pts] (blocked by #1, #6, #7)
+- [x] (#8) Add integration tests for subprocess cleanup: test `test_engine_timeout_no_zombie` that spawns engine with short timeout and verifies no zombie processes remain; test `test_shutdown_kills_subprocess` that sets shutdown flag and verifies subprocess terminates within 500ms [5 pts] (blocked by #1, #6, #7) (A)
 - [x] (#9) Add multi-instance isolation tests: test `test_multi_instance_isolation` with two ProcessRegistry instances verifying kill_all on one doesn't affect the other; test `test_process_registry_thread_safety` with concurrent register/unregister/kill_all operations verifying no race conditions [5 pts] (blocked by #2) (B)
 
 ## Follow-up tasks (from sprint review)
