@@ -6,17 +6,12 @@
 //! - Its own chat.md
 //! - Its own sprint-history.json for tracking sprint counts
 //! - Its own team-state.json for tracking sprint feature branch
-//!
-//! Agent assignments are tracked in `.swarm-hug/assignments.toml` to ensure
-//! no agent works on multiple teams simultaneously.
 
-mod assignments;
 mod state;
 mod sprint_history;
 #[allow(clippy::module_inception)]
 mod team;
 
-pub use assignments::Assignments;
 pub use state::TeamState;
 pub use sprint_history::SprintHistory;
 pub use team::Team;
@@ -26,9 +21,6 @@ use std::path::{Path, PathBuf};
 
 /// Root directory for all swarm-hug configuration and artifacts.
 pub const SWARM_HUG_DIR: &str = ".swarm-hug";
-
-/// Filename for agent-to-team assignments.
-pub const ASSIGNMENTS_FILE: &str = "assignments.toml";
 
 /// Filename for sprint history within each team directory.
 pub const SPRINT_HISTORY_FILE: &str = "sprint-history.json";
@@ -50,7 +42,7 @@ pub fn list_teams() -> Result<Vec<Team>, String> {
         let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
         let path = entry.path();
 
-        // Skip non-directories and the assignments file
+        // Skip non-directories
         if !path.is_dir() {
             continue;
         }
@@ -70,12 +62,6 @@ pub fn init_root() -> Result<(), String> {
     let root = PathBuf::from(SWARM_HUG_DIR);
     fs::create_dir_all(&root)
         .map_err(|e| format!("failed to create {}: {}", root.display(), e))?;
-
-    // Create empty assignments file if it doesn't exist
-    let assignments_path = root.join(ASSIGNMENTS_FILE);
-    if !assignments_path.exists() {
-        Assignments::default().save()?;
-    }
 
     // Create .gitignore if it doesn't exist
     let gitignore_path = root.join(".gitignore");
