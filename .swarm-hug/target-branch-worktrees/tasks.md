@@ -22,3 +22,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#9) Implement target-branch worktree resolution (`find_target_branch_worktree[_in]`) that parses `git worktree list --porcelain` for `refs/heads/<branch>` and returns `Option<PathBuf>` (missing from merged code) (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#10) Fix `path_is_under_root` to compare canonicalized paths before returning true so `<root>/../outside` (or symlink escapes) are rejected; add a unit test for this escape case
