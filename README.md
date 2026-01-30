@@ -107,34 +107,6 @@ cargo test --lib --tests
 cargo build --release
 ```
 
-## Migration: Project-Namespaced Worktrees
-
-Starting with this version, agent worktrees and branches are namespaced by project and run hash:
-- Old format: `agent-aaron`, `agent-betty`, etc.
-- New format: `{project}-agent-{name}-{hash}` (e.g., `greenfield-agent-aaron-a3f8k2`)
-
-This change enables:
-- **Parallel projects**: Multiple projects can use the same agent simultaneously
-- **Safe restarts**: Cancelled sprints don't conflict with new runs
-- **Precise cleanup**: Only the current run's artifacts are removed
-
-### Migrating from Old-Style Worktrees
-
-If you have existing `agent-*` worktrees from a previous version, clean them up before running:
-
-```bash
-# Remove stale worktree metadata
-git worktree prune
-
-# Delete old-style agent branches (review the list before running)
-git branch | grep -E '^  agent-[a-z]+$' | xargs git branch -D
-
-# Delete old assignments file (if it exists)
-rm -f .swarm-hug/assignments.toml
-```
-
-Since agent worktrees and assignments are ephemeral (recreated each sprint), no work is lost during migration.
-
 ### Cleaning Up Orphaned Hashed Artifacts
 
 If a sprint was cancelled before cleanup ran, orphaned artifacts may remain:
