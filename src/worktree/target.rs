@@ -229,6 +229,27 @@ branch refs/heads/main
     }
 
     #[test]
+    fn test_path_is_under_root_true_for_child() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("root");
+        let child = root.join("branch");
+        std::fs::create_dir_all(&child).expect("create child");
+
+        assert!(path_is_under_root(&child, &root));
+    }
+
+    #[test]
+    fn test_path_is_under_root_false_for_sibling() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("root");
+        let sibling = temp.path().join("other");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&sibling).expect("create sibling");
+
+        assert!(!path_is_under_root(&sibling, &root));
+    }
+
+    #[test]
     fn test_normalize_target_branch_strips_refs_heads() {
         let normalized = normalize_target_branch("refs/heads/main").expect("normalize branch");
         assert_eq!(normalized, "main");
