@@ -255,19 +255,16 @@ fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
 }
 
 fn path_is_under_root(path: &Path, root: &Path) -> bool {
-    if path.starts_with(root) {
-        return true;
-    }
+    let root_canonical = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return false,
+    };
+    let path_canonical = match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
 
-    let path_canonical = path.canonicalize().ok();
-    let root_canonical = root.canonicalize().ok();
-
-    match (path_canonical, root_canonical) {
-        (Some(path), Some(root)) => path.starts_with(&root),
-        (Some(path), None) => path.starts_with(root),
-        (None, Some(root)) => path.starts_with(&root),
-        (None, None) => false,
-    }
+    path_canonical.starts_with(&root_canonical)
 }
 
 #[cfg(test)]
@@ -366,6 +363,18 @@ branch refs/heads/main
         std::fs::create_dir_all(&sibling).expect("create sibling");
 
         assert!(!path_is_under_root(&sibling, &root));
+    }
+
+    #[test]
+    fn test_path_is_under_root_false_for_parent_escape() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        let escaped = root.join("..").join("outside");
+
+        assert!(!path_is_under_root(&escaped, &root));
     }
 
     #[test]
