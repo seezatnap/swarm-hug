@@ -33,13 +33,15 @@ As such, you should only run this in a sandbox. This script will set up a [Lima]
 
 Each sprint is worked on in isolation using a git worktree. If all goes well, it'll be merged back into the target branch once work is complete.
 
+<img width="797" height="405" alt="image" src="https://github.com/user-attachments/assets/c19cf6a8-b868-4c1f-b321-f6d311191db3" />
+
 `--target-branch <name>` controls which branch is used as the base/merge target (defaults to auto-detected main/master). Swarm keeps a shared worktree for that branch under `.swarm-hug/.shared/worktrees/` and creates sprint worktrees under `.swarm-hug/<project>/worktrees/` (or `.swarm-hug/worktrees/` for single-project repos). Each sprint branches from the target-branch worktree and merges back into that branch.
 
 ### Cleanup
 
 To clean up worktrees, use `swarm cleanup-worktrees`. It opens an interactive selector with shared and project worktrees, supports select/deselect all per group, and after confirmation it removes the worktree, deletes the folder, and deletes the branch.
 
-<img width="797" height="405" alt="image" src="https://github.com/user-attachments/assets/c19cf6a8-b868-4c1f-b321-f6d311191db3" />
+<img width="645" height="359" alt="Screenshot 2026-01-30 at 3 10 30 PM" src="https://github.com/user-attachments/assets/638087e7-c702-43b5-884b-1f1753167e35" />
 
 ## CLI Usage
 
@@ -112,21 +114,4 @@ cargo test --lib --tests
 
 # Build release
 cargo build --release
-```
-
-### Cleaning Up Orphaned Hashed Artifacts
-
-If a sprint was cancelled before cleanup ran, orphaned artifacts may remain:
-
-If you prefer to do it manually:
-
-```bash
-# List orphaned worktrees (those ending with a 6-char hash)
-git worktree list | grep -E '\-[a-z0-9]{6} '
-
-# Remove orphaned worktree metadata
-git worktree prune
-
-# Remove orphaned branches (review carefully before running)
-git branch | grep -E '\-[a-z0-9]{6}$' | xargs git branch -D
 ```
