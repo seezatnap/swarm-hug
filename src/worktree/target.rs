@@ -437,6 +437,32 @@ branch refs/heads/main
         git_stdout(repo, &["rev-parse", rev])
     }
 
+    fn make_worktree_gitdir_relative(repo: &Path, worktree_path: &Path) {
+        let worktrees_dir = repo.join(".git").join("worktrees");
+        let expected_gitdir = worktree_path.join(".git");
+        let mut updated = false;
+
+        let entries = std::fs::read_dir(&worktrees_dir).expect("read worktrees dir");
+        for entry in entries {
+            let entry = entry.expect("worktree entry");
+            let gitdir_path = entry.path().join("gitdir");
+            let gitdir_contents =
+                std::fs::read_to_string(&gitdir_path).expect("read gitdir");
+            if gitdir_contents.trim() == expected_gitdir.to_string_lossy() {
+                let relative = expected_gitdir
+                    .strip_prefix(repo)
+                    .expect("gitdir under repo")
+                    .to_string_lossy()
+                    .to_string();
+                std::fs::write(&gitdir_path, relative).expect("write gitdir");
+                updated = true;
+                break;
+            }
+        }
+
+        assert!(updated, "worktree gitdir entry not found");
+    }
+
     #[test]
     fn test_validate_target_branch_worktree_reuses_shared_root() {
         let temp = TempDir::new().expect("temp dir");
@@ -550,5 +576,39 @@ branch refs/heads/main
 
         let target_rev = rev_parse(repo, "new-target");
         assert_eq!(head_rev, target_rev);
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_rejects_registered_relative_path() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "main"]);
+        run_git(repo, &["branch", "other"]);
+
+        let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
+        let worktree_path = shared_root.join("main");
+        run_git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                worktree_path.to_str().expect("worktree path"),
+                "other",
+            ],
+        );
+
+        make_worktree_gitdir_relative(repo, &worktree_path);
+
+        let err = create_target_branch_worktree_in(repo, "main")
+            .expect_err("should reject registered worktree path");
+        assert!(
+            err.contains("already registered"),
+            "unexpected error: {}",
+            err
+        );
+        assert!(worktree_path.exists(), "worktree should not be deleted");
+        let head = git_stdout(&worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(head, "other");
     }
 }
