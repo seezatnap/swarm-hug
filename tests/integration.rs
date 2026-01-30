@@ -542,6 +542,125 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
     });
 }
 
+#[test]
+fn test_target_branch_worktree_errors_when_outside_shared_root() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut branch_cmd);
+
+    let outside_dir = TempDir::new().expect("outside dir");
+    let outside_path = outside_dir.path().join("target-branch");
+
+    let mut worktree_cmd = Command::new("git");
+    worktree_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(outside_path.to_str().expect("outside path"))
+        .arg("target-branch");
+    run_success(&mut worktree_cmd);
+
+    let err = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect_err("should error when worktree exists outside shared root");
+    assert!(
+        err.contains("outside shared worktrees root"),
+        "expected outside shared root error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_target_branch_worktree_reuses_existing_shared_root() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut branch_cmd);
+
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+    let worktree_path = shared_root.join("target-branch");
+
+    let mut worktree_cmd = Command::new("git");
+    worktree_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(worktree_path.to_str().expect("worktree path"))
+        .arg("target-branch");
+    run_success(&mut worktree_cmd);
+
+    let reused = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect("reuse target branch worktree");
+    assert_eq!(
+        canonical_path_str(&reused),
+        canonical_path_str(&worktree_path),
+        "expected existing worktree to be reused"
+    );
+
+    let head = git_stdout(&reused, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "target-branch");
+}
+
+#[test]
+fn test_target_branch_worktree_creates_when_missing() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut branch_cmd);
+
+    let created = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect("create target branch worktree");
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+
+    assert!(created.exists(), "created worktree should exist");
+    assert!(
+        created.starts_with(&shared_root),
+        "created worktree should live under shared root"
+    );
+
+    let expected = shared_root.join("target-branch");
+    assert_eq!(
+        canonical_path_str(&created),
+        canonical_path_str(&expected),
+        "worktree path should match shared root target path"
+    );
+
+    let head = git_stdout(&created, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "target-branch");
+}
+
 // test_swarm_status_shows_counts_and_recent_chat removed: status command was deprecated
 
 /// Test that multiple consecutive sprints correctly reassign agents.
