@@ -36,7 +36,7 @@ pub use git::{
 pub use list::{list_agent_branches, list_worktrees, AgentBranch};
 pub use target::{
     ensure_shared_worktrees_root, find_target_branch_worktree, find_target_branch_worktree_in,
-    shared_worktrees_root,
+    shared_worktrees_root, validate_target_branch_worktree, validate_target_branch_worktree_in,
 };
 
 #[cfg(test)]
