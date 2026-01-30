@@ -439,6 +439,7 @@ fn test_command_parse() {
     assert_eq!(Command::parse("projects"), Some(Command::Projects));
     assert_eq!(Command::parse("project"), Some(Command::ProjectInit));
     assert_eq!(Command::parse("customize-prompts"), Some(Command::CustomizePrompts));
+    assert_eq!(Command::parse("cleanup-worktrees"), Some(Command::CleanupWorktrees));
     assert_eq!(Command::parse("set-email"), Some(Command::SetEmail));
     assert_eq!(Command::parse("unknown"), None);
 }

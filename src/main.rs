@@ -12,8 +12,8 @@ mod runner;
 mod tail;
 
 use commands::{
-    cmd_agents, cmd_customize_prompts, cmd_init, cmd_project_init, cmd_projects, cmd_run,
-    cmd_run_tui, cmd_set_email,
+    cmd_agents, cmd_cleanup_worktrees, cmd_customize_prompts, cmd_init, cmd_project_init,
+    cmd_projects, cmd_run, cmd_run_tui, cmd_set_email,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -68,6 +68,7 @@ fn main() {
         Command::ProjectInit => cmd_project_init(&config, &cli),
         Command::CustomizePrompts => cmd_customize_prompts(),
         Command::SetEmail => cmd_set_email(&cli),
+        Command::CleanupWorktrees => cmd_cleanup_worktrees(&config),
     };
 
     if let Err(e) = result {

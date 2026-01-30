@@ -60,6 +60,8 @@ pub enum Command {
     CustomizePrompts,
     /// Set the co-author email for commits.
     SetEmail,
+    /// Interactive cleanup for git worktrees.
+    CleanupWorktrees,
 }
 
 impl Command {
@@ -73,6 +75,7 @@ impl Command {
             "project" => Some(Self::ProjectInit),
             "customize-prompts" => Some(Self::CustomizePrompts),
             "set-email" => Some(Self::SetEmail),
+            "cleanup-worktrees" => Some(Self::CleanupWorktrees),
             _ => None,
         }
     }

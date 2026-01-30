@@ -92,6 +92,7 @@ COMMANDS:
     project init <name>   Initialize a new project
                           Use --with-prd <file> to auto-generate tasks from a PRD
     customize-prompts     Copy prompts to .swarm-hug/prompts/ for customization
+    cleanup-worktrees     Interactive cleanup of git worktrees
     set-email <email>     Set co-author email for commits
 
 OPTIONS:
