@@ -173,7 +173,7 @@ limactl shell "$VM_NAME" -- bash -lc "
     if command -v apt-get >/dev/null 2>&1; then
       sudo apt-get update
       sudo apt-get install -y software-properties-common ca-certificates curl build-essential \\
-        libssl-dev libcurl4-gnutls-dev zlib1g-dev
+        libssl-dev libcurl4-gnutls-dev zlib1g-dev libexpat1-dev
       if command -v add-apt-repository >/dev/null 2>&1; then
         sudo add-apt-repository -y ppa:git-core/ppa || true
       fi
@@ -219,7 +219,7 @@ ARG GIT_MIN_VERSION=2.48.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git htop jq openssh-client tini \
-    build-essential pkg-config libssl-dev libcurl4-gnutls-dev zlib1g-dev gettext \
+    build-essential pkg-config libssl-dev libcurl4-gnutls-dev zlib1g-dev gettext libexpat1-dev \
   && if ! dpkg --compare-versions "$(git --version | awk '{print $3}')" ge "${GIT_MIN_VERSION}"; then \
        echo "git < ${GIT_MIN_VERSION}; building from source"; \
        tmpdir="$(mktemp -d)"; \
