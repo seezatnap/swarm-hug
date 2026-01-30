@@ -857,6 +857,18 @@ detached
     }
 
     #[test]
+    fn test_parse_worktrees_with_branch_orphaned_branch_line() {
+        let porcelain = "\\
+worktree /repo/.swarm-hug/team/worktrees/agent-A-Aaron
+HEAD abc123
+
+branch refs/heads/agent-aaron
+";
+        let result = parse_worktrees_with_branch(porcelain, "agent-aaron");
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn test_parse_worktrees_with_branch_empty_output() {
         let result = parse_worktrees_with_branch("", "agent-diana");
         assert!(result.is_empty());
