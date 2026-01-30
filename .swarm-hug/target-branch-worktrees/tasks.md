@@ -8,7 +8,7 @@
 
 - [x] (#2) Implement target branch worktree resolution by parsing `git worktree list --porcelain` output to locate worktrees for `refs/heads/<target-branch>`, returning worktree path if found or None if not [5 pts] (blocked by #1) (A)
 - [x] (#3) Implement target branch worktree validation that checks if existing worktree is under shared root, erroring immediately with clear message if worktree exists outside `./swarm-hub/.shared/worktrees`, and reusing existing worktree if under shared root [5 pts] (blocked by #2) (A)
-- [ ] (#4) Implement target branch worktree creation for branches without existing worktrees, creating new worktree at `./swarm-hub/.shared/worktrees/<target-branch>` (with path sanitization for special characters), using current target-branch creation semantics for base commit [5 pts] (blocked by #3)
+- [x] (#4) Implement target branch worktree creation for branches without existing worktrees, creating new worktree at `./swarm-hub/.shared/worktrees/<target-branch>` (with path sanitization for special characters), using current target-branch creation semantics for base commit [5 pts] (blocked by #3) (A)
 
 ## Merge Agent Integration
 
@@ -24,4 +24,7 @@
 - [x] (#9) Implement target-branch worktree resolution (`find_target_branch_worktree[_in]`) that parses `git worktree list --porcelain` for `refs/heads/<branch>` and returns `Option<PathBuf>` (missing from merged code) (B)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#10) Fix `path_is_under_root` to compare canonicalized paths before returning true so `<root>/../outside` (or symlink escapes) are rejected; add a unit test for this escape case
+- [x] (#10) Fix `path_is_under_root` to compare canonicalized paths before returning true so `<root>/../outside` (or symlink escapes) are rejected; add a unit test for this escape case (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Normalize relative paths from `git worktree list --porcelain` in `registered_worktrees`/`worktree_is_registered` (resolve against repo root) and add a unit test so `create_target_branch_worktree_in` can’t delete an already-registered worktree
