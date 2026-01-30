@@ -23,32 +23,14 @@ pub(super) fn git_repo_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
-pub(super) fn apply_relative_paths_flag(cmd: &mut Command, relative_paths: Option<bool>) {
-    match relative_paths {
-        Some(true) => {
-            cmd.arg("--relative-paths");
-        }
-        Some(false) => {
-            cmd.arg("--no-relative-paths");
-        }
-        None => {}
-    }
-}
-
 pub(super) fn repair_worktree_links(
     repo_root: &Path,
     worktree_path: &Path,
-    relative_paths: Option<bool>,
 ) -> Result<(), String> {
-    if relative_paths.is_none() {
-        return Ok(());
-    }
-
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(repo_root)
-        .args(["worktree", "repair"]);
-    apply_relative_paths_flag(&mut cmd, relative_paths);
+        .args(["worktree", "repair", "--relative-paths"]);
     cmd.arg(worktree_path);
 
     let output = cmd

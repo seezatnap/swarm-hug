@@ -361,7 +361,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
             let wt_path = &worktrees[0].path;
@@ -394,7 +393,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
             let wt_path = &worktrees[0].path;
@@ -429,7 +427,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx1,
-                None,
             )
             .expect("create worktrees for run 1");
             let worktrees2 = create_worktrees_in(
@@ -437,7 +434,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx2,
-                None,
             )
             .expect("create worktrees for run 2");
 
@@ -474,7 +470,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
             assert_eq!(worktrees.len(), 2);
@@ -510,7 +505,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
 
@@ -571,7 +565,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx_greenfield,
-                None,
             )
             .expect("create greenfield worktrees");
             let worktrees_payments = create_worktrees_in(
@@ -579,7 +572,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx_payments,
-                None,
             )
             .expect("create payments worktrees");
 

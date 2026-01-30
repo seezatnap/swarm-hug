@@ -389,7 +389,7 @@ pub(crate) fn ensure_min_git_version() -> Result<(), String> {
 
     if version_lt(current, MIN_GIT_VERSION) {
         return Err(format!(
-            "git {}.{}.{}+ required, found {}.{}.{}",
+            "git {}.{}.{}+ required for relative worktree paths; found {}.{}.{} (please upgrade git)",
             MIN_GIT_VERSION.0,
             MIN_GIT_VERSION.1,
             MIN_GIT_VERSION.2,

@@ -156,13 +156,6 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
         args.push("--target-branch".to_string());
         args.push(target_branch.clone());
     }
-    if let Some(relative_paths) = config.worktree_relative_paths {
-        if relative_paths {
-            args.push("--relative-paths".to_string());
-        } else {
-            args.push("--no-relative-paths".to_string());
-        }
-    }
     if config.sprints_max > 0 {
         args.push("--max-sprints".to_string());
         args.push(config.sprints_max.to_string());

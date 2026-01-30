@@ -75,19 +75,6 @@ pub(super) fn parse_toml(content: &str) -> Result<Config, ConfigError> {
                         .parse()
                         .map_err(|_| ConfigError::Parse(format!("invalid sprints.max: {}", value)))?;
                 }
-                "worktree.relative_paths" => {
-                    let normalized = value.trim_matches('"').to_lowercase();
-                    match normalized.as_str() {
-                        "true" => config.worktree_relative_paths = Some(true),
-                        "false" => config.worktree_relative_paths = Some(false),
-                        _ => {
-                            return Err(ConfigError::Parse(format!(
-                                "invalid worktree.relative_paths: {}",
-                                value
-                            )))
-                        }
-                    }
-                }
                 _ => {} // Ignore unknown keys
             }
         }

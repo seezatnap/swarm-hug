@@ -193,7 +193,6 @@ pub(crate) fn run_sprint(
             worktrees_dir,
             &sprint_branch,
             target_branch,
-            config.worktree_relative_paths,
         )
         .map_err(|e| format!("failed to create feature worktree: {}", e))?;
 
@@ -342,7 +341,6 @@ pub(crate) fn run_sprint(
             &assignments,
             &sprint_branch,
             &run_ctx,
-            config.worktree_relative_paths,
         )
             .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
@@ -418,7 +416,6 @@ pub(crate) fn run_sprint(
         let thread_engine_types = engine_types.clone();
         let thread_engine_stub_mode = engine_stub_mode;
         let thread_agent_timeout = agent_timeout_secs;
-        let thread_worktree_relative_paths = config.worktree_relative_paths;
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
@@ -709,7 +706,6 @@ pub(crate) fn run_sprint(
                             &recreate_assignments,
                             &sprint_branch,
                             &run_ctx,
-                            thread_worktree_relative_paths,
                         )
                     };
                     match recreate_result {
@@ -933,7 +929,6 @@ pub(crate) fn run_sprint(
             &sprint_branch,
             target_branch,
             &feature_worktree_path,
-            config.worktree_relative_paths,
         )
         .map_err(|e| format!("merge agent failed: {}", e))?;
         if merge_result.success {

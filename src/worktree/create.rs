@@ -5,8 +5,8 @@ use std::process::Command;
 
 use super::cleanup::remove_worktree_by_path;
 use super::git::{
-    agent_branch_name, apply_relative_paths_flag, create_feature_branch_in, ensure_head,
-    find_worktrees_with_branch, git_repo_root, registered_worktrees, repair_worktree_links,
+    agent_branch_name, create_feature_branch_in, ensure_head, find_worktrees_with_branch,
+    git_repo_root, registered_worktrees, repair_worktree_links,
 };
 use super::Worktree;
 use crate::run_context::RunContext;
@@ -113,7 +113,6 @@ pub(super) fn worktree_path_with_context(root: &Path, ctx: &RunContext, initial:
 ///     &[('A', "Task 1".to_string())],
 ///     "greenfield-sprint-1-abc123",
 ///     &ctx,
-///     None,
 /// )?;
 /// // Creates worktree at: .swarm-hug/greenfield/worktrees/greenfield-agent-aaron-abc123
 /// // With branch: greenfield-agent-aaron-abc123
@@ -123,7 +122,6 @@ pub fn create_worktrees_in(
     assignments: &[(char, String)],
     base_branch: &str,
     ctx: &RunContext,
-    relative_paths: Option<bool>,
 ) -> Result<Vec<Worktree>, String> {
     let mut created = Vec::new();
     let mut seen = HashSet::new();
@@ -193,8 +191,7 @@ pub fn create_worktrees_in(
         let mut cmd = Command::new("git");
         cmd.arg("-C")
             .arg(&repo_root)
-            .args(["worktree", "add"]);
-        apply_relative_paths_flag(&mut cmd, relative_paths);
+            .args(["worktree", "add", "--relative-paths"]);
         let output = cmd
             .args(["-B", &branch, &path_str, base])
             .output()
@@ -209,7 +206,7 @@ pub fn create_worktrees_in(
             ));
         }
 
-        repair_worktree_links(&repo_root, &path, relative_paths)
+        repair_worktree_links(&repo_root, &path)
             .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
         registered.insert(path_str);
@@ -229,7 +226,6 @@ pub fn create_feature_worktree_in(
     worktrees_dir: &Path,
     feature_branch: &str,
     target_branch: &str,
-    relative_paths: Option<bool>,
 ) -> Result<PathBuf, String> {
     let feature = feature_branch.trim();
     if feature.is_empty() {
@@ -254,7 +250,7 @@ pub fn create_feature_worktree_in(
 
     if let Ok(existing) = find_worktrees_with_branch(&repo_root, feature) {
         if existing.iter().any(|p| p == &path_str) {
-            repair_worktree_links(&repo_root, &path, relative_paths)
+            repair_worktree_links(&repo_root, &path)
                 .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
             return Ok(path);
         }
@@ -282,8 +278,7 @@ pub fn create_feature_worktree_in(
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(&repo_root)
-        .args(["worktree", "add"]);
-    apply_relative_paths_flag(&mut cmd, relative_paths);
+        .args(["worktree", "add", "--relative-paths"]);
     let output = cmd
         .args([&path_str, feature])
         .output()
@@ -298,7 +293,7 @@ pub fn create_feature_worktree_in(
         ));
     }
 
-    repair_worktree_links(&repo_root, &path, relative_paths)
+    repair_worktree_links(&repo_root, &path)
         .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
     Ok(path)
@@ -411,7 +406,6 @@ mod tests {
                 worktrees_dir,
                 "alpha-sprint-1",
                 "target-branch",
-                None,
             )
             .expect("create feature worktree");
 
@@ -432,7 +426,6 @@ mod tests {
                 worktrees_dir,
                 "alpha-sprint-1",
                 "target-branch",
-                None,
             )
             .expect("idempotent create");
             assert_eq!(path, path_again);
@@ -459,7 +452,6 @@ mod tests {
                 &assignments,
                 "alpha-sprint-1",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
@@ -513,7 +505,6 @@ mod tests {
                 &assignments,
                 "alpha-sprint-1",
                 &ctx,
-                None,
             )
             .expect("create worktrees");
             let wt_path = &worktrees[0].path;
@@ -528,7 +519,6 @@ mod tests {
                 &assignments,
                 "alpha-sprint-1",
                 &ctx,
-                None,
             )
             .expect("recreate worktree");
             let wt_path_again = &worktrees_again[0].path;
@@ -563,7 +553,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx1,
-                None,
             )
             .expect("create greenfield worktrees");
             assert_eq!(worktrees1.len(), 1);
@@ -574,7 +563,6 @@ mod tests {
                 &assignments,
                 "base-branch",
                 &ctx2,
-                None,
             )
             .expect("create payments worktrees");
             assert_eq!(worktrees2.len(), 1);

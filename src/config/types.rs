@@ -89,8 +89,6 @@ pub struct Config {
     pub project: Option<String>,
     /// Target branch for base/merge operations (defaults to auto-detected main/master).
     pub target_branch: Option<String>,
-    /// Override git worktree relative path behavior (true = relative, false = absolute).
-    pub worktree_relative_paths: Option<bool>,
 }
 
 impl Default for Config {
@@ -108,7 +106,6 @@ impl Default for Config {
             sprints_max: 0,
             project: None,
             target_branch: None,
-            worktree_relative_paths: None,
         }
     }
 }
@@ -229,9 +226,6 @@ impl Config {
         if let Some(ref target) = args.target_branch {
             self.target_branch = Some(target.clone());
         }
-        if let Some(relative_paths) = args.worktree_relative_paths {
-            self.worktree_relative_paths = Some(relative_paths);
-        }
     }
 
     /// Merge values from another config (for file-based config).
@@ -246,7 +240,6 @@ impl Config {
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
         self.target_branch = other.target_branch.clone();
-        self.worktree_relative_paths = other.worktree_relative_paths;
     }
 
     /// Generate default swarm.toml content.
@@ -271,8 +264,6 @@ stub_mode = false
 [sprints]
 max = 0
 
-[worktree]
-# relative_paths = false
 "#,
             DEFAULT_AGENT_TIMEOUT_SECS
         )

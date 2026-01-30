@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::create::worktree_is_registered;
-use super::git::{apply_relative_paths_flag, ensure_head, git_repo_root, repair_worktree_links};
+use super::git::{ensure_head, git_repo_root, repair_worktree_links};
 
 /// Returns the shared worktrees root for target branch operations.
 ///
@@ -95,22 +95,20 @@ pub fn validate_target_branch_worktree_in(
 /// a new one is created at `./.swarm-hug/.shared/worktrees/<sanitized-target>`.
 pub fn create_target_branch_worktree(
     target_branch: &str,
-    relative_paths: Option<bool>,
 ) -> Result<PathBuf, String> {
     let repo_root = git_repo_root()?;
-    create_target_branch_worktree_in(&repo_root, target_branch, relative_paths)
+    create_target_branch_worktree_in(&repo_root, target_branch)
 }
 
 /// Create (or reuse) the target branch worktree under the shared root in the specified repo.
 pub fn create_target_branch_worktree_in(
     repo_root: &Path,
     target_branch: &str,
-    relative_paths: Option<bool>,
 ) -> Result<PathBuf, String> {
     let target = normalize_target_branch(target_branch)?;
 
     if let Some(existing) = validate_target_branch_worktree_in(repo_root, target)? {
-        repair_worktree_links(repo_root, &existing, relative_paths).map_err(|e| {
+        repair_worktree_links(repo_root, &existing).map_err(|e| {
             format!(
                 "git worktree repair failed for {}: {}",
                 existing.display(),
@@ -145,8 +143,9 @@ pub fn create_target_branch_worktree_in(
     }
 
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo_root).args(["worktree", "add"]);
-    apply_relative_paths_flag(&mut cmd, relative_paths);
+    cmd.arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "add", "--relative-paths"]);
 
     if branch_exists(repo_root, target)? {
         cmd.arg(&path_str).arg(target);
@@ -167,7 +166,7 @@ pub fn create_target_branch_worktree_in(
         ));
     }
 
-    repair_worktree_links(repo_root, &path, relative_paths)
+    repair_worktree_links(repo_root, &path)
         .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
     Ok(path)
@@ -607,7 +606,7 @@ branch refs/heads/main
         init_repo(repo);
         run_git(repo, &["branch", "target-branch"]);
 
-        let path = create_target_branch_worktree_in(repo, "target-branch", None)
+        let path = create_target_branch_worktree_in(repo, "target-branch")
             .expect("create target branch worktree");
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
 
@@ -626,7 +625,7 @@ branch refs/heads/main
         run_git(repo, &["branch", "release/v1"]);
 
         let path =
-            create_target_branch_worktree_in(repo, "release/v1", None).expect("create worktree");
+            create_target_branch_worktree_in(repo, "release/v1").expect("create worktree");
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
         let expected = shared_root.join("release%2Fv1");
         assert_eq!(path, expected);
@@ -639,7 +638,7 @@ branch refs/heads/main
         init_repo(repo);
 
         let head_rev = rev_parse(repo, "HEAD");
-        create_target_branch_worktree_in(repo, "new-target", None).expect("create worktree");
+        create_target_branch_worktree_in(repo, "new-target").expect("create worktree");
 
         let target_rev = rev_parse(repo, "new-target");
         assert_eq!(head_rev, target_rev);
@@ -667,7 +666,7 @@ branch refs/heads/main
 
         make_worktree_gitdir_relative(repo, &worktree_path);
 
-        let err = create_target_branch_worktree_in(repo, "target-branch", None)
+        let err = create_target_branch_worktree_in(repo, "target-branch")
             .expect_err("should reject registered worktree path");
         assert!(
             err.contains("already registered"),

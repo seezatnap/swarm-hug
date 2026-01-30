@@ -100,8 +100,6 @@ OPTIONS:
     -c, --config <PATH>       Path to config file [default: swarm.toml]
     -p, --project <NAME>      Project to operate on
     --target-branch <NAME>    Base/merge target branch (default: auto-detected main/master)
-    --relative-paths          Link worktrees using relative paths (overrides git config)
-    --no-relative-paths       Link worktrees using absolute paths (overrides git config)
     --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
     --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
     --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
