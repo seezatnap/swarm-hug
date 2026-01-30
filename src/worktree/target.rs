@@ -2,7 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::git::git_repo_root;
+use super::create::worktree_is_registered;
+use super::git::{ensure_head, git_repo_root};
 
 /// Returns the shared worktrees root for target branch operations.
 ///
@@ -84,6 +85,76 @@ pub fn validate_target_branch_worktree_in(
     Ok(None)
 }
 
+/// Create (or reuse) the target branch worktree under the shared root.
+///
+/// If an existing worktree for the target branch is already under the shared root,
+/// it is reused. If a worktree exists elsewhere, this errors. If no worktree exists,
+/// a new one is created at `./swarm-hub/.shared/worktrees/<sanitized-target>`.
+pub fn create_target_branch_worktree(target_branch: &str) -> Result<PathBuf, String> {
+    let repo_root = git_repo_root()?;
+    create_target_branch_worktree_in(&repo_root, target_branch)
+}
+
+/// Create (or reuse) the target branch worktree under the shared root in the specified repo.
+pub fn create_target_branch_worktree_in(
+    repo_root: &Path,
+    target_branch: &str,
+) -> Result<PathBuf, String> {
+    let target = normalize_target_branch(target_branch)?;
+
+    if let Some(existing) = validate_target_branch_worktree_in(repo_root, target)? {
+        return Ok(existing);
+    }
+
+    let shared_root = ensure_shared_worktrees_root(repo_root)?;
+    ensure_head(repo_root)?;
+
+    let sanitized = sanitize_target_branch_component(target);
+    let path = shared_root.join(&sanitized);
+    let path_str = path.to_string_lossy().to_string();
+
+    if worktree_is_registered(repo_root, &path)? {
+        return Err(format!(
+            "worktree path '{}' is already registered for another branch",
+            path.display()
+        ));
+    }
+
+    if path.exists() {
+        fs::remove_dir_all(&path).map_err(|e| {
+            format!(
+                "failed to remove stale worktree dir {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(repo_root).args(["worktree", "add"]);
+
+    if branch_exists(repo_root, target)? {
+        cmd.arg(&path_str).arg(target);
+    } else {
+        cmd.args(["-b", target, &path_str, "HEAD"]);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run git worktree add: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git worktree add failed for {}: {}",
+            path.display(),
+            stderr.trim()
+        ));
+    }
+
+    Ok(path)
+}
+
 /// Parse `git worktree list --porcelain` output to find the worktree path
 /// for a specific target branch.
 fn parse_target_worktree_path(
@@ -133,6 +204,54 @@ fn find_target_branch_worktree_in_normalized(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_target_worktree_path(&stdout, target_branch, repo_root))
+}
+
+fn sanitize_target_branch_component(target_branch: &str) -> String {
+    let mut sanitized = String::with_capacity(target_branch.len());
+    for byte in target_branch.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('%');
+            sanitized.push(hex_char(byte >> 4));
+            sanitized.push(hex_char(byte & 0x0f));
+        }
+    }
+    if sanitized.is_empty() {
+        "target".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn hex_char(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + (nibble - 10)) as char,
+        _ => '0',
+    }
+}
+
+fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
+    let ref_name = format!("refs/heads/{}", branch);
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["show-ref", "--verify", "--quiet", &ref_name])
+        .output()
+        .map_err(|e| format!("failed to run git show-ref: {}", e))?;
+
+    if output.status.success() {
+        return Ok(true);
+    }
+    match output.status.code() {
+        Some(1) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("git show-ref failed: {}", stderr.trim()))
+        }
+    }
 }
 
 fn path_is_under_root(path: &Path, root: &Path) -> bool {
@@ -287,6 +406,28 @@ branch refs/heads/main
         run_git(repo, &["commit", "-m", "init"]);
     }
 
+    fn git_stdout(repo: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git -C {} {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            repo.display(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn rev_parse(repo: &Path, rev: &str) -> String {
+        git_stdout(repo, &["rev-parse", rev])
+    }
+
     #[test]
     fn test_validate_target_branch_worktree_reuses_shared_root() {
         let temp = TempDir::new().expect("temp dir");
@@ -349,5 +490,56 @@ branch refs/heads/main
         let result = validate_target_branch_worktree_in(repo, "target-branch")
             .expect("validate target worktree");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_sanitize_target_branch_component_encodes_special_chars() {
+        let sanitized = sanitize_target_branch_component("release/v1.0@foo");
+        assert_eq!(sanitized, "release%2Fv1.0%40foo");
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_creates_under_shared_root() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "target-branch"]);
+
+        let path = create_target_branch_worktree_in(repo, "target-branch")
+            .expect("create target branch worktree");
+        let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
+
+        assert!(path.exists(), "worktree path should exist");
+        assert!(path.starts_with(&shared_root));
+
+        let head = git_stdout(&path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(head, "target-branch");
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_sanitizes_path() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "release/v1"]);
+
+        let path =
+            create_target_branch_worktree_in(repo, "release/v1").expect("create worktree");
+        let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
+        let expected = shared_root.join("release%2Fv1");
+        assert_eq!(path, expected);
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_creates_missing_branch_at_head() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        let head_rev = rev_parse(repo, "HEAD");
+        create_target_branch_worktree_in(repo, "new-target").expect("create worktree");
+
+        let target_rev = rev_parse(repo, "new-target");
+        assert_eq!(head_rev, target_rev);
     }
 }
