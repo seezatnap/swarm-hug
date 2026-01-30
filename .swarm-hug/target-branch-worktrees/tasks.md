@@ -25,3 +25,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Fix `path_is_under_root` to compare canonicalized paths before returning true so `<root>/../outside` (or symlink escapes) are rejected; add a unit test for this escape case (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Normalize relative paths from `git worktree list --porcelain` in `registered_worktrees`/`worktree_is_registered` (resolve against repo root) and add a unit test so `create_target_branch_worktree_in` can’t delete an already-registered worktree
