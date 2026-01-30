@@ -12,12 +12,12 @@
 
 ## Merge Agent Integration
 
-- [ ] (#5) Update post-sprint merge agent prompt to `cd` into the target-branch worktree (resolved via worktree management from #2-4) before running merge operations, ensuring primary repo is never used as merge working directory [5 pts] (blocked by #4)
+- [x] (#5) Update post-sprint merge agent prompt to `cd` into the target-branch worktree (resolved via worktree management from #2-4) before running merge operations, ensuring primary repo is never used as merge working directory [5 pts] (blocked by #4) (A)
 
 ## Testing
 
 - [x] (#6) Add unit tests for worktree parsing and path resolution logic, including tests for porcelain output parsing, worktree path detection, and shared root path utilities [5 pts] (blocked by #2) (A)
-- [ ] (#7) Add integration tests for target branch worktree lifecycle: test error case when worktree exists outside shared root, test reuse of existing worktree under shared root, and test creation of new worktree when none exists [5 pts] (blocked by #4)
+- [x] (#7) Add integration tests for target branch worktree lifecycle: test error case when worktree exists outside shared root, test reuse of existing worktree under shared root, and test creation of new worktree when none exists [5 pts] (blocked by #4) (B)
 - [ ] (#8) Add integration tests for parallel merge isolation verifying that concurrent sprints can merge without contending for primary repo working tree [5 pts] (blocked by #5)
 
 ## Follow-up tasks (from sprint review)
@@ -27,4 +27,8 @@
 - [x] (#10) Fix `path_is_under_root` to compare canonicalized paths before returning true so `<root>/../outside` (or symlink escapes) are rejected; add a unit test for this escape case (A)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#11) Normalize relative paths from `git worktree list --porcelain` in `registered_worktrees`/`worktree_is_registered` (resolve against repo root) and add a unit test so `create_target_branch_worktree_in` can’t delete an already-registered worktree
+- [x] (#11) Normalize relative paths from `git worktree list --porcelain` in `registered_worktrees`/`worktree_is_registered` (resolve against repo root) and add a unit test so `create_target_branch_worktree_in` can’t delete an already-registered worktree (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Update merge workspace cleanup to operate on the target branch worktree (not the main repo) now that merges run there, and wire `runner`/`merge_agent::prepare_merge_workspace` to use the target worktree path returned by `create_target_branch_worktree_in`.
+- [ ] (#13) Add a regression test that reuses a dirty target worktree and verifies cleanup happens in that worktree before merge (untracked/modified files are cleared).

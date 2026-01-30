@@ -5,18 +5,22 @@ use std::process::Command;
 use crate::config::EngineType;
 use crate::engine::{self, Engine, EngineResult};
 use crate::prompt;
+use crate::worktree;
 
 /// Generate the merge agent prompt for feature-to-target branch merges.
 pub fn generate_merge_agent_prompt(
     feature_branch: &str,
     target_branch: &str,
+    target_worktree_path: &Path,
 ) -> Result<String, String> {
     let feature = normalize_branch("feature", feature_branch)?;
     let target = normalize_branch("target", target_branch)?;
+    let target_worktree = target_worktree_path.to_string_lossy().to_string();
 
     let mut vars = HashMap::new();
     vars.insert("feature_branch", feature);
     vars.insert("target_branch", target);
+    vars.insert("target_worktree_path", target_worktree);
     vars.insert("co_author", engine::coauthor_line());
 
     prompt::load_and_render("merge_agent", &vars)
@@ -31,8 +35,6 @@ pub fn run_merge_agent(
     target_branch: &str,
     repo_root: &Path,
 ) -> Result<EngineResult, String> {
-    let prompt = generate_merge_agent_prompt(feature_branch, target_branch)?;
-
     if engine.engine_type() == EngineType::Stub {
         let message = format!(
             "Stub merge agent: {} -> {}",
@@ -42,7 +44,18 @@ pub fn run_merge_agent(
         return Ok(EngineResult::success(message));
     }
 
-    Ok(engine.execute("MergeAgent", &prompt, repo_root, 0, None))
+    let main_repo = main_worktree_root(repo_root)?;
+    let target_worktree_path =
+        worktree::create_target_branch_worktree_in(&main_repo, target_branch)?;
+    let prompt = generate_merge_agent_prompt(feature_branch, target_branch, &target_worktree_path)?;
+
+    Ok(engine.execute(
+        "MergeAgent",
+        &prompt,
+        &target_worktree_path,
+        0,
+        None,
+    ))
 }
 
 /// Ensure the feature branch is merged into the target branch after merge agent runs.
@@ -301,9 +314,15 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let prompt = generate_merge_agent_prompt("feature-1", "main").unwrap();
+            let prompt = generate_merge_agent_prompt(
+                "feature-1",
+                "main",
+                Path::new("/tmp/target-worktree"),
+            )
+            .unwrap();
             assert!(prompt.contains("feature-1"));
             assert!(prompt.contains("main"));
+            assert!(prompt.contains("/tmp/target-worktree"));
             assert!(prompt.contains("Co-Authored-By: dev <dev@example.com>"));
             assert!(!prompt.contains("{{feature_branch}}"));
             assert!(!prompt.contains("{{target_branch}}"));
@@ -312,13 +331,15 @@ mod tests {
 
     #[test]
     fn test_generate_merge_agent_prompt_rejects_empty_branch() {
-        assert!(generate_merge_agent_prompt("", "main").is_err());
-        assert!(generate_merge_agent_prompt("feature", " ").is_err());
+        let path = Path::new("/tmp/target-worktree");
+        assert!(generate_merge_agent_prompt("", "main", path).is_err());
+        assert!(generate_merge_agent_prompt("feature", " ", path).is_err());
     }
 
     #[test]
     fn test_run_merge_agent_stub() {
         with_temp_cwd(|| {
+            init_repo();
             let engine = StubEngine::new("loop");
             let result = run_merge_agent(&engine, "feature-x", "main", Path::new("."))
                 .expect("run merge agent");

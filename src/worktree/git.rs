@@ -53,13 +53,27 @@ pub(super) fn registered_worktrees(repo_root: &Path) -> Result<HashSet<String>, 
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_registered_worktrees(&stdout, repo_root))
+}
+
+fn parse_registered_worktrees(porcelain_output: &str, repo_root: &Path) -> HashSet<String> {
     let mut registered = HashSet::new();
-    for line in stdout.lines() {
+    for line in porcelain_output.lines() {
         if let Some(path) = line.strip_prefix("worktree ") {
-            registered.insert(path.trim().to_string());
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = PathBuf::from(trimmed);
+            let resolved = if candidate.is_absolute() {
+                candidate
+            } else {
+                repo_root.join(candidate)
+            };
+            registered.insert(resolved.to_string_lossy().to_string());
         }
     }
-    Ok(registered)
+    registered
 }
 
 /// Parse git worktree list --porcelain output to find worktrees with a specific branch.
