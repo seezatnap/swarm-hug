@@ -35,10 +35,7 @@ pub fn find_target_branch_worktree_in(
     repo_root: &Path,
     target_branch: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let target = target_branch.trim();
-    if target.is_empty() {
-        return Err("target branch name is empty".to_string());
-    }
+    let target = normalize_target_branch(target_branch)?;
 
     let output = Command::new("git")
         .arg("-C")
@@ -54,6 +51,18 @@ pub fn find_target_branch_worktree_in(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(parse_target_worktree_path(&stdout, target, repo_root))
+}
+
+fn normalize_target_branch(target_branch: &str) -> Result<&str, String> {
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+    let target = target.strip_prefix("refs/heads/").unwrap_or(target);
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+    Ok(target)
 }
 
 /// Parse `git worktree list --porcelain` output to find the worktree path
@@ -161,5 +170,17 @@ branch refs/heads/main
         let repo_root = Path::new("/repo");
         let result = parse_target_worktree_path(porcelain, "develop", repo_root);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_normalize_target_branch_strips_refs_heads() {
+        let normalized = normalize_target_branch("refs/heads/main").expect("normalize branch");
+        assert_eq!(normalized, "main");
+    }
+
+    #[test]
+    fn test_normalize_target_branch_rejects_empty_ref() {
+        let err = normalize_target_branch("refs/heads/").expect_err("should error");
+        assert_eq!(err, "target branch name is empty");
     }
 }
