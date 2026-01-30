@@ -13,6 +13,7 @@ mod cleanup;
 mod create;
 mod git;
 mod list;
+mod target;
 
 #[derive(Debug, Clone)]
 pub struct Worktree {
@@ -33,6 +34,7 @@ pub use git::{
     merge_feature_branch, MergeResult, MergeSummary,
 };
 pub use list::{list_agent_branches, list_worktrees, AgentBranch};
+pub use target::{ensure_shared_worktrees_root, shared_worktrees_root};
 
 #[cfg(test)]
 mod tests {
