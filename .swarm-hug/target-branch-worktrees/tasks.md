@@ -28,3 +28,7 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#11) Normalize relative paths from `git worktree list --porcelain` in `registered_worktrees`/`worktree_is_registered` (resolve against repo root) and add a unit test so `create_target_branch_worktree_in` can’t delete an already-registered worktree (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Update merge workspace cleanup to operate on the target branch worktree (not the main repo) now that merges run there, and wire `runner`/`merge_agent::prepare_merge_workspace` to use the target worktree path returned by `create_target_branch_worktree_in`.
+- [ ] (#13) Add a regression test that reuses a dirty target worktree and verifies cleanup happens in that worktree before merge (untracked/modified files are cleared).
