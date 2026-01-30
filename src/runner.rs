@@ -57,13 +57,20 @@ pub(crate) fn run_sprint(
     config: &Config,
     session_sprint_number: usize,
 ) -> Result<SprintResult, String> {
-    // Load tasks
+    // Load sprint history and determine sprint number (peek, don't write yet)
+    let team_name = project_name_for_config(config);
+    let target_branch = config
+        .target_branch
+        .as_deref()
+        .ok_or_else(|| "target branch not configured".to_string())?;
+    let repo_root = git_repo_root()?;
+    sync_target_branch_state(&repo_root, target_branch, &team_name, config)?;
+
+    // Load tasks from the synced main worktree state.
     let content = fs::read_to_string(&config.files_tasks)
         .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
     let mut task_list = TaskList::parse(&content);
 
-    // Load sprint history and determine sprint number (peek, don't write yet)
-    let team_name = project_name_for_config(config);
     let sprint_history = team::SprintHistory::load(&team_name)?;
     let historical_sprint = sprint_history.peek_next_sprint();
     let formatted_team = sprint_history.formatted_team_name();
@@ -156,18 +163,10 @@ pub(crate) fn run_sprint(
 
     // Compute sprint branch name using run context (includes run hash)
     let sprint_branch = run_ctx.sprint_branch();
-    let target_branch = config
-        .target_branch
-        .as_deref()
-        .ok_or_else(|| "target branch not configured".to_string())?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
 
-    let base_commit = git_repo_root()
-        .ok()
-        .and_then(|repo_root| {
-            get_short_commit_for_ref_in(&repo_root, target_branch)
-                .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
-        })
+    let base_commit = get_short_commit_for_ref_in(&repo_root, target_branch)
+        .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
         .unwrap_or_else(|| "unknown".to_string());
     if let Err(e) = chat::write_message(
         &config.files_chat,
@@ -1009,6 +1008,67 @@ pub(crate) fn run_sprint(
     })
 }
 
+fn sync_target_branch_state(
+    repo_root: &Path,
+    target_branch: &str,
+    team_name: &str,
+    config: &Config,
+) -> Result<(), String> {
+    if branch_is_checked_out(repo_root, target_branch)? {
+        return Ok(());
+    }
+
+    let target_worktree = worktree::create_target_branch_worktree_in(repo_root, target_branch)?;
+
+    let tasks_path = Path::new(&config.files_tasks);
+    if tasks_path.is_relative() {
+        let src = target_worktree.join(tasks_path);
+        let dst = repo_root.join(tasks_path);
+        copy_if_exists(&src, &dst)?;
+    }
+
+    let sprint_rel = Path::new(team::SWARM_HUG_DIR)
+        .join(team_name)
+        .join(team::SPRINT_HISTORY_FILE);
+    let src = target_worktree.join(&sprint_rel);
+    let dst = repo_root.join(&sprint_rel);
+    copy_if_exists(&src, &dst)?;
+
+    Ok(())
+}
+
+fn branch_is_checked_out(repo_root: &Path, target_branch: &str) -> Result<bool, String> {
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .map_err(|e| format!("git rev-parse failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git rev-parse failed: {}", stderr.trim()));
+    }
+
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(current == target_branch)
+}
+
+fn copy_if_exists(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+    }
+
+    fs::copy(src, dst)
+        .map(|_| ())
+        .map_err(|e| format!("failed to copy {} to {}: {}", src.display(), dst.display(), e))
+}
+
 /// Run post-sprint review to identify follow-up tasks.
 #[allow(clippy::too_many_arguments)]
 fn run_post_sprint_review(
@@ -1195,9 +1255,41 @@ fn commit_agent_work(
 
 #[cfg(test)]
 mod tests {
-    use super::{chat, write_merge_failure_chat, SprintResult};
+    use super::{chat, sync_target_branch_state, write_merge_failure_chat, SprintResult};
     use std::fs;
+    use std::path::Path;
+    use std::process::Command;
     use tempfile::NamedTempFile;
+
+    use swarm::config::Config;
+    use swarm::{team, worktree};
+
+    fn run_git_in(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git command");
+        assert!(
+            output.status.success(),
+            "git -C {} {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            dir.display(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo(repo_root: &Path) {
+        run_git_in(repo_root, &["init"]);
+        run_git_in(repo_root, &["config", "user.name", "Swarm Test"]);
+        run_git_in(repo_root, &["config", "user.email", "swarm-test@example.com"]);
+        fs::write(repo_root.join("README.md"), "init").expect("write readme");
+        run_git_in(repo_root, &["add", "."]);
+        run_git_in(repo_root, &["commit", "-m", "init"]);
+        run_git_in(repo_root, &["branch", "-M", "main"]);
+    }
 
     #[test]
     fn test_sprint_result_all_failed_true() {
@@ -1254,5 +1346,61 @@ mod tests {
         let (_, agent, message) = chat::parse_line(line).expect("parse chat line");
         assert_eq!(agent, "ScrumMaster");
         assert_eq!(message, "Merge failed for Aaron: conflicts in file.txt");
+    }
+
+    #[test]
+    fn test_sync_target_branch_state_refreshes_tasks_and_history() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let team_name = "greenfield";
+        let team_dir = repo_root.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&team_dir).expect("create team dir");
+        let tasks_path = team_dir.join("tasks.md");
+        let history_path = team_dir.join("sprint-history.json");
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Task one\n").expect("write tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 0}"#,
+        )
+        .expect("write history");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "init state"]);
+        run_git_in(&repo_root, &["checkout", "-b", "dev"]);
+
+        let target_worktree =
+            worktree::create_target_branch_worktree_in(&repo_root, "main")
+                .expect("create target worktree");
+        let target_team_dir = target_worktree.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&target_team_dir).expect("create target team dir");
+        fs::write(
+            target_team_dir.join("tasks.md"),
+            "# Tasks\n\n- [x] Task one\n",
+        )
+        .expect("write updated tasks");
+        fs::write(
+            target_team_dir.join("sprint-history.json"),
+            r#"{"team": "greenfield", "total_sprints": 1}"#,
+        )
+        .expect("write updated history");
+        run_git_in(&target_worktree, &["add", ".swarm-hug"]);
+        run_git_in(&target_worktree, &["commit", "-m", "complete task"]);
+
+        let before = fs::read_to_string(&tasks_path).expect("read tasks before");
+        assert!(before.contains("[ ]"));
+
+        let mut config = Config::default();
+        config.project = Some(team_name.to_string());
+        config.target_branch = Some("main".to_string());
+        config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+
+        sync_target_branch_state(&repo_root, "main", team_name, &config)
+            .expect("sync target branch state");
+
+        let after = fs::read_to_string(&tasks_path).expect("read tasks after");
+        assert!(after.contains("[x]"));
+        let history = team::SprintHistory::load_from(&history_path).expect("load history");
+        assert_eq!(history.total_sprints, 1);
     }
 }
