@@ -77,6 +77,9 @@ pub fn validate_target_branch_worktree_in(
         if path_is_under_root(&path, &shared_root) {
             return Ok(Some(path));
         }
+        if is_repo_root_worktree(repo_root, &path) {
+            return Ok(Some(path));
+        }
         return Err(format!(
             "target branch '{}' already has a worktree at '{}' outside shared worktrees root '{}'",
             target,
@@ -108,13 +111,15 @@ pub fn create_target_branch_worktree_in(
     let target = normalize_target_branch(target_branch)?;
 
     if let Some(existing) = validate_target_branch_worktree_in(repo_root, target)? {
-        repair_worktree_links(repo_root, &existing).map_err(|e| {
-            format!(
-                "git worktree repair failed for {}: {}",
-                existing.display(),
-                e
-            )
-        })?;
+        if !is_repo_root_worktree(repo_root, &existing) {
+            repair_worktree_links(repo_root, &existing).map_err(|e| {
+                format!(
+                    "git worktree repair failed for {}: {}",
+                    existing.display(),
+                    e
+                )
+            })?;
+        }
         return Ok(existing);
     }
 
@@ -282,6 +287,16 @@ fn path_is_under_root(path: &Path, root: &Path) -> bool {
     };
 
     path_canonical.starts_with(&root_canonical)
+}
+
+fn is_repo_root_worktree(repo_root: &Path, path: &Path) -> bool {
+    let repo_canonical = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let path_canonical = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf());
+    repo_canonical == path_canonical
 }
 
 #[cfg(test)]
@@ -554,6 +569,20 @@ branch refs/heads/main
     }
 
     #[test]
+    fn test_validate_target_branch_worktree_allows_repo_root() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        let current = git_stdout(repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let result = validate_target_branch_worktree_in(repo, &current)
+            .expect("validate target worktree");
+        let expected = canonical_path(repo);
+        let actual = result.as_ref().map(|path| canonical_path(path));
+        assert_eq!(actual, Some(expected));
+    }
+
+    #[test]
     fn test_validate_target_branch_worktree_errors_outside_shared_root() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
@@ -615,6 +644,18 @@ branch refs/heads/main
 
         let head = git_stdout(&path, &["rev-parse", "--abbrev-ref", "HEAD"]);
         assert_eq!(head, "target-branch");
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_reuses_repo_root() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        let current = git_stdout(repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let path =
+            create_target_branch_worktree_in(repo, &current).expect("reuse repo root worktree");
+        assert_eq!(canonical_path(&path), canonical_path(repo));
     }
 
     #[test]
