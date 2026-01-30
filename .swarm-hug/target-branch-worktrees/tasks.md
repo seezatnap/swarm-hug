@@ -21,4 +21,4 @@
 - [ ] (#8) Add integration tests for parallel merge isolation verifying that concurrent sprints can merge without contending for primary repo working tree [5 pts] (blocked by #5)
 
 ## Follow-up tasks (from sprint review)
-- [B] (#9) Implement target-branch worktree resolution (`find_target_branch_worktree[_in]`) that parses `git worktree list --porcelain` for `refs/heads/<branch>` and returns `Option<PathBuf>` (missing from merged code)
+- [x] (#9) Implement target-branch worktree resolution (`find_target_branch_worktree[_in]`) that parses `git worktree list --porcelain` for `refs/heads/<branch>` and returns `Option<PathBuf>` (missing from merged code) (B)
