@@ -282,6 +282,7 @@ fn test_config_default() {
     assert!(!config.engine_stub_mode);
     assert_eq!(config.sprints_max, 0);
     assert_eq!(config.target_branch, None);
+    assert_eq!(config.worktree_relative_paths, None);
 }
 
 #[test]
@@ -312,6 +313,16 @@ max = 5
     assert_eq!(config.engine_types, vec![EngineType::Codex]);
     assert!(config.engine_stub_mode);
     assert_eq!(config.sprints_max, 5);
+}
+
+#[test]
+fn test_config_parse_toml_worktree_relative_paths() {
+    let toml = r#"
+[worktree]
+relative_paths = true
+"#;
+    let config = Config::parse_toml(toml).unwrap();
+    assert_eq!(config.worktree_relative_paths, Some(true));
 }
 
 #[test]
@@ -351,12 +362,25 @@ fn test_parse_args_flags() {
         "--max-sprints".to_string(),
         "3".to_string(),
         "--stub".to_string(),
+        "--relative-paths".to_string(),
         "run".to_string(),
     ];
     let cli = parse_args(args);
     assert_eq!(cli.command, Some(Command::Run));
     assert_eq!(cli.max_sprints, Some(3));
     assert!(cli.stub);
+    assert_eq!(cli.worktree_relative_paths, Some(true));
+}
+
+#[test]
+fn test_parse_args_no_relative_paths() {
+    let args = vec![
+        "swarm".to_string(),
+        "--no-relative-paths".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.worktree_relative_paths, Some(false));
 }
 
 #[test]
@@ -403,6 +427,17 @@ fn test_config_apply_cli_target_branch() {
     };
     config.apply_cli(&cli);
     assert_eq!(config.target_branch, Some("mainline".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_relative_paths() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        worktree_relative_paths: Some(true),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.worktree_relative_paths, Some(true));
 }
 
 #[test]

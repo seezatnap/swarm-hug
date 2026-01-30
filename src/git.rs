@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-fn git_repo_root() -> Result<PathBuf, String> {
+pub(crate) fn git_repo_root() -> Result<PathBuf, String> {
     let output = process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -322,6 +322,32 @@ pub(crate) fn get_current_commit_in(repo_dir: &Path) -> Option<String> {
     }
 }
 
+/// Get the short git commit hash for a ref (branch, tag, or commit) in a repo/worktree.
+pub(crate) fn get_short_commit_for_ref_in(repo_dir: &Path, git_ref: &str) -> Option<String> {
+    let target = git_ref.trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["rev-parse", "--short", target])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let short = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if short.is_empty() {
+            None
+        } else {
+            Some(short)
+        }
+    } else {
+        None
+    }
+}
+
 /// Get git log between two commits (messages and stats, no diffs) for a specific repo/worktree.
 pub(crate) fn get_git_log_range_in(
     repo_dir: &Path,
@@ -344,9 +370,75 @@ pub(crate) fn get_git_log_range_in(
     }
 }
 
+pub(crate) const MIN_GIT_VERSION: (u32, u32, u32) = (2, 48, 0);
+
+pub(crate) fn ensure_min_git_version() -> Result<(), String> {
+    let output = process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("failed to run git --version: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git --version failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let current = parse_git_version(&stdout)
+        .ok_or_else(|| format!("could not parse git version from '{}'", stdout.trim()))?;
+
+    if version_lt(current, MIN_GIT_VERSION) {
+        return Err(format!(
+            "git {}.{}.{}+ required, found {}.{}.{}",
+            MIN_GIT_VERSION.0,
+            MIN_GIT_VERSION.1,
+            MIN_GIT_VERSION.2,
+            current.0,
+            current.1,
+            current.2
+        ));
+    }
+
+    Ok(())
+}
+
+fn parse_git_version(output: &str) -> Option<(u32, u32, u32)> {
+    let token = output
+        .split_whitespace()
+        .find(|part| part.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))?;
+
+    let mut nums = Vec::new();
+    for part in token.split('.') {
+        let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            break;
+        }
+        if let Ok(value) = digits.parse() {
+            nums.push(value);
+        } else {
+            break;
+        }
+    }
+
+    if nums.len() < 2 {
+        return None;
+    }
+
+    let major = nums[0];
+    let minor = nums[1];
+    let patch = nums.get(2).copied().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+fn version_lt(current: (u32, u32, u32), min: (u32, u32, u32)) -> bool {
+    current.0 < min.0
+        || (current.0 == min.0
+            && (current.1 < min.1 || (current.1 == min.1 && current.2 < min.2)))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ensure_branch_checked_out;
+    use super::{ensure_branch_checked_out, get_short_commit_for_ref_in};
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -387,5 +479,37 @@ mod tests {
             .expect("should checkout feature branch");
         let branch = run_git(repo_dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
         assert_eq!(branch.trim(), "feature");
+    }
+
+    #[test]
+    fn test_get_short_commit_for_ref_in_returns_short_hash() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo_dir = temp.path();
+
+        run_git(repo_dir, &["init"]);
+        run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
+        run_git(repo_dir, &["config", "user.email", "swarm-test@example.com"]);
+        fs::write(repo_dir.join("README.md"), "hello").expect("write file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "init"]);
+
+        let full = run_git(repo_dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let short =
+            get_short_commit_for_ref_in(repo_dir, "HEAD").expect("short commit should exist");
+        assert!(!short.is_empty());
+        assert!(full.starts_with(&short));
+    }
+
+    #[test]
+    fn test_parse_git_version_accepts_standard_output() {
+        let parsed = super::parse_git_version("git version 2.48.1").expect("parse version");
+        assert_eq!(parsed, (2, 48, 1));
+    }
+
+    #[test]
+    fn test_parse_git_version_accepts_suffix() {
+        let parsed =
+            super::parse_git_version("git version 2.48.0.windows.1").expect("parse version");
+        assert_eq!(parsed, (2, 48, 0));
     }
 }

@@ -33,6 +33,8 @@ pub struct CliArgs {
     pub project: Option<String>,
     /// Target branch for base/merge operations (defaults to auto-detected main/master).
     pub target_branch: Option<String>,
+    /// Override git worktree relative path behavior (true = relative, false = absolute).
+    pub worktree_relative_paths: Option<bool>,
     /// Project name for project-specific subcommands (positional arg).
     pub project_arg: Option<String>,
     /// Email for set-email command (positional arg).
@@ -96,6 +98,8 @@ where
             "-c" | "--config" => cli.config = args.next(),
             "-p" | "--project" => cli.project = args.next(),
             "--target-branch" => cli.target_branch = args.next(),
+            "--relative-paths" => cli.worktree_relative_paths = Some(true),
+            "--no-relative-paths" => cli.worktree_relative_paths = Some(false),
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),

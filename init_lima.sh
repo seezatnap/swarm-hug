@@ -42,6 +42,7 @@ VM_NAME="swarmbox"
 CONTAINER_NAME="swarmbox-agent"
 HOST_PORTS="3000"
 DO_AUTH="1"
+GIT_MIN_VERSION="2.48.0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -119,9 +120,9 @@ done
 
 # --- create/start Lima VM with mount-only -------------------------------------
 if limactl list --format '{{.Name}}' 2>/dev/null | grep -qx "$VM_NAME"; then
-  echo "[+] Lima VM exists: $VM_NAME"
-  echo "    (If you need different mounts, delete + recreate: limactl delete -f $VM_NAME)"
-  limactl start "$VM_NAME" >/dev/null
+    echo "[+] Lima VM exists: $VM_NAME"
+    echo "    (If you need different mounts, delete + recreate: limactl delete -f $VM_NAME)"
+    limactl start "$VM_NAME" >/dev/null
 else
   echo "[+] Creating Lima VM: $VM_NAME"
   mount_args=()
@@ -133,6 +134,44 @@ else
   fi
   limactl start --name "$VM_NAME" template://docker "${mount_args[@]}"
 fi
+
+# --- Ensure Git >= minimum in the VM -----------------------------------------
+echo "[+] Ensuring git >= ${GIT_MIN_VERSION} in VM"
+limactl shell "$VM_NAME" -- bash -lc "
+  set -euo pipefail
+  min='${GIT_MIN_VERSION}'
+  version_ge() { [ \"\$(printf '%s\n' \"\$2\" \"\$1\" | sort -V | head -n1)\" = \"\$2\" ]; }
+  current=''
+  if command -v git >/dev/null 2>&1; then
+    current=\$(git --version | awk '{print \$3}')
+  fi
+  if [[ -z \"\$current\" ]] || ! version_ge \"\$current\" \"\$min\"; then
+    if command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get update
+      sudo apt-get install -y software-properties-common ca-certificates curl build-essential \\
+        libssl-dev libcurl4-gnutls-dev zlib1g-dev
+      if command -v add-apt-repository >/dev/null 2>&1; then
+        sudo add-apt-repository -y ppa:git-core/ppa || true
+      fi
+      sudo apt-get update
+      sudo apt-get install -y git
+      current=\$(git --version | awk '{print \$3}')
+    fi
+    if [[ -z \"\$current\" ]] || ! version_ge \"\$current\" \"\$min\"; then
+      echo \"[vm] git < \$min; building from source\"
+      tmpdir=\$(mktemp -d)
+      cd \"\$tmpdir\"
+      curl -fsSL \"https://www.kernel.org/pub/software/scm/git/git-\${min}.tar.xz\" -o git.tar.xz
+      tar -xf git.tar.xz
+      cd \"git-\${min}\"
+      make prefix=/usr/local all
+      sudo make prefix=/usr/local install
+      cd /
+      rm -rf \"\$tmpdir\"
+    fi
+  fi
+  git --version
+"
 
 # --- Docker context for this Lima VM ------------------------------------------
 DOCKER_HOST_SOCK="$(limactl list "$VM_NAME" --format 'unix://{{.Dir}}/sock/docker.sock')"
@@ -152,9 +191,23 @@ trap cleanup_tmp EXIT
 cat > "${TMPDIR}/Dockerfile" <<'DOCKERFILE'
 FROM node:20-bookworm-slim
 
+ARG GIT_MIN_VERSION=2.48.0
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git htop jq openssh-client tini \
-    build-essential pkg-config libssl-dev \
+    build-essential pkg-config libssl-dev libcurl4-gnutls-dev zlib1g-dev gettext \
+  && if ! dpkg --compare-versions "$(git --version | awk '{print $3}')" ge "${GIT_MIN_VERSION}"; then \
+       echo "git < ${GIT_MIN_VERSION}; building from source"; \
+       tmpdir="$(mktemp -d)"; \
+       cd "$tmpdir"; \
+       curl -fsSL "https://www.kernel.org/pub/software/scm/git/git-${GIT_MIN_VERSION}.tar.xz" -o git.tar.xz; \
+       tar -xf git.tar.xz; \
+       cd "git-${GIT_MIN_VERSION}"; \
+       make prefix=/usr/local all; \
+       make prefix=/usr/local install; \
+       cd /; \
+       rm -rf "$tmpdir"; \
+     fi \
   && rm -rf /var/lib/apt/lists/*
 
 # Enable pnpm via corepack (included in Node 20+)

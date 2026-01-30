@@ -23,6 +23,46 @@ pub(super) fn git_repo_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
+pub(super) fn apply_relative_paths_flag(cmd: &mut Command, relative_paths: Option<bool>) {
+    match relative_paths {
+        Some(true) => {
+            cmd.arg("--relative-paths");
+        }
+        Some(false) => {
+            cmd.arg("--no-relative-paths");
+        }
+        None => {}
+    }
+}
+
+pub(super) fn repair_worktree_links(
+    repo_root: &Path,
+    worktree_path: &Path,
+    relative_paths: Option<bool>,
+) -> Result<(), String> {
+    if relative_paths.is_none() {
+        return Ok(());
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "repair"]);
+    apply_relative_paths_flag(&mut cmd, relative_paths);
+    cmd.arg(worktree_path);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run git worktree repair: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git worktree repair failed: {}", stderr.trim()))
+    }
+}
+
 pub(super) fn ensure_head(repo_root: &Path) -> Result<(), String> {
     let output = Command::new("git")
         .arg("-C")
@@ -71,6 +111,9 @@ fn parse_registered_worktrees(porcelain_output: &str, repo_root: &Path) -> HashS
                 repo_root.join(candidate)
             };
             registered.insert(resolved.to_string_lossy().to_string());
+            if let Ok(canonical) = resolved.canonicalize() {
+                registered.insert(canonical.to_string_lossy().to_string());
+            }
         }
     }
     registered
@@ -191,7 +234,21 @@ pub fn create_feature_branch_in(
     ensure_head(repo_root)?;
 
     if !branch_exists(repo_root, target)? {
-        return Err(format!("target branch '{}' not found", target));
+        // Create the target branch at HEAD so new projects can seed a base branch on demand.
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["branch", target, "HEAD"])
+            .output()
+            .map_err(|e| format!("failed to run git branch: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "target branch '{}' not found and could not be created: {}",
+                target,
+                stderr.trim()
+            ));
+        }
     }
     if branch_exists(repo_root, feature)? {
         return Ok(false);
@@ -936,13 +993,17 @@ branch refs/heads/agent-aaron
         let repo = temp.path();
         init_repo(repo);
 
-        let err =
-            create_feature_branch_in(repo, "greenfield-sprint-1", "missing-branch").unwrap_err();
-        assert!(
-            err.contains("target branch 'missing-branch' not found"),
-            "unexpected error: {}",
-            err
-        );
+        let head_rev = rev_parse(repo, "HEAD");
+        let created =
+            create_feature_branch_in(repo, "greenfield-sprint-1", "missing-branch").unwrap();
+        assert!(created);
+        assert!(branch_exists(repo, "missing-branch"));
+        assert!(branch_exists(repo, "greenfield-sprint-1"));
+
+        let target_rev = rev_parse(repo, "missing-branch");
+        let feature_rev = rev_parse(repo, "greenfield-sprint-1");
+        assert_eq!(target_rev, head_rev);
+        assert_eq!(feature_rev, target_rev);
     }
 
     #[test]

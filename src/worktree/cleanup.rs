@@ -356,9 +356,14 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create the worktree
-            let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
-                    .expect("create worktrees");
+            let worktrees = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
             let wt_path = &worktrees[0].path;
             assert!(wt_path.exists(), "worktree should exist before cleanup");
 
@@ -384,9 +389,14 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create the worktree
-            let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
-                    .expect("create worktrees");
+            let worktrees = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
             let wt_path = &worktrees[0].path;
             let branch = ctx.agent_branch('A');
 
@@ -414,12 +424,22 @@ mod tests {
             let worktrees_dir = Path::new(".swarm-hug/greenfield/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
 
-            let worktrees1 =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx1)
-                    .expect("create worktrees for run 1");
-            let worktrees2 =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx2)
-                    .expect("create worktrees for run 2");
+            let worktrees1 = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx1,
+                None,
+            )
+            .expect("create worktrees for run 1");
+            let worktrees2 = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx2,
+                None,
+            )
+            .expect("create worktrees for run 2");
 
             let wt_path1 = &worktrees1[0].path;
             let wt_path2 = &worktrees2[0].path;
@@ -449,9 +469,14 @@ mod tests {
             ];
 
             // Create the worktrees
-            let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
-                    .expect("create worktrees");
+            let worktrees = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
             assert_eq!(worktrees.len(), 2);
 
             let wt_path_a = &worktrees[0].path;
@@ -480,8 +505,14 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create only one worktree (for 'A')
-            create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
-                .expect("create worktrees");
+            create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
 
             // Try to clean up 'A' and 'B' - 'B' doesn't exist but shouldn't error
             let summary = cleanup_agent_worktrees(worktrees_dir, &['A', 'B'], true, &ctx);
@@ -535,12 +566,22 @@ mod tests {
             let worktrees_dir = Path::new(".swarm-hug/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
 
-            let worktrees_greenfield =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx_greenfield)
-                    .expect("create greenfield worktrees");
-            let worktrees_payments =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx_payments)
-                    .expect("create payments worktrees");
+            let worktrees_greenfield = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx_greenfield,
+                None,
+            )
+            .expect("create greenfield worktrees");
+            let worktrees_payments = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx_payments,
+                None,
+            )
+            .expect("create payments worktrees");
 
             let wt_greenfield = &worktrees_greenfield[0].path;
             let wt_payments = &worktrees_payments[0].path;

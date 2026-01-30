@@ -24,7 +24,7 @@ use swarm::worktree::{self, Worktree};
 
 use crate::git::{
     commit_files_in_worktree_on_branch, commit_sprint_completion, commit_task_assignments,
-    get_current_commit_in, get_git_log_range_in,
+    get_current_commit_in, get_git_log_range_in, get_short_commit_for_ref_in, git_repo_root,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
 use crate::project::project_name_for_config;
@@ -162,6 +162,21 @@ pub(crate) fn run_sprint(
         .ok_or_else(|| "target branch not configured".to_string())?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
 
+    let base_commit = git_repo_root()
+        .ok()
+        .and_then(|repo_root| {
+            get_short_commit_for_ref_in(&repo_root, target_branch)
+                .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    if let Err(e) = chat::write_message(
+        &config.files_chat,
+        "ScrumMaster",
+        &format!("Creating worktree {} from {}", sprint_branch, base_commit),
+    ) {
+        eprintln!("warning: failed to write chat: {}", e);
+    }
+
     // Create sprint branch/worktree FIRST, before any file writes
     // This ensures all sprint setup files are written to the sprint worktree,
     // not the target branch (main/master)
@@ -174,8 +189,13 @@ pub(crate) fn run_sprint(
     }
 
     let feature_worktree_path =
-        worktree::create_feature_worktree_in(worktrees_dir, &sprint_branch, target_branch)
-            .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+        worktree::create_feature_worktree_in(
+            worktrees_dir,
+            &sprint_branch,
+            target_branch,
+            config.worktree_relative_paths,
+        )
+        .map_err(|e| format!("failed to create feature worktree: {}", e))?;
 
     // Print sprint start banner (after worktree creation to ensure we have a valid sprint)
     print_sprint_start_banner(&formatted_team, historical_sprint);
@@ -317,7 +337,13 @@ pub(crate) fn run_sprint(
 
     // Create worktrees for assigned agents
     let worktrees: Vec<Worktree> =
-        worktree::create_worktrees_in(worktrees_dir, &assignments, &sprint_branch, &run_ctx)
+        worktree::create_worktrees_in(
+            worktrees_dir,
+            &assignments,
+            &sprint_branch,
+            &run_ctx,
+            config.worktree_relative_paths,
+        )
             .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Build a map from initial to worktree path (owned for thread safety)
@@ -392,6 +418,7 @@ pub(crate) fn run_sprint(
         let thread_engine_types = engine_types.clone();
         let thread_engine_stub_mode = engine_stub_mode;
         let thread_agent_timeout = agent_timeout_secs;
+        let thread_worktree_relative_paths = config.worktree_relative_paths;
 
         let handle = thread::spawn(move || {
             let agent_name = agent::name_from_initial(initial).unwrap_or("Unknown");
@@ -682,6 +709,7 @@ pub(crate) fn run_sprint(
                             &recreate_assignments,
                             &sprint_branch,
                             &run_ctx,
+                            thread_worktree_relative_paths,
                         )
                     };
                     match recreate_result {
@@ -905,6 +933,7 @@ pub(crate) fn run_sprint(
             &sprint_branch,
             target_branch,
             &feature_worktree_path,
+            config.worktree_relative_paths,
         )
         .map_err(|e| format!("merge agent failed: {}", e))?;
         if merge_result.success {

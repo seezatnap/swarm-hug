@@ -8,7 +8,7 @@ Today, `--target-branch` is just a branch name in the primary repo, and post-spr
 
 ## Goals
 - Treat `--target-branch` as a worktree-backed branch, not a branch checked out in the primary repo.
-- Use a shared worktrees root at `./swarm-hub/.shared/worktrees`.
+- Use a shared worktrees root at `./.swarm-hug/.shared/worktrees`.
 - If the target branch already exists but is not a worktree under the shared root, fail fast with a clear error.
 - Otherwise, create (or reuse) the target branch worktree in the shared root.
 - Post-sprint merge agent runs the merge inside the target branch worktree, not the primary repo.
@@ -24,22 +24,22 @@ Today, `--target-branch` is just a branch name in the primary repo, and post-spr
 - Parallel merges contend for the same working tree, causing conflicts and race conditions.
 
 ## Desired Behavior
-When `--target-branch` is specified (or resolved by default), it must correspond to a worktree located under `./swarm-hub/.shared/worktrees`. The merge agent must `cd` into that worktree before merging. This isolates merges per target branch and removes the primary repo as the merge surface.
+When `--target-branch` is specified (or resolved by default), it must correspond to a worktree located under `./.swarm-hug/.shared/worktrees`. The merge agent must `cd` into that worktree before merging. This isolates merges per target branch and removes the primary repo as the merge surface.
 
 ## Implementation
 
 ### 1) Add a shared target worktrees root
-- **Path:** `./swarm-hub/.shared/worktrees`
+- **Path:** `./.swarm-hug/.shared/worktrees`
 - Ensure the directory exists before any target worktree operations.
 
 ### 2) Enforce target branch worktree ownership
 Resolve the target branch name (explicit `--target-branch` or default). Then:
 
 - Parse `git worktree list --porcelain` to locate worktrees for `refs/heads/<target-branch>`.
-- If a worktree exists for the target branch and its path is **not** under `./swarm-hub/.shared/worktrees`, **error immediately**.
+- If a worktree exists for the target branch and its path is **not** under `./.swarm-hug/.shared/worktrees`, **error immediately**.
 - If a worktree exists for the target branch under the shared root, **reuse it**.
 - If the branch does **not** exist, **create a new worktree** for it in the shared root.
-  - Worktree path: `./swarm-hub/.shared/worktrees/<target-branch>` (or a sanitized variant if needed).
+  - Worktree path: `./.swarm-hug/.shared/worktrees/<target-branch>` (or a sanitized variant if needed).
   - Base commit: whatever the current target-branch creation logic uses today (do not change semantics; only change the worktree location).
 
 ### 3) Move post-sprint merges to the target worktree
@@ -47,9 +47,9 @@ Resolve the target branch name (explicit `--target-branch` or default). Then:
 - The primary repo should never be the working directory for the post-sprint merge.
 
 ## Acceptance Criteria
-- If `--target-branch` is provided and the branch exists outside `./swarm-hub/.shared/worktrees`, the run fails with a clear error.
-- If the target branch has a worktree under `./swarm-hub/.shared/worktrees`, that worktree is reused.
-- If no such worktree exists, one is created under `./swarm-hub/.shared/worktrees`.
+- If `--target-branch` is provided and the branch exists outside `./.swarm-hug/.shared/worktrees`, the run fails with a clear error.
+- If the target branch has a worktree under `./.swarm-hug/.shared/worktrees`, that worktree is reused.
+- If no such worktree exists, one is created under `./.swarm-hug/.shared/worktrees`.
 - Post-sprint merges occur inside the target worktree, not the primary repo.
 - Parallel sprints/merges can run without contending for the primary repo working tree.
 

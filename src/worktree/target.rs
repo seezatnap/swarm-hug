@@ -3,13 +3,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::create::worktree_is_registered;
-use super::git::{ensure_head, git_repo_root};
+use super::git::{apply_relative_paths_flag, ensure_head, git_repo_root, repair_worktree_links};
 
 /// Returns the shared worktrees root for target branch operations.
 ///
-/// Path: `./swarm-hub/.shared/worktrees` (relative to the repo root).
+/// Path: `./.swarm-hug/.shared/worktrees` (relative to the repo root).
 pub fn shared_worktrees_root(repo_root: &Path) -> PathBuf {
-    repo_root.join("swarm-hub").join(".shared").join("worktrees")
+    repo_root
+        .join(".swarm-hug")
+        .join(".shared")
+        .join("worktrees")
 }
 
 /// Ensure the shared worktrees root exists before target worktree operations.
@@ -89,20 +92,31 @@ pub fn validate_target_branch_worktree_in(
 ///
 /// If an existing worktree for the target branch is already under the shared root,
 /// it is reused. If a worktree exists elsewhere, this errors. If no worktree exists,
-/// a new one is created at `./swarm-hub/.shared/worktrees/<sanitized-target>`.
-pub fn create_target_branch_worktree(target_branch: &str) -> Result<PathBuf, String> {
+/// a new one is created at `./.swarm-hug/.shared/worktrees/<sanitized-target>`.
+pub fn create_target_branch_worktree(
+    target_branch: &str,
+    relative_paths: Option<bool>,
+) -> Result<PathBuf, String> {
     let repo_root = git_repo_root()?;
-    create_target_branch_worktree_in(&repo_root, target_branch)
+    create_target_branch_worktree_in(&repo_root, target_branch, relative_paths)
 }
 
 /// Create (or reuse) the target branch worktree under the shared root in the specified repo.
 pub fn create_target_branch_worktree_in(
     repo_root: &Path,
     target_branch: &str,
+    relative_paths: Option<bool>,
 ) -> Result<PathBuf, String> {
     let target = normalize_target_branch(target_branch)?;
 
     if let Some(existing) = validate_target_branch_worktree_in(repo_root, target)? {
+        repair_worktree_links(repo_root, &existing, relative_paths).map_err(|e| {
+            format!(
+                "git worktree repair failed for {}: {}",
+                existing.display(),
+                e
+            )
+        })?;
         return Ok(existing);
     }
 
@@ -132,6 +146,7 @@ pub fn create_target_branch_worktree_in(
 
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(repo_root).args(["worktree", "add"]);
+    apply_relative_paths_flag(&mut cmd, relative_paths);
 
     if branch_exists(repo_root, target)? {
         cmd.arg(&path_str).arg(target);
@@ -151,6 +166,9 @@ pub fn create_target_branch_worktree_in(
             stderr.trim()
         ));
     }
+
+    repair_worktree_links(repo_root, &path, relative_paths)
+        .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
     Ok(path)
 }
@@ -279,7 +297,7 @@ mod tests {
         let root = shared_worktrees_root(temp.path());
         let expected = temp
             .path()
-            .join("swarm-hub")
+            .join(".swarm-hug")
             .join(".shared")
             .join("worktrees");
         assert_eq!(root, expected);
@@ -300,7 +318,7 @@ worktree /repo
 HEAD abc123
 branch refs/heads/main
 
-worktree /repo/swarm-hub/.shared/worktrees/develop
+worktree /repo/.swarm-hug/.shared/worktrees/develop
 HEAD def456
 branch refs/heads/develop
 
@@ -310,14 +328,14 @@ branch refs/heads/develop
             parse_target_worktree_path(porcelain, "develop", repo_root).expect("path found");
         assert_eq!(
             result,
-            PathBuf::from("/repo/swarm-hub/.shared/worktrees/develop")
+            PathBuf::from("/repo/.swarm-hug/.shared/worktrees/develop")
         );
     }
 
     #[test]
     fn test_parse_target_worktree_path_resolves_relative() {
         let porcelain = "\\
-worktree swarm-hub/.shared/worktrees/main
+worktree .swarm-hug/.shared/worktrees/main
 HEAD abc123
 branch refs/heads/main
 
@@ -327,7 +345,7 @@ branch refs/heads/main
             parse_target_worktree_path(porcelain, "main", repo_root).expect("path found");
         assert_eq!(
             result,
-            PathBuf::from("/repo/swarm-hub/.shared/worktrees/main")
+            PathBuf::from("/repo/.swarm-hug/.shared/worktrees/main")
         );
     }
 
@@ -440,6 +458,9 @@ branch refs/heads/main
     fn make_worktree_gitdir_relative(repo: &Path, worktree_path: &Path) {
         let worktrees_dir = repo.join(".git").join("worktrees");
         let expected_gitdir = worktree_path.join(".git");
+        let expected_canonical = expected_gitdir
+            .canonicalize()
+            .unwrap_or_else(|_| expected_gitdir.clone());
         let mut updated = false;
 
         let entries = std::fs::read_dir(&worktrees_dir).expect("read worktrees dir");
@@ -448,19 +469,63 @@ branch refs/heads/main
             let gitdir_path = entry.path().join("gitdir");
             let gitdir_contents =
                 std::fs::read_to_string(&gitdir_path).expect("read gitdir");
-            if gitdir_contents.trim() == expected_gitdir.to_string_lossy() {
-                let relative = expected_gitdir
-                    .strip_prefix(repo)
-                    .expect("gitdir under repo")
-                    .to_string_lossy()
-                    .to_string();
-                std::fs::write(&gitdir_path, relative).expect("write gitdir");
+            let gitdir_trimmed = gitdir_contents.trim();
+            let gitdir_path_buf = PathBuf::from(gitdir_trimmed);
+            let gitdir_resolved = if gitdir_path_buf.is_absolute() {
+                gitdir_path_buf
+            } else {
+                repo.join(gitdir_path_buf)
+            };
+            let gitdir_canonical = gitdir_resolved
+                .canonicalize()
+                .unwrap_or_else(|_| gitdir_resolved.clone());
+            if gitdir_canonical == expected_canonical {
+                let base = gitdir_path
+                    .parent()
+                    .expect("gitdir parent")
+                    .canonicalize()
+                    .unwrap_or_else(|_| gitdir_path.parent().unwrap().to_path_buf());
+                let relative = path_relative_to(&expected_canonical, &base);
+                std::fs::write(&gitdir_path, relative.to_string_lossy().as_ref())
+                    .expect("write gitdir");
                 updated = true;
                 break;
             }
         }
 
         assert!(updated, "worktree gitdir entry not found");
+    }
+
+    fn canonical_path(path: &Path) -> PathBuf {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn path_relative_to(target: &Path, base: &Path) -> PathBuf {
+        let target_components: Vec<_> = target.components().collect();
+        let base_components: Vec<_> = base.components().collect();
+        let mut shared = 0;
+
+        while shared < target_components.len()
+            && shared < base_components.len()
+            && target_components[shared] == base_components[shared]
+        {
+            shared += 1;
+        }
+
+        let mut relative = PathBuf::new();
+        for _ in shared..base_components.len() {
+            relative.push("..");
+        }
+        for component in &target_components[shared..] {
+            relative.push(component.as_os_str());
+        }
+
+        if relative.as_os_str().is_empty() {
+            relative.push(".");
+        }
+
+        relative
     }
 
     #[test]
@@ -484,7 +549,9 @@ branch refs/heads/main
 
         let result = validate_target_branch_worktree_in(repo, "target-branch")
             .expect("validate target worktree");
-        assert_eq!(result, Some(worktree_path));
+        let expected = canonical_path(&worktree_path);
+        let actual = result.as_ref().map(|path| canonical_path(path));
+        assert_eq!(actual, Some(expected));
     }
 
     #[test]
@@ -540,7 +607,7 @@ branch refs/heads/main
         init_repo(repo);
         run_git(repo, &["branch", "target-branch"]);
 
-        let path = create_target_branch_worktree_in(repo, "target-branch")
+        let path = create_target_branch_worktree_in(repo, "target-branch", None)
             .expect("create target branch worktree");
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
 
@@ -559,7 +626,7 @@ branch refs/heads/main
         run_git(repo, &["branch", "release/v1"]);
 
         let path =
-            create_target_branch_worktree_in(repo, "release/v1").expect("create worktree");
+            create_target_branch_worktree_in(repo, "release/v1", None).expect("create worktree");
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
         let expected = shared_root.join("release%2Fv1");
         assert_eq!(path, expected);
@@ -572,7 +639,7 @@ branch refs/heads/main
         init_repo(repo);
 
         let head_rev = rev_parse(repo, "HEAD");
-        create_target_branch_worktree_in(repo, "new-target").expect("create worktree");
+        create_target_branch_worktree_in(repo, "new-target", None).expect("create worktree");
 
         let target_rev = rev_parse(repo, "new-target");
         assert_eq!(head_rev, target_rev);
@@ -583,11 +650,11 @@ branch refs/heads/main
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
-        run_git(repo, &["branch", "main"]);
+        run_git(repo, &["branch", "target-branch"]);
         run_git(repo, &["branch", "other"]);
 
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
-        let worktree_path = shared_root.join("main");
+        let worktree_path = shared_root.join("target-branch");
         run_git(
             repo,
             &[
@@ -600,7 +667,7 @@ branch refs/heads/main
 
         make_worktree_gitdir_relative(repo, &worktree_path);
 
-        let err = create_target_branch_worktree_in(repo, "main")
+        let err = create_target_branch_worktree_in(repo, "target-branch", None)
             .expect_err("should reject registered worktree path");
         assert!(
             err.contains("already registered"),

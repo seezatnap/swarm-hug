@@ -37,6 +37,11 @@ fn main() {
         process::exit(1);
     }
 
+    if let Err(e) = git::ensure_min_git_version() {
+        eprintln!("error: {}", e);
+        process::exit(1);
+    }
+
     let config = Config::load(&cli);
 
     // Default command is Run if none specified

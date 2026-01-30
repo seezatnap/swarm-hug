@@ -40,6 +40,20 @@ fn chat_contains_message(chat_content: &str, agent: &str, message: &str) -> bool
     })
 }
 
+fn chat_contains_worktree_creation(chat_content: &str, team_name: &str, base_short: &str) -> bool {
+    let prefix = format!("Creating worktree {}-sprint-1-", team_name);
+    let suffix = format!("from {}", base_short);
+    chat_content.lines().any(|line| {
+        chat::parse_line(line)
+            .map(|(_, line_agent, line_message)| {
+                line_agent == "ScrumMaster"
+                    && line_message.starts_with(&prefix)
+                    && line_message.contains(&suffix)
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn run_success(cmd: &mut Command) -> Output {
     let output = cmd.output().expect("failed to run command");
     assert!(
@@ -181,6 +195,7 @@ fn test_swarm_run_stub_integration() {
     let tasks_path = write_team_tasks(&team_root);
     let chat_path = team_root.join("chat.md");
     commit_all(repo_path, "init");
+    let base_short = git_stdout(repo_path, &["rev-parse", "--short", "HEAD"]);
 
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
@@ -221,6 +236,13 @@ fn test_swarm_run_stub_integration() {
     assert_eq!(completed_initials, vec!['A', 'B']);
 
     let chat_content = fs::read_to_string(&chat_path).expect("read CHAT.md");
+    assert!(
+        chat_contains_worktree_creation(&chat_content, team_name, &base_short),
+        "expected worktree creation message for {} from {}. chat:\n{}",
+        team_name,
+        base_short,
+        chat_content
+    );
     assert!(chat_contains_message(
         &chat_content,
         "ScrumMaster",
@@ -474,13 +496,20 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
             &worktrees_dir,
             &feature_branch,
             "main",
+            None,
         )
         .expect("create feature worktree");
 
         let run_ctx = RunContext::new(team_name, 1);
         let assignments = vec![('A', "Task one".to_string())];
-        let worktrees = worktree::create_worktrees_in(&worktrees_dir, &assignments, &feature_branch, &run_ctx)
-            .expect("create agent worktree");
+        let worktrees = worktree::create_worktrees_in(
+            &worktrees_dir,
+            &assignments,
+            &feature_branch,
+            &run_ctx,
+            None,
+        )
+        .expect("create agent worktree");
         assert_eq!(worktrees.len(), 1);
         let agent_worktree = worktrees[0].path.clone();
 
@@ -572,7 +601,7 @@ fn test_target_branch_worktree_errors_when_outside_shared_root() {
         .arg("target-branch");
     run_success(&mut worktree_cmd);
 
-    let err = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+    let err = worktree::create_target_branch_worktree_in(repo_path, "target-branch", None)
         .expect_err("should error when worktree exists outside shared root");
     assert!(
         err.contains("outside shared worktrees root"),
@@ -611,7 +640,7 @@ fn test_target_branch_worktree_reuses_existing_shared_root() {
         .arg("target-branch");
     run_success(&mut worktree_cmd);
 
-    let reused = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+    let reused = worktree::create_target_branch_worktree_in(repo_path, "target-branch", None)
         .expect("reuse target branch worktree");
     assert_eq!(
         canonical_path_str(&reused),
@@ -640,7 +669,7 @@ fn test_target_branch_worktree_creates_when_missing() {
         .arg("target-branch");
     run_success(&mut branch_cmd);
 
-    let created = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+    let created = worktree::create_target_branch_worktree_in(repo_path, "target-branch", None)
         .expect("create target branch worktree");
     let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
 
@@ -1398,6 +1427,7 @@ fn test_failed_sprint_worktree_cleanup_on_restart() {
             &worktrees_dir,
             &leftover_branch,
             &target_branch,
+            None,
         )
         .expect("create leftover worktree");
 
@@ -1807,6 +1837,7 @@ fn test_followup_tasks_written_to_worktree() {
             &worktrees_dir,
             &sprint_branch,
             "main",
+            None,
         )
         .expect("create feature worktree");
 
@@ -2020,6 +2051,7 @@ fn test_parallel_projects_no_worktree_conflict() {
             &assignments,
             "main",
             &ctx_greenfield,
+            None,
         )
         .expect("create greenfield worktrees");
         assert_eq!(worktrees_greenfield.len(), 1);
@@ -2030,6 +2062,7 @@ fn test_parallel_projects_no_worktree_conflict() {
             &assignments,
             "main",
             &ctx_payments,
+            None,
         )
         .expect("create payments worktrees");
         assert_eq!(worktrees_payments.len(), 1);
@@ -2155,6 +2188,7 @@ fn test_parallel_projects_multiple_agents_isolated() {
             &assignments,
             "main",
             &ctx_proj1,
+            None,
         )
         .expect("create project1 worktrees");
 
@@ -2163,6 +2197,7 @@ fn test_parallel_projects_multiple_agents_isolated() {
             &assignments,
             "main",
             &ctx_proj2,
+            None,
         )
         .expect("create project2 worktrees");
 
@@ -2242,6 +2277,7 @@ fn test_restart_isolation_new_hash_old_artifacts_remain() {
             &assignments,
             "main",
             &ctx_run1,
+            None,
         )
         .expect("create run1 worktrees");
 
@@ -2280,6 +2316,7 @@ fn test_restart_isolation_new_hash_old_artifacts_remain() {
             &assignments,
             "main",
             &ctx_run2,
+            None,
         )
         .expect("create run2 worktrees");
 
@@ -2358,12 +2395,15 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
         assert_ne!(hash2, hash3);
 
         // Create worktrees for all 3 runs
-        let worktrees1 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
-            .expect("create worktrees1");
-        let worktrees2 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
-            .expect("create worktrees2");
-        let worktrees3 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx3)
-            .expect("create worktrees3");
+        let worktrees1 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1, None)
+                .expect("create worktrees1");
+        let worktrees2 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2, None)
+                .expect("create worktrees2");
+        let worktrees3 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx3, None)
+                .expect("create worktrees3");
 
         // Verify all worktrees exist (6 total: 2 per run)
         assert_eq!(worktrees1.len(), 2);
@@ -2449,9 +2489,9 @@ fn test_branch_cleanup_scoped_by_hash() {
         let branch2 = ctx2.agent_branch('A');
 
         // Create worktrees for both runs
-        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
+        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1, None)
             .expect("create worktrees ctx1");
-        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
+        worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2, None)
             .expect("create worktrees ctx2");
 
         // Helper to check if a branch exists

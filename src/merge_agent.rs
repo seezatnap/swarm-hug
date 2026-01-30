@@ -34,6 +34,7 @@ pub fn run_merge_agent(
     feature_branch: &str,
     target_branch: &str,
     repo_root: &Path,
+    relative_paths: Option<bool>,
 ) -> Result<EngineResult, String> {
     if engine.engine_type() == EngineType::Stub {
         let message = format!(
@@ -46,7 +47,7 @@ pub fn run_merge_agent(
 
     let main_repo = main_worktree_root(repo_root)?;
     let target_worktree_path =
-        worktree::create_target_branch_worktree_in(&main_repo, target_branch)?;
+        worktree::create_target_branch_worktree_in(&main_repo, target_branch, relative_paths)?;
     let prompt = generate_merge_agent_prompt(feature_branch, target_branch, &target_worktree_path)?;
 
     Ok(engine.execute(
@@ -341,7 +342,7 @@ mod tests {
         with_temp_cwd(|| {
             init_repo();
             let engine = StubEngine::new("loop");
-            let result = run_merge_agent(&engine, "feature-x", "main", Path::new("."))
+            let result = run_merge_agent(&engine, "feature-x", "main", Path::new("."), None)
                 .expect("run merge agent");
             assert!(result.success);
             assert!(result.output.contains("Stub merge agent"));

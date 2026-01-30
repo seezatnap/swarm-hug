@@ -5,8 +5,8 @@ use std::process::Command;
 
 use super::cleanup::remove_worktree_by_path;
 use super::git::{
-    agent_branch_name, create_feature_branch_in, ensure_head, find_worktrees_with_branch,
-    git_repo_root, registered_worktrees,
+    agent_branch_name, apply_relative_paths_flag, create_feature_branch_in, ensure_head,
+    find_worktrees_with_branch, git_repo_root, registered_worktrees, repair_worktree_links,
 };
 use super::Worktree;
 use crate::run_context::RunContext;
@@ -31,13 +31,49 @@ fn is_registered_path(registered: &HashSet<String>, path: &Path) -> bool {
 }
 
 pub(super) fn worktree_is_registered(repo_root: &Path, path: &Path) -> Result<bool, String> {
-    let registered = registered_worktrees(repo_root)?;
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
         repo_root.join(path)
     };
-    Ok(is_registered_path(&registered, &abs))
+    let target = abs.canonicalize().unwrap_or_else(|_| abs.clone());
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = PathBuf::from(trimmed);
+            let resolved = if candidate.is_absolute() {
+                candidate
+            } else {
+                repo_root.join(candidate)
+            };
+            if resolved == abs {
+                return Ok(true);
+            }
+            let resolved_canonical = resolved.canonicalize().unwrap_or(resolved);
+            if resolved_canonical == target {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 /// Legacy worktree path without namespacing.
@@ -77,6 +113,7 @@ pub(super) fn worktree_path_with_context(root: &Path, ctx: &RunContext, initial:
 ///     &[('A', "Task 1".to_string())],
 ///     "greenfield-sprint-1-abc123",
 ///     &ctx,
+///     None,
 /// )?;
 /// // Creates worktree at: .swarm-hug/greenfield/worktrees/greenfield-agent-aaron-abc123
 /// // With branch: greenfield-agent-aaron-abc123
@@ -86,6 +123,7 @@ pub fn create_worktrees_in(
     assignments: &[(char, String)],
     base_branch: &str,
     ctx: &RunContext,
+    relative_paths: Option<bool>,
 ) -> Result<Vec<Worktree>, String> {
     let mut created = Vec::new();
     let mut seen = HashSet::new();
@@ -152,10 +190,13 @@ pub fn create_worktrees_in(
             .output();
 
         // Create fresh worktree with new branch from the base branch
-        let output = Command::new("git")
-            .arg("-C")
+        let mut cmd = Command::new("git");
+        cmd.arg("-C")
             .arg(&repo_root)
-            .args(["worktree", "add", "-B", &branch, &path_str, base])
+            .args(["worktree", "add"]);
+        apply_relative_paths_flag(&mut cmd, relative_paths);
+        let output = cmd
+            .args(["-B", &branch, &path_str, base])
             .output()
             .map_err(|e| format!("failed to run git worktree add: {}", e))?;
 
@@ -167,6 +208,9 @@ pub fn create_worktrees_in(
                 stderr.trim()
             ));
         }
+
+        repair_worktree_links(&repo_root, &path, relative_paths)
+            .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
         registered.insert(path_str);
         created.push(Worktree {
@@ -185,6 +229,7 @@ pub fn create_feature_worktree_in(
     worktrees_dir: &Path,
     feature_branch: &str,
     target_branch: &str,
+    relative_paths: Option<bool>,
 ) -> Result<PathBuf, String> {
     let feature = feature_branch.trim();
     if feature.is_empty() {
@@ -209,6 +254,8 @@ pub fn create_feature_worktree_in(
 
     if let Ok(existing) = find_worktrees_with_branch(&repo_root, feature) {
         if existing.iter().any(|p| p == &path_str) {
+            repair_worktree_links(&repo_root, &path, relative_paths)
+                .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
             return Ok(path);
         }
         if !existing.is_empty() {
@@ -232,10 +279,13 @@ pub fn create_feature_worktree_in(
             .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
     }
 
-    let output = Command::new("git")
-        .arg("-C")
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(&repo_root)
-        .args(["worktree", "add", &path_str, feature])
+        .args(["worktree", "add"]);
+    apply_relative_paths_flag(&mut cmd, relative_paths);
+    let output = cmd
+        .args([&path_str, feature])
         .output()
         .map_err(|e| format!("failed to run git worktree add: {}", e))?;
 
@@ -247,6 +297,9 @@ pub fn create_feature_worktree_in(
             stderr.trim()
         ));
     }
+
+    repair_worktree_links(&repo_root, &path, relative_paths)
+        .map_err(|e| format!("git worktree repair failed for {}: {}", path.display(), e))?;
 
     Ok(path)
 }
@@ -354,8 +407,13 @@ mod tests {
             run_git(&["branch", "target-branch"]);
 
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
-            let path = create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "target-branch")
-                .expect("create feature worktree");
+            let path = create_feature_worktree_in(
+                worktrees_dir,
+                "alpha-sprint-1",
+                "target-branch",
+                None,
+            )
+            .expect("create feature worktree");
 
             assert!(path.ends_with("alpha-sprint-1"));
             assert!(path.exists());
@@ -370,9 +428,13 @@ mod tests {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(branch, "alpha-sprint-1");
 
-            let path_again =
-                create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "target-branch")
-                    .expect("idempotent create");
+            let path_again = create_feature_worktree_in(
+                worktrees_dir,
+                "alpha-sprint-1",
+                "target-branch",
+                None,
+            )
+            .expect("idempotent create");
             assert_eq!(path, path_again);
         });
     }
@@ -392,9 +454,14 @@ mod tests {
             let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
-            let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
-                    .expect("create worktrees");
+            let worktrees = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "alpha-sprint-1",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
             let wt_path = &worktrees[0].path;
             assert!(wt_path.exists());
@@ -441,9 +508,14 @@ mod tests {
             let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
-            let worktrees =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
-                    .expect("create worktrees");
+            let worktrees = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "alpha-sprint-1",
+                &ctx,
+                None,
+            )
+            .expect("create worktrees");
             let wt_path = &worktrees[0].path;
 
             fs::write(wt_path.join("task.txt"), "task").expect("write task file");
@@ -451,9 +523,14 @@ mod tests {
             run_git_in(wt_path, &["commit", "-m", "task commit"]);
 
             // Recreate with same context - should reset to base_commit
-            let worktrees_again =
-                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
-                    .expect("recreate worktree");
+            let worktrees_again = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "alpha-sprint-1",
+                &ctx,
+                None,
+            )
+            .expect("recreate worktree");
             let wt_path_again = &worktrees_again[0].path;
 
             let output = Command::new("git")
@@ -481,15 +558,25 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create worktree for greenfield
-            let worktrees1 =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx1)
-                    .expect("create greenfield worktrees");
+            let worktrees1 = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx1,
+                None,
+            )
+            .expect("create greenfield worktrees");
             assert_eq!(worktrees1.len(), 1);
 
             // Create worktree for payments - should succeed without conflict
-            let worktrees2 =
-                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx2)
-                    .expect("create payments worktrees");
+            let worktrees2 = create_worktrees_in(
+                worktrees_dir,
+                &assignments,
+                "base-branch",
+                &ctx2,
+                None,
+            )
+            .expect("create payments worktrees");
             assert_eq!(worktrees2.len(), 1);
 
             // Both worktrees should exist

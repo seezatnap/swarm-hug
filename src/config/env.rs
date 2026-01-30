@@ -40,4 +40,12 @@ pub(super) fn apply_env(config: &mut Config) {
             config.sprints_max = n;
         }
     }
+    if let Ok(val) = env::var("SWARM_WORKTREE_RELATIVE_PATHS") {
+        let normalized = val.trim().to_lowercase();
+        if normalized == "true" || normalized == "1" {
+            config.worktree_relative_paths = Some(true);
+        } else if normalized == "false" || normalized == "0" {
+            config.worktree_relative_paths = Some(false);
+        }
+    }
 }
