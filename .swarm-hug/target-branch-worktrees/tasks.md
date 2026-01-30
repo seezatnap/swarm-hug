@@ -2,7 +2,7 @@
 
 ## Worktree Infrastructure
 
-- [A] (#1) Add shared target worktrees root directory creation at `./swarm-hub/.shared/worktrees`, ensuring the directory exists before any target worktree operations, and implement utility function to get the shared worktrees root path [5 pts]
+- [x] (#1) Add shared target worktrees root directory creation at `./swarm-hub/.shared/worktrees`, ensuring the directory exists before any target worktree operations, and implement utility function to get the shared worktrees root path [5 pts] (A)
 
 ## Target Branch Worktree Management
 
