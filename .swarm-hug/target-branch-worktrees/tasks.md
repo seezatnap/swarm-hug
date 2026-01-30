@@ -19,3 +19,6 @@
 - [ ] (#6) Add unit tests for worktree parsing and path resolution logic, including tests for porcelain output parsing, worktree path detection, and shared root path utilities [5 pts] (blocked by #2)
 - [ ] (#7) Add integration tests for target branch worktree lifecycle: test error case when worktree exists outside shared root, test reuse of existing worktree under shared root, and test creation of new worktree when none exists [5 pts] (blocked by #4)
 - [ ] (#8) Add integration tests for parallel merge isolation verifying that concurrent sprints can merge without contending for primary repo working tree [5 pts] (blocked by #5)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#9) Implement target-branch worktree resolution (`find_target_branch_worktree[_in]`) that parses `git worktree list --porcelain` for `refs/heads/<branch>` and returns `Option<PathBuf>` (missing from merged code)
