@@ -18,6 +18,30 @@ set -euo pipefail
 
 die() { printf "Error: %s\n" "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+version_ge() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+
+def parse(v):
+    parts = []
+    for part in v.split("."):
+        num = ""
+        for ch in part:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return parts
+
+a = parse(sys.argv[1])
+b = parse(sys.argv[2])
+max_len = max(len(a), len(b))
+a += [0] * (max_len - len(a))
+b += [0] * (max_len - len(b))
+sys.exit(0 if a >= b else 1)
+PY
+}
 
 usage() {
   cat <<'USAGE'
@@ -282,7 +306,23 @@ CMD ["bash","-l"]
 DOCKERFILE
 
 echo "[+] Building image: $IMAGE"
-docker --context "$CTX" build -t "$IMAGE" "$TMPDIR"
+docker --context "$CTX" build -t "$IMAGE" --build-arg "GIT_MIN_VERSION=${GIT_MIN_VERSION}" "$TMPDIR"
+
+image_git_version() {
+  docker --context "$CTX" run --rm "$IMAGE" bash -lc "git --version | awk '{print \$3}'"
+}
+
+IMG_GIT_VER="$(image_git_version || true)"
+if [[ -z "$IMG_GIT_VER" ]] || ! version_ge "$IMG_GIT_VER" "$GIT_MIN_VERSION"; then
+  echo "[!] Image git < ${GIT_MIN_VERSION}; rebuilding without cache"
+  docker --context "$CTX" build --no-cache --pull -t "$IMAGE" \
+    --build-arg "GIT_MIN_VERSION=${GIT_MIN_VERSION}" "$TMPDIR"
+  IMG_GIT_VER="$(image_git_version || true)"
+  if [[ -z "$IMG_GIT_VER" ]] || ! version_ge "$IMG_GIT_VER" "$GIT_MIN_VERSION"; then
+    die "Git in image is still below ${GIT_MIN_VERSION}; build failed to install expected version"
+  fi
+fi
+echo "[+] Image git version: ${IMG_GIT_VER}"
 
 # Discover agent UID inside the built image
 AGENT_UID="$(docker --context "$CTX" run --rm "$IMAGE" bash -lc 'id -u agent')"
