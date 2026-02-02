@@ -107,7 +107,7 @@ OPTIONS:
     --tasks-file <PATH>       Path to tasks file
     --chat-file <PATH>        Path to chat file
     --log-dir <PATH>          Path to log directory
-    --engine <TYPE>           Engine type(s): claude, codex, stub [default: claude]
+    --engine <TYPE>           Engine type(s): claude, codex, stub, openrouter_<model> [default: claude]
                               Comma-separated for load balancing (e.g., claude,claude,codex)
     --stub                    Enable stub mode for testing
     --max-sprints <N>         Maximum sprints to run (0 = unlimited) [default: 0]

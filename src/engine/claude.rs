@@ -1,3 +1,4 @@
+use std::env;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -13,12 +14,19 @@ use crate::shutdown;
 use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, output_to_result, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
 
+#[derive(Debug, Clone)]
+struct OpenRouterConfig {
+    model: String,
+}
+
 /// Claude CLI engine.
 pub struct ClaudeEngine {
     /// Path to claude CLI binary.
     cli_path: String,
     /// Timeout in seconds (0 = no timeout).
     timeout_secs: u64,
+    /// Optional OpenRouter configuration.
+    openrouter: Option<OpenRouterConfig>,
 }
 
 impl ClaudeEngine {
@@ -26,7 +34,11 @@ impl ClaudeEngine {
     /// Resolves the full path to claude using `which` for better portability.
     pub fn new() -> Self {
         let cli_path = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
-        Self { cli_path, timeout_secs: 0 }
+        Self {
+            cli_path,
+            timeout_secs: 0,
+            openrouter: None,
+        }
     }
 
     /// Create with custom CLI path.
@@ -34,13 +46,24 @@ impl ClaudeEngine {
         Self {
             cli_path: cli_path.into(),
             timeout_secs: 0,
+            openrouter: None,
         }
     }
 
     /// Create with timeout.
     pub fn with_timeout(timeout_secs: u64) -> Self {
         let cli_path = resolve_cli_path("claude").unwrap_or_else(|| "claude".to_string());
-        Self { cli_path, timeout_secs }
+        Self {
+            cli_path,
+            timeout_secs,
+            openrouter: None,
+        }
+    }
+
+    /// Enable OpenRouter mode with the given model.
+    pub fn with_openrouter_model(mut self, model: impl Into<String>) -> Self {
+        self.openrouter = Some(OpenRouterConfig { model: model.into() });
+        self
     }
 }
 
@@ -84,6 +107,10 @@ impl Engine for ClaudeEngine {
             if let Some(team_name) = Path::new(dir).file_name().and_then(|n| n.to_str()) {
                 cmd.env("CLAUDE_CODE_TASK_LIST_ID", team_name);
             }
+        }
+
+        if let Err(result) = self.apply_openrouter_env(&mut cmd) {
+            return result;
         }
 
         let mut child = match spawn_in_new_process_group(&mut cmd) {
@@ -171,13 +198,98 @@ impl Engine for ClaudeEngine {
     }
 
     fn engine_type(&self) -> EngineType {
-        EngineType::Claude
+        match &self.openrouter {
+            Some(config) => EngineType::OpenRouter { model: config.model.clone() },
+            None => EngineType::Claude,
+        }
+    }
+}
+
+impl ClaudeEngine {
+    fn apply_openrouter_env(&self, cmd: &mut Command) -> Result<(), EngineResult> {
+        let config = match &self.openrouter {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
+
+        let model = config.model.trim();
+        if model.is_empty() {
+            return Err(EngineResult::failure(
+                "openrouter engine requires a model (e.g., openrouter_moonshotai/kimi-k2.5)",
+                1,
+            ));
+        }
+
+        let api_key = match env::var("OPENROUTER_API_KEY") {
+            Ok(val) => {
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    return Err(EngineResult::failure(
+                        "OPENROUTER_API_KEY must be set when using openrouter engines",
+                        1,
+                    ));
+                }
+                trimmed.to_string()
+            }
+            Err(_) => {
+                return Err(EngineResult::failure(
+                    "OPENROUTER_API_KEY must be set when using openrouter engines",
+                    1,
+                ))
+            }
+        };
+
+        cmd.env("ANTHROPIC_BASE_URL", "https://openrouter.ai/api");
+        cmd.env("ANTHROPIC_AUTH_TOKEN", api_key);
+        cmd.env("ANTHROPIC_API_KEY", "");
+        cmd.env("ANTHROPIC_SMALL_FAST_MODEL", model);
+        cmd.env("ANTHROPIC_MODEL", model);
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::path::Path;
+    #[cfg(unix)]
+    use std::sync::Mutex;
+
+    #[cfg(unix)]
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(unix)]
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    #[cfg(unix)]
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn test_claude_engine_type() {
@@ -190,6 +302,95 @@ mod tests {
         let engine = ClaudeEngine::with_timeout(1800);
         assert_eq!(engine.timeout_secs, 1800);
         assert_eq!(engine.engine_type(), EngineType::Claude);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_claude_engine_openrouter_missing_api_key() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
+        let engine = ClaudeEngine::with_path("missing-claude")
+            .with_openrouter_model("moonshotai/kimi-k2.5");
+        let result = engine.execute("ScrumMaster", "openrouter missing key", Path::new("."), 0, None);
+        assert!(!result.success, "expected failure");
+        assert_eq!(
+            result.error.as_deref(),
+            Some("OPENROUTER_API_KEY must be set when using openrouter engines")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_claude_engine_openrouter_env_vars() {
+        use std::collections::HashMap;
+        use std::fs;
+        use std::fs::File;
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        use tempfile::TempDir;
+
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _key_guard = EnvVarGuard::set("OPENROUTER_API_KEY", "test-openrouter-key");
+
+        let before_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+        let before_auth = std::env::var("ANTHROPIC_AUTH_TOKEN").ok();
+        let before_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let before_small = std::env::var("ANTHROPIC_SMALL_FAST_MODEL").ok();
+        let before_model = std::env::var("ANTHROPIC_MODEL").ok();
+
+        let cwd = std::env::current_dir().expect("current dir");
+        let temp = TempDir::new_in(cwd).expect("temp dir");
+        let script_path = temp.path().join("fake-claude.sh");
+        let mut file = File::create(&script_path).expect("create script");
+        writeln!(file, "#!/bin/sh").expect("write shebang");
+        writeln!(file, "cat >/dev/null").expect("write stdin drain");
+        writeln!(file, "echo \"ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL\"").expect("write base url");
+        writeln!(file, "echo \"ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN\"").expect("write auth token");
+        writeln!(file, "echo \"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY\"").expect("write api key");
+        writeln!(file, "echo \"ANTHROPIC_SMALL_FAST_MODEL=$ANTHROPIC_SMALL_FAST_MODEL\"").expect("write small model");
+        writeln!(file, "echo \"ANTHROPIC_MODEL=$ANTHROPIC_MODEL\"").expect("write model");
+        drop(file);
+
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+
+        let engine = ClaudeEngine::with_path(script_path.to_string_lossy().to_string())
+            .with_openrouter_model("moonshotai/kimi-k2.5");
+        let result = engine.execute("Aaron", "openrouter env test", temp.path(), 0, None);
+        assert!(result.success, "engine failed: {:?}", result);
+
+        let mut env_map = HashMap::new();
+        for line in result.output.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                env_map.insert(key.to_string(), value.to_string());
+            }
+        }
+
+        assert_eq!(
+            env_map.get("ANTHROPIC_BASE_URL").map(String::as_str),
+            Some("https://openrouter.ai/api")
+        );
+        assert_eq!(
+            env_map.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
+            Some("test-openrouter-key")
+        );
+        assert_eq!(env_map.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
+        assert_eq!(
+            env_map.get("ANTHROPIC_SMALL_FAST_MODEL").map(String::as_str),
+            Some("moonshotai/kimi-k2.5")
+        );
+        assert_eq!(
+            env_map.get("ANTHROPIC_MODEL").map(String::as_str),
+            Some("moonshotai/kimi-k2.5")
+        );
+
+        assert_eq!(std::env::var("ANTHROPIC_BASE_URL").ok(), before_base_url);
+        assert_eq!(std::env::var("ANTHROPIC_AUTH_TOKEN").ok(), before_auth);
+        assert_eq!(std::env::var("ANTHROPIC_API_KEY").ok(), before_api_key);
+        assert_eq!(std::env::var("ANTHROPIC_SMALL_FAST_MODEL").ok(), before_small);
+        assert_eq!(std::env::var("ANTHROPIC_MODEL").ok(), before_model);
     }
 
     #[cfg(unix)]

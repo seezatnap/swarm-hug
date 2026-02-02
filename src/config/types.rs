@@ -1,3 +1,4 @@
+use std::env as std_env;
 use std::path::Path;
 use std::process::Command;
 
@@ -5,13 +6,15 @@ use super::cli::CliArgs;
 use super::{env, toml};
 
 /// Engine type for agent execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum EngineType {
     /// Claude CLI engine.
     #[default]
     Claude,
     /// Codex CLI engine.
     Codex,
+    /// OpenRouter via Claude CLI (Anthropic-compatible).
+    OpenRouter { model: String },
     /// Stubbed engine for tests (no network).
     Stub,
 }
@@ -19,20 +22,39 @@ pub enum EngineType {
 impl EngineType {
     /// Parse engine type from string.
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        let trimmed = s.trim();
+        let lower = trimmed.to_lowercase();
+        match lower.as_str() {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
             "stub" => Some(Self::Stub),
-            _ => None,
+            "openrouter" => Some(Self::OpenRouter { model: String::new() }),
+            _ => {
+                if lower.starts_with("openrouter_") {
+                    if let Some((prefix, model)) = trimmed.split_once('_') {
+                        if prefix.eq_ignore_ascii_case("openrouter") {
+                            return Some(Self::OpenRouter { model: model.trim().to_string() });
+                        }
+                    }
+                }
+                None
+            }
         }
     }
 
     /// Convert to string representation.
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> String {
         match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Stub => "stub",
+            Self::Claude => "claude".to_string(),
+            Self::Codex => "codex".to_string(),
+            Self::Stub => "stub".to_string(),
+            Self::OpenRouter { model } => {
+                if model.trim().is_empty() {
+                    "openrouter".to_string()
+                } else {
+                    format!("openrouter_{}", model)
+                }
+            }
         }
     }
 
@@ -117,7 +139,7 @@ impl Config {
     ///
     /// When a team is specified via `--team`, paths are resolved relative to
     /// `.swarm-hug/<team>/` unless explicitly overridden.
-    pub fn load(cli_args: &CliArgs) -> Self {
+    pub fn load(cli_args: &CliArgs) -> Result<Self, ConfigError> {
         let mut config = Self::default();
 
         // Load from config file if present
@@ -152,7 +174,9 @@ impl Config {
             config.target_branch = detect_target_branch();
         }
 
-        config
+        config.validate()?;
+
+        Ok(config)
     }
 
     /// Apply project-based path defaults.
@@ -276,7 +300,7 @@ max = 0
         if self.engine_stub_mode {
             EngineType::Stub
         } else {
-            self.engine_types.first().copied().unwrap_or(EngineType::Claude)
+            self.engine_types.first().cloned().unwrap_or(EngineType::Claude)
         }
     }
 
@@ -291,11 +315,11 @@ max = 0
             return EngineType::Claude;
         }
         if self.engine_types.len() == 1 {
-            return self.engine_types[0];
+            return self.engine_types[0].clone();
         }
         // Use thread_rng for random selection
         use rand::seq::SliceRandom;
-        *self.engine_types.choose(&mut rand::thread_rng()).unwrap()
+        self.engine_types.choose(&mut rand::thread_rng()).cloned().unwrap()
     }
 
     /// Get a display string for the configured engines.
@@ -305,6 +329,36 @@ max = 0
             return "stub".to_string();
         }
         EngineType::list_to_string(&self.engine_types)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_openrouter()
+    }
+
+    fn validate_openrouter(&self) -> Result<(), ConfigError> {
+        let mut has_openrouter = false;
+
+        for engine in &self.engine_types {
+            if let EngineType::OpenRouter { model } = engine {
+                has_openrouter = true;
+                if model.trim().is_empty() {
+                    return Err(ConfigError::Validation(
+                        "openrouter engine requires a model (e.g., openrouter_moonshotai/kimi-k2.5)".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if has_openrouter {
+            match std_env::var("OPENROUTER_API_KEY") {
+                Ok(val) if !val.trim().is_empty() => Ok(()),
+                _ => Err(ConfigError::Validation(
+                    "OPENROUTER_API_KEY must be set when using openrouter engines".to_string(),
+                )),
+            }
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -360,6 +414,8 @@ pub enum ConfigError {
     Io(String),
     /// Parse error in config file.
     Parse(String),
+    /// Validation error in config values.
+    Validation(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -367,6 +423,7 @@ impl std::fmt::Display for ConfigError {
         match self {
             Self::Io(msg) => write!(f, "config I/O error: {}", msg),
             Self::Parse(msg) => write!(f, "config parse error: {}", msg),
+            Self::Validation(msg) => write!(f, "config validation error: {}", msg),
         }
     }
 }

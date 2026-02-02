@@ -3,6 +3,7 @@
 //! Supports multiple backends:
 //! - `claude`: Claude CLI
 //! - `codex`: Codex CLI
+//! - `openrouter_<model>`: Claude CLI via OpenRouter
 //! - `stub`: Deterministic stub for tests (no network)
 
 use std::path::Path;
@@ -88,6 +89,9 @@ pub fn create_engine(engine_type: EngineType, output_dir: &str, timeout_secs: u6
     match engine_type {
         EngineType::Claude => Arc::new(ClaudeEngine::with_timeout(timeout_secs)),
         EngineType::Codex => Arc::new(CodexEngine::with_timeout(timeout_secs)),
+        EngineType::OpenRouter { model } => {
+            Arc::new(ClaudeEngine::with_timeout(timeout_secs).with_openrouter_model(model))
+        }
         EngineType::Stub => Arc::new(StubEngine::new(output_dir)),
     }
 }
@@ -109,7 +113,7 @@ pub fn create_random_engine(
     timeout_secs: u64,
 ) -> (Arc<dyn Engine>, EngineType) {
     let selected_type = select_engine_type(engine_types, stub_mode);
-    let engine = create_engine(selected_type, output_dir, timeout_secs);
+    let engine = create_engine(selected_type.clone(), output_dir, timeout_secs);
     (engine, selected_type)
 }
 
@@ -148,10 +152,10 @@ pub fn select_engine_type(engine_types: &[EngineType], stub_mode: bool) -> Engin
     } else if engine_types.is_empty() {
         EngineType::Claude
     } else if engine_types.len() == 1 {
-        engine_types[0]
+        engine_types[0].clone()
     } else {
         use rand::seq::SliceRandom;
-        *engine_types.choose(&mut rand::thread_rng()).unwrap()
+        engine_types.choose(&mut rand::thread_rng()).cloned().unwrap()
     }
 }
 
@@ -193,6 +197,19 @@ mod tests {
     fn test_create_engine_codex() {
         let engine = create_engine(EngineType::Codex, "loop", 3600);
         assert_eq!(engine.engine_type(), EngineType::Codex);
+    }
+
+    #[test]
+    fn test_create_engine_openrouter() {
+        let engine = create_engine(
+            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            "loop",
+            3600,
+        );
+        assert_eq!(
+            engine.engine_type(),
+            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }
+        );
     }
 
     #[test]

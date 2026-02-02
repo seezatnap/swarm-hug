@@ -3,7 +3,38 @@ use super::types::detect_target_branch_in;
 use std::fs;
 use std::path::Path;
 use std::process::Command as ProcessCommand;
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 fn run_git(repo: &Path, args: &[&str]) {
     let output = ProcessCommand::new("git")
@@ -80,6 +111,18 @@ fn test_engine_type_parse() {
     assert_eq!(EngineType::parse("claude"), Some(EngineType::Claude));
     assert_eq!(EngineType::parse("CLAUDE"), Some(EngineType::Claude));
     assert_eq!(EngineType::parse("codex"), Some(EngineType::Codex));
+    assert_eq!(
+        EngineType::parse("openrouter_moonshotai/kimi-k2.5"),
+        Some(EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() })
+    );
+    assert_eq!(
+        EngineType::parse("OPENROUTER_MOONSHOTAI/KIMI-K2.5"),
+        Some(EngineType::OpenRouter { model: "MOONSHOTAI/KIMI-K2.5".to_string() })
+    );
+    assert_eq!(
+        EngineType::parse("openrouter"),
+        Some(EngineType::OpenRouter { model: String::new() })
+    );
     assert_eq!(EngineType::parse("stub"), Some(EngineType::Stub));
     assert_eq!(EngineType::parse("unknown"), None);
 }
@@ -89,6 +132,10 @@ fn test_engine_type_as_str() {
     assert_eq!(EngineType::Claude.as_str(), "claude");
     assert_eq!(EngineType::Codex.as_str(), "codex");
     assert_eq!(EngineType::Stub.as_str(), "stub");
+    assert_eq!(
+        EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }.as_str(),
+        "openrouter_moonshotai/kimi-k2.5"
+    );
 }
 
 #[test]
@@ -96,6 +143,10 @@ fn test_engine_type_parse_list_single() {
     assert_eq!(EngineType::parse_list("claude"), Some(vec![EngineType::Claude]));
     assert_eq!(EngineType::parse_list("codex"), Some(vec![EngineType::Codex]));
     assert_eq!(EngineType::parse_list("stub"), Some(vec![EngineType::Stub]));
+    assert_eq!(
+        EngineType::parse_list("openrouter_moonshotai/kimi-k2.5"),
+        Some(vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }])
+    );
 }
 
 #[test]
@@ -107,6 +158,13 @@ fn test_engine_type_parse_list_multiple() {
     assert_eq!(
         EngineType::parse_list("codex,claude,stub"),
         Some(vec![EngineType::Codex, EngineType::Claude, EngineType::Stub])
+    );
+    assert_eq!(
+        EngineType::parse_list("openrouter_moonshotai/kimi-k2.5,claude"),
+        Some(vec![
+            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            EngineType::Claude,
+        ])
     );
 }
 
@@ -137,6 +195,10 @@ fn test_engine_type_parse_list_case_insensitive() {
         EngineType::parse_list("CLAUDE,Codex"),
         Some(vec![EngineType::Claude, EngineType::Codex])
     );
+    assert_eq!(
+        EngineType::parse_list("OPENROUTER_MOONSHOTAI/KIMI-K2.5"),
+        Some(vec![EngineType::OpenRouter { model: "MOONSHOTAI/KIMI-K2.5".to_string() }])
+    );
 }
 
 #[test]
@@ -156,6 +218,13 @@ fn test_engine_type_list_to_string() {
     assert_eq!(
         EngineType::list_to_string(&[EngineType::Codex, EngineType::Codex, EngineType::Claude]),
         "codex,codex,claude"
+    );
+    assert_eq!(
+        EngineType::list_to_string(&[
+            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            EngineType::Claude,
+        ]),
+        "openrouter_moonshotai/kimi-k2.5,claude"
     );
 }
 
@@ -235,6 +304,12 @@ fn test_config_engines_display() {
         ..Default::default()
     };
     assert_eq!(config.engines_display(), "codex,codex,claude");
+
+    let config = Config {
+        engine_types: vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }],
+        ..Default::default()
+    };
+    assert_eq!(config.engines_display(), "openrouter_moonshotai/kimi-k2.5");
 
     // Stub mode overrides display
     let config = Config {
@@ -531,7 +606,7 @@ fn test_project_path_resolution() {
         project: Some("authentication".to_string()),
         ..Default::default()
     };
-    let config = Config::load(&cli);
+    let config = Config::load(&cli).expect("config load");
     assert_eq!(config.project, Some("authentication".to_string()));
     assert_eq!(config.files_tasks, ".swarm-hug/authentication/tasks.md");
     assert_eq!(config.files_chat, ".swarm-hug/authentication/chat.md");
@@ -557,10 +632,52 @@ fn test_config_load_with_cli_precedence() {
         ..Default::default()
     };
 
-    let config = Config::load(&cli);
+    let config = Config::load(&cli).expect("config load");
     assert_eq!(config.sprints_max, 10);
     assert!(config.engine_stub_mode);
     assert_eq!(config.effective_engine(), EngineType::Stub);
+}
+
+#[test]
+fn test_config_load_openrouter_requires_api_key() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
+    let cli = CliArgs {
+        engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
+        ..Default::default()
+    };
+
+    let err = Config::load(&cli).expect_err("expected OPENROUTER_API_KEY error");
+    assert!(err.to_string().contains("OPENROUTER_API_KEY"));
+}
+
+#[test]
+fn test_config_load_openrouter_requires_model() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
+    let cli = CliArgs {
+        engine: Some("openrouter".to_string()),
+        ..Default::default()
+    };
+
+    let err = Config::load(&cli).expect_err("expected model error");
+    assert!(err.to_string().contains("requires a model"));
+}
+
+#[test]
+fn test_config_load_openrouter_with_api_key() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
+    let cli = CliArgs {
+        engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
+        ..Default::default()
+    };
+
+    let config = Config::load(&cli).expect("config load");
+    assert_eq!(
+        config.engine_types,
+        vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }]
+    );
 }
 
 #[test]
@@ -570,7 +687,7 @@ fn test_config_load_cli_target_branch_overrides_auto_detection() {
         ..Default::default()
     };
 
-    let config = Config::load(&cli);
+    let config = Config::load(&cli).expect("config load");
     assert_eq!(config.target_branch.as_deref(), Some("override-branch"));
 }
 
@@ -643,7 +760,7 @@ fn test_config_with_agent_timeout_cli() {
         ..Default::default()
     };
 
-    let config = Config::load(&cli);
+    let config = Config::load(&cli).expect("config load");
     assert_eq!(config.agent_timeout_secs, 900);
 }
 

@@ -443,7 +443,7 @@ pub(crate) fn run_sprint(
                     &log_dir,
                     thread_agent_timeout,
                 );
-                let engine_type_str = selected_engine_type.as_str().to_string();
+                let engine_type_str = selected_engine_type.as_str();
                 // Check for shutdown before starting a new task
                 if shutdown::requested() {
                     if let Err(e) = logger.log("Shutdown requested, skipping remaining tasks") {

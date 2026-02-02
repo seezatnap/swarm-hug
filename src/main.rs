@@ -42,7 +42,13 @@ fn main() {
         process::exit(1);
     }
 
-    let config = Config::load(&cli);
+    let config = match Config::load(&cli) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            process::exit(1);
+        }
+    };
 
     // Default command is Run if none specified
     let command = cli.command.clone().unwrap_or(Command::Run);
