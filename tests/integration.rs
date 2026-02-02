@@ -132,6 +132,13 @@ fn write_team_tasks(team_root: &Path) -> PathBuf {
     tasks_path
 }
 
+fn write_team_tasks_with_assignments(team_root: &Path) -> PathBuf {
+    let content = "# Tasks\n\n- [A] Task one\n- [ ] Task two\n- [B] Task three\n";
+    let tasks_path = team_root.join("tasks.md");
+    fs::write(&tasks_path, content).expect("write TASKS.md");
+    tasks_path
+}
+
 fn write_team_tasks_multi_sprint(team_root: &Path) -> PathBuf {
     // 6 tasks: 2 per sprint for 3 sprints (with --tasks-per-agent 1 and 2 agents)
     let content = "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n- [ ] Task 4\n- [ ] Task 5\n- [ ] Task 6\n";
@@ -1605,6 +1612,69 @@ fn test_sprint_init_keeps_target_branch_clean() {
         task_list.completed_count() >= 2,
         "Tasks should be completed after sprint. Got {} completed.",
         task_list.completed_count()
+    );
+}
+
+/// Test that unassigning previously-assigned tasks does NOT dirty the target branch.
+///
+/// This covers the regression where `task_list.unassign_all()` wrote to the target
+/// branch working tree, causing the merge agent to fail with local changes.
+#[test]
+fn test_unassign_does_not_dirty_target_branch() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "omega";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Initialize team
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    // Write tasks with assigned statuses to trigger unassign_all
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks_with_assignments(&team_root);
+    commit_all(repo_path, "init with assigned tasks");
+
+    // Rename default branch to 'main' for consistent testing
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    // Run a single sprint
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    // Target branch should remain clean (no uncommitted changes)
+    let mut status_cmd = Command::new("git");
+    status_cmd
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path);
+    let status_output = run_success(&mut status_cmd);
+    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+    assert!(
+        status_stdout.trim().is_empty(),
+        "Target branch should be clean after unassigning tasks.\nGot git status:\n{}",
+        status_stdout
     );
 }
 

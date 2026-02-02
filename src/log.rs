@@ -24,6 +24,16 @@ pub struct AgentLogger {
     pub name: String,
 }
 
+/// A named logger for non-agent processes (e.g., merge agent).
+pub struct NamedLogger {
+    /// Path to the log file.
+    pub path: PathBuf,
+    /// Maximum lines before rotation.
+    pub max_lines: usize,
+    /// Logger name (for logging context).
+    pub name: String,
+}
+
 impl AgentLogger {
     /// Create a new agent logger.
     ///
@@ -140,6 +150,72 @@ impl AgentLogger {
         let all_lines = self.read_all()?;
         let start = all_lines.len().saturating_sub(n);
         Ok(all_lines[start..].to_vec())
+    }
+}
+
+impl NamedLogger {
+    /// Create a new named logger.
+    ///
+    /// # Arguments
+    /// * `log_dir` - Directory for log files
+    /// * `name` - Logger name (e.g., "MergeAgent")
+    /// * `filename` - Log file name (e.g., "merge-agent.log")
+    pub fn new(log_dir: &Path, name: &str, filename: &str) -> Self {
+        let path = log_dir.join(filename);
+        Self {
+            path,
+            max_lines: DEFAULT_MAX_LINES,
+            name: name.to_string(),
+        }
+    }
+
+    /// Create a logger with a custom max lines setting.
+    pub fn with_max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+
+    /// Write a log entry.
+    ///
+    /// Format: `YYYY-MM-DD HH:MM:SS | <Name> | <message>`
+    pub fn log(&self, message: &str) -> io::Result<()> {
+        self.ensure_dir()?;
+
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+        let line = format!("{} | {} | {}\n", timestamp, self.name, message);
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+
+        file.write_all(line.as_bytes())?;
+        file.flush()?;
+
+        self.rotate_if_needed()?;
+
+        Ok(())
+    }
+
+    fn ensure_dir(&self) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    fn rotate_if_needed(&self) -> io::Result<()> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+
+        let line_count = count_lines(&self.path)?;
+        if line_count <= self.max_lines {
+            return Ok(());
+        }
+
+        rotate_log(&self.path)?;
+        Ok(())
     }
 }
 

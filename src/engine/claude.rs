@@ -307,7 +307,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_claude_engine_openrouter_missing_api_key() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _shutdown_guard = crate::shutdown::test_lock();
+        crate::shutdown::reset();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
         let engine = ClaudeEngine::with_path("missing-claude")
             .with_openrouter_model("moonshotai/kimi-k2.5");
@@ -330,7 +332,9 @@ mod tests {
 
         use tempfile::TempDir;
 
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _shutdown_guard = crate::shutdown::test_lock();
+        crate::shutdown::reset();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _key_guard = EnvVarGuard::set("OPENROUTER_API_KEY", "test-openrouter-key");
 
         let before_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();

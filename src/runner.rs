@@ -12,7 +12,7 @@ use swarm::config::{Config, EngineType};
 use swarm::engine;
 use swarm::heartbeat;
 use swarm::lifecycle::LifecycleTracker;
-use swarm::log::{self, AgentLogger};
+use swarm::log::{self, AgentLogger, NamedLogger};
 use swarm::merge_agent;
 use swarm::planning;
 use swarm::agent::INITIALS;
@@ -75,13 +75,9 @@ pub(crate) fn run_sprint(
     let historical_sprint = sprint_history.peek_next_sprint();
     let formatted_team = sprint_history.formatted_team_name();
 
-    // Unassign any incomplete tasks from previous sprints so they can be reassigned fresh
-    let unassigned = task_list.unassign_all();
-    if unassigned > 0 {
-        // Write the updated task list to reflect unassignment
-        fs::write(&config.files_tasks, task_list.to_string())
-            .map_err(|e| format!("failed to write {}: {}", config.files_tasks, e))?;
-    }
+    // Unassign any incomplete tasks from previous sprints so they can be reassigned fresh.
+    // Keep this in-memory to avoid dirtying the target branch worktree.
+    task_list.unassign_all();
 
     // Determine how many agents to spawn
     let assignable = task_list.assignable_count();
@@ -911,36 +907,87 @@ pub(crate) fn run_sprint(
     } else if sprint_branch == target_branch {
         println!("  Skipping merge agent: feature branch matches target branch.");
     } else {
+        let merge_logger =
+            NamedLogger::new(Path::new(&config.files_log_dir), "MergeAgent", "merge-agent.log");
         println!("  Merge agent: starting ({} -> {})", sprint_branch, target_branch);
         let merge_msg = format!("Merge agent: starting ({} -> {})", sprint_branch, target_branch);
         if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &merge_msg) {
             eprintln!("  warning: failed to write merge start to chat: {}", e);
+        }
+        if let Err(e) = merge_logger.log(&format!(
+            "Starting merge: {} -> {}",
+            sprint_branch, target_branch
+        )) {
+            eprintln!("  warning: failed to write merge log: {}", e);
+        }
+        let merge_engine = engine.engine_type().as_str();
+        if let Err(e) = merge_logger.log(&format!("Engine: {}", merge_engine)) {
+            eprintln!("  warning: failed to write merge log: {}", e);
         }
         let merge_cleanup_paths = vec![
             worktree_tasks_path.clone(),
             worktree_history_path.clone(),
             PathBuf::from(&team_state_path),
         ];
-        merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths)
-            .map_err(|e| format!("merge agent failed: {}", e))?;
+        if let Err(e) = merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths) {
+            let _ = merge_logger.log(&format!("Prepare workspace failed: {}", e));
+            return Err(format!("merge agent failed: {}", e));
+        }
+        if let Err(e) = merge_logger.log("Workspace prepared") {
+            eprintln!("  warning: failed to write merge log: {}", e);
+        }
         let merge_result = merge_agent::run_merge_agent(
             engine.as_ref(),
             &sprint_branch,
             target_branch,
             &feature_worktree_path,
         )
-        .map_err(|e| format!("merge agent failed: {}", e))?;
+        .map_err(|e| {
+            let _ = merge_logger.log(&format!("Merge agent execution failed: {}", e));
+            format!("merge agent failed: {}", e)
+        })?;
+        if !merge_result.output.is_empty() {
+            let output_preview = if merge_result.output.len() > 1000 {
+                format!(
+                    "{}... [truncated, {} bytes total]",
+                    &merge_result.output[..1000],
+                    merge_result.output.len()
+                )
+            } else {
+                merge_result.output.clone()
+            };
+            if let Err(e) = merge_logger.log(&format!("Engine output:\n{}", output_preview)) {
+                eprintln!("  warning: failed to write merge log: {}", e);
+            }
+        }
+        if let Err(e) = merge_logger.log(&format!(
+            "Engine result: {} (exit_code={})",
+            if merge_result.success { "success" } else { "failure" },
+            merge_result.exit_code
+        )) {
+            eprintln!("  warning: failed to write merge log: {}", e);
+        }
+        if let Some(err) = merge_result.error.as_deref() {
+            if let Err(e) = merge_logger.log(&format!("Engine error: {}", err)) {
+                eprintln!("  warning: failed to write merge log: {}", e);
+            }
+        }
         if merge_result.success {
-            merge_agent::ensure_feature_merged(
+            if let Err(e) = merge_agent::ensure_feature_merged(
                 engine.as_ref(),
                 &sprint_branch,
                 target_branch,
                 &feature_worktree_path,
-            )
-            .map_err(|e| format!("merge agent failed: {}", e))?;
+            ) {
+                let _ = merge_logger.log(&format!("Merge verification failed: {}", e));
+                return Err(format!("merge agent failed: {}", e));
+            }
             println!("  Merge agent: completed");
             if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
                 eprintln!("  warning: failed to write merge complete to chat: {}", e);
+            }
+            if let Err(e) = merge_logger.log("Merge completed") {
+                eprintln!("  warning: failed to write merge log: {}", e);
             }
             let merged = worktree::branch_is_merged(&sprint_branch, target_branch)
                 .map_err(|e| format!("merge verification failed: {}", e))?;
@@ -955,6 +1002,7 @@ pub(crate) fn run_sprint(
                             merged_ok = true;
                         }
                         worktree::MergeResult::NoBranch => {
+                            let _ = merge_logger.log("Stub merge failed: feature branch not found");
                             return Err(format!(
                                 "merge agent failed: feature branch '{}' not found",
                                 sprint_branch
@@ -966,13 +1014,16 @@ pub(crate) fn run_sprint(
                             } else {
                                 format!("conflicts in {}", files.join(", "))
                             };
+                            let _ = merge_logger.log(&format!("Stub merge conflict: {}", detail));
                             return Err(format!("merge agent failed: {}", detail));
                         }
                         worktree::MergeResult::Error(e) => {
+                            let _ = merge_logger.log(&format!("Stub merge error: {}", e));
                             return Err(format!("merge agent failed: {}", e));
                         }
                     }
                 } else {
+                    let _ = merge_logger.log("Merge agent did not merge feature into target");
                     return Err(format!(
                         "merge agent did not merge '{}' into '{}'",
                         sprint_branch, target_branch
@@ -985,8 +1036,10 @@ pub(crate) fn run_sprint(
                     worktree::cleanup_feature_worktree(worktrees_dir, &sprint_branch, true)
                 {
                     eprintln!("  warning: feature worktree cleanup failed: {}", e);
+                    let _ = merge_logger.log(&format!("Feature cleanup failed: {}", e));
                 } else {
                     println!("  Feature cleanup: removed '{}'", sprint_branch);
+                    let _ = merge_logger.log(&format!("Feature cleanup: removed '{}'", sprint_branch));
                 }
             }
         } else {
@@ -997,6 +1050,7 @@ pub(crate) fn run_sprint(
             if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &format!("Merge agent: failed ({})", detail)) {
                 eprintln!("  warning: failed to write merge failure to chat: {}", e);
             }
+            let _ = merge_logger.log(&format!("Merge failed: {}", detail));
             return Err(format!("merge agent failed: {}", detail));
         }
     }
