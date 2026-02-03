@@ -58,6 +58,35 @@ pub fn run_merge_agent(
     ))
 }
 
+/// Run the merge agent inside an existing target worktree.
+///
+/// This avoids creating a new target worktree (useful when the target branch
+/// is already checked out elsewhere, e.g. sprint worktrees).
+pub fn run_merge_agent_in_worktree(
+    engine: &dyn Engine,
+    feature_branch: &str,
+    target_branch: &str,
+    target_worktree_path: &Path,
+) -> Result<EngineResult, String> {
+    if engine.engine_type() == EngineType::Stub {
+        let message = format!(
+            "Stub merge agent: {} -> {}",
+            feature_branch.trim(),
+            target_branch.trim()
+        );
+        return Ok(EngineResult::success(message));
+    }
+
+    let prompt = generate_merge_agent_prompt(feature_branch, target_branch, target_worktree_path)?;
+    Ok(engine.execute(
+        "MergeAgent",
+        &prompt,
+        target_worktree_path,
+        0,
+        None,
+    ))
+}
+
 /// Ensure the feature branch is merged into the target branch after merge agent runs.
 ///
 /// In stub mode, performs a deterministic git merge so tests can validate behavior.

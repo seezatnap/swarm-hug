@@ -826,6 +826,119 @@ pub(crate) fn run_sprint(
                         ));
                     }
 
+                    if matches!(merge_result, worktree::MergeResult::Conflict(_))
+                        && engine.engine_type() != EngineType::Stub
+                    {
+                        let conflict_detail = match &merge_result {
+                            worktree::MergeResult::Conflict(files) => {
+                                if files.is_empty() {
+                                    "conflicts detected".to_string()
+                                } else {
+                                    format!("conflicts in {}", files.join(", "))
+                                }
+                            }
+                            _ => "conflicts detected".to_string(),
+                        };
+                        let agent_branch = run_ctx.agent_branch(initial);
+                        if let Err(e) = logger.log("Merge conflict detected; invoking merge agent") {
+                            eprintln!("warning: failed to write log: {}", e);
+                        }
+                        let conflict_msg = format!(
+                            "Merge conflict for {} detected. Invoking merge agent.",
+                            agent_name
+                        );
+                        if let Err(e) = chat::write_message(&chat_path, "ScrumMaster", &conflict_msg)
+                        {
+                            eprintln!("warning: failed to write chat: {}", e);
+                        }
+
+                        let merge_attempt = {
+                            let _guard = worktree_lock.lock().unwrap();
+                            merge_agent::run_merge_agent_in_worktree(
+                                engine.as_ref(),
+                                &agent_branch,
+                                &sprint_branch,
+                                &feature_worktree_path,
+                            )
+                        };
+
+                        match merge_attempt {
+                            Ok(result) => {
+                                let output_preview = if result.output.len() > 500 {
+                                    format!(
+                                        "{}... [truncated, {} bytes total]",
+                                        &result.output[..500],
+                                        result.output.len()
+                                    )
+                                } else {
+                                    result.output.clone()
+                                };
+                                if !output_preview.is_empty() {
+                                    if let Err(e) =
+                                        logger.log(&format!("Merge agent output:\n{}", output_preview))
+                                    {
+                                        eprintln!("warning: failed to write log: {}", e);
+                                    }
+                                }
+                                if let Some(err) = result.error.as_deref() {
+                                    if let Err(e) = logger.log(&format!("Merge agent error: {}", err)) {
+                                        eprintln!("warning: failed to write log: {}", e);
+                                    }
+                                }
+
+                                if result.success {
+                                    match merge_agent::ensure_feature_merged(
+                                        engine.as_ref(),
+                                        &agent_branch,
+                                        &sprint_branch,
+                                        &feature_worktree_path,
+                                    ) {
+                                        Ok(()) => {
+                                            merge_result = worktree::MergeResult::Success;
+                                            if let Err(e) =
+                                                logger.log("Merge agent resolved conflicts")
+                                            {
+                                                eprintln!("warning: failed to write log: {}", e);
+                                            }
+                                            let resolved_msg = format!(
+                                                "Merge conflicts resolved for {}.",
+                                                agent_name
+                                            );
+                                            if let Err(e) = chat::write_message(
+                                                &chat_path,
+                                                "ScrumMaster",
+                                                &resolved_msg,
+                                            ) {
+                                                eprintln!("warning: failed to write chat: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            merge_result = worktree::MergeResult::Error(format!(
+                                                "merge agent failed after {}: {}",
+                                                conflict_detail, e
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    let err = result
+                                        .error
+                                        .unwrap_or_else(|| "merge agent failed".to_string());
+                                    merge_result = worktree::MergeResult::Error(format!(
+                                        "merge agent failed after {}: {}",
+                                        conflict_detail, err
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                merge_result =
+                                    worktree::MergeResult::Error(format!(
+                                        "merge agent failed after {}: {}",
+                                        conflict_detail, e
+                                    ));
+                            }
+                        }
+                    }
+
                     let mut merge_error_detail = None;
                     let mut should_cleanup = false;
 
