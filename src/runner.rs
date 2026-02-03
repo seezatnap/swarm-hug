@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use swarm::agent;
 use swarm::chat;
@@ -39,6 +39,7 @@ struct MergeFailureInfo {
     worktree_path: String,
     log_path: String,
     detail: String,
+    skip_cleanup: bool,
 }
 
 fn split_cleanup_initials(
@@ -49,7 +50,9 @@ fn split_cleanup_initials(
     let mut skipped = Vec::new();
 
     for initial in initials {
-        let failed = merge_failures.iter().any(|failure| failure.initial == *initial);
+        let failed = merge_failures
+            .iter()
+            .any(|failure| failure.initial == *initial && failure.skip_cleanup);
         if failed {
             skipped.push(*initial);
         } else {
@@ -58,6 +61,117 @@ fn split_cleanup_initials(
     }
 
     (cleanup, skipped)
+}
+
+struct PreserveOutcome {
+    path: PathBuf,
+    allow_recreate: bool,
+    error: Option<String>,
+}
+
+fn preserve_failed_worktree(
+    repo_root: &Path,
+    worktrees_dir: &Path,
+    worktree_path: &Path,
+    branch: &str,
+    task_index: usize,
+) -> PreserveOutcome {
+    let mut outcome = PreserveOutcome {
+        path: worktree_path.to_path_buf(),
+        allow_recreate: false,
+        error: None,
+    };
+
+    if !worktree_path.exists() {
+        outcome.error = Some(format!(
+            "worktree path does not exist: {}",
+            worktree_path.display()
+        ));
+        return outcome;
+    }
+
+    let worktrees_dir = if worktrees_dir.is_absolute() {
+        worktrees_dir.to_path_buf()
+    } else {
+        repo_root.join(worktrees_dir)
+    };
+    let preserved_root = worktrees_dir.join("preserved");
+    if let Err(e) = fs::create_dir_all(&preserved_root) {
+        outcome.error = Some(format!(
+            "failed to create preserved worktrees dir {}: {}",
+            preserved_root.display(),
+            e
+        ));
+        return outcome;
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut preserved_path = preserved_root.join(format!(
+        "{}-preserved-{}-{}",
+        branch,
+        task_index + 1,
+        ts
+    ));
+    if preserved_path.exists() {
+        preserved_path = preserved_root.join(format!(
+            "{}-preserved-{}-{}-{}",
+            branch,
+            task_index + 1,
+            ts,
+            process::id()
+        ));
+    }
+
+    let worktree_path_str = worktree_path.to_string_lossy().to_string();
+    let preserved_path_str = preserved_path.to_string_lossy().to_string();
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "move", &worktree_path_str, &preserved_path_str])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            outcome.path = preserved_path;
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            outcome.error = Some(format!("git worktree move failed: {}", stderr.trim()));
+            return outcome;
+        }
+        Err(e) => {
+            outcome.error = Some(format!("failed to run git worktree move: {}", e));
+            return outcome;
+        }
+    }
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(&outcome.path)
+        .args(["checkout", "--detach"])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            outcome.allow_recreate = true;
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            outcome.error = Some(format!(
+                "git checkout --detach failed in preserved worktree: {}",
+                stderr.trim()
+            ));
+        }
+        Err(e) => {
+            outcome.error = Some(format!("failed to detach preserved worktree: {}", e));
+        }
+    }
+
+    outcome
 }
 
 fn create_branch_at_commit(repo_root: &Path, branch: &str, commit: &str) -> Result<(), String> {
@@ -465,6 +579,7 @@ pub(crate) fn run_sprint(
         let worktree_lock = Arc::clone(&worktree_lock);
         let merge_failures = Arc::clone(&merge_failures);
         let run_ctx = run_ctx.clone();
+        let repo_root = repo_root.clone();
         // Clone engine config for this thread
         let thread_engine_types = engine_types.clone();
         let thread_engine_stub_mode = engine_stub_mode;
@@ -767,6 +882,12 @@ pub(crate) fn run_sprint(
                         .as_ref()
                         .map(|detail| format!("Merge failed: {}", detail));
 
+                    let mut preserve_outcome = PreserveOutcome {
+                        path: working_dir.clone(),
+                        allow_recreate: true,
+                        error: None,
+                    };
+
                     if let Some(detail) = merge_error_detail.as_ref() {
                         if let Err(e) = logger.log(&format!("Merge failed: {}", detail)) {
                             eprintln!("warning: failed to write log: {}", e);
@@ -775,14 +896,48 @@ pub(crate) fn run_sprint(
                             eprintln!("warning: failed to write chat: {}", e);
                         }
                         let branch = run_ctx.agent_branch(initial);
-                        let worktree_path = working_dir.display().to_string();
                         let log_path = log::log_file_path(Path::new(&log_dir), initial)
                             .display()
                             .to_string();
-                        let preserve_msg = format!(
-                            "Preserving {} worktree at {} (branch {}, log {}).",
-                            agent_name, worktree_path, branch, log_path
-                        );
+
+                        preserve_outcome = {
+                            let _guard = worktree_lock.lock().unwrap();
+                            preserve_failed_worktree(
+                                &repo_root,
+                                &worktrees_dir,
+                                &working_dir,
+                                &branch,
+                                task_index,
+                            )
+                        };
+
+                        if let Some(err) = preserve_outcome.error.as_ref() {
+                            if let Err(e) = logger.log(&format!(
+                                "Preserve failed: {}",
+                                err
+                            )) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                        }
+
+                        let preserve_msg = if let Some(err) = preserve_outcome.error.as_ref() {
+                            format!(
+                                "Preserving {} worktree at {} (branch {}, log {}). Unable to prepare a fresh worktree from sprint head: {}. Remaining tasks will be skipped.",
+                                agent_name,
+                                preserve_outcome.path.display(),
+                                branch,
+                                log_path,
+                                err
+                            )
+                        } else {
+                            format!(
+                                "Preserving {} worktree at {} (branch {}, log {}). Continuing with a fresh worktree from sprint head for remaining tasks.",
+                                agent_name,
+                                preserve_outcome.path.display(),
+                                branch,
+                                log_path
+                            )
+                        };
                         if let Err(e) = logger.log(&preserve_msg) {
                             eprintln!("warning: failed to write log: {}", e);
                         }
@@ -795,9 +950,10 @@ pub(crate) fn run_sprint(
                                 initial,
                                 agent_name: agent_name.to_string(),
                                 branch,
-                                worktree_path,
+                                worktree_path: preserve_outcome.path.display().to_string(),
                                 log_path,
                                 detail: detail.clone(),
+                                skip_cleanup: preserve_outcome.error.is_some(),
                             });
                         }
                     }
@@ -805,7 +961,7 @@ pub(crate) fn run_sprint(
                     if let Some(msg) = merge_error {
                         success = false;
                         error = Some(msg);
-                        allow_recreate = false;
+                        allow_recreate = preserve_outcome.allow_recreate;
                     }
                 }
 
@@ -974,11 +1130,13 @@ pub(crate) fn run_sprint(
     let (cleanup_initials, skipped_initials) =
         split_cleanup_initials(&assigned_initials, &merge_failures_snapshot);
 
-    if !skipped_initials.is_empty() {
-        println!(
-            "  Post-sprint cleanup: skipping {} agent worktree(s) due to merge failures",
-            skipped_initials.len()
-        );
+    if !merge_failures_snapshot.is_empty() {
+        if !skipped_initials.is_empty() {
+            println!(
+                "  Post-sprint cleanup: skipping {} agent worktree(s) due to merge failures",
+                skipped_initials.len()
+            );
+        }
         for failure in &merge_failures_snapshot {
             println!(
                 "  Merge failure preserved: {} ({}) branch {} at {}",
@@ -1480,8 +1638,8 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, split_cleanup_initials, sync_target_branch_state,
-        write_merge_failure_chat, MergeFailureInfo, SprintResult,
+        chat, create_branch_at_commit, preserve_failed_worktree, split_cleanup_initials,
+        sync_target_branch_state, write_merge_failure_chat, MergeFailureInfo, SprintResult,
     };
     use std::fs;
     use std::path::Path;
@@ -1584,10 +1742,99 @@ mod tests {
             worktree_path: "/tmp/wt-a".to_string(),
             log_path: "/tmp/agent-A.log".to_string(),
             detail: "conflict".to_string(),
+            skip_cleanup: true,
         }];
         let (cleanup, skipped) = split_cleanup_initials(&['A', 'B', 'C'], &failures);
         assert_eq!(cleanup, vec!['B', 'C']);
         assert_eq!(skipped, vec!['A']);
+    }
+
+    #[test]
+    fn test_split_cleanup_initials_allows_cleanup_when_skip_false() {
+        let failures = vec![MergeFailureInfo {
+            initial: 'A',
+            agent_name: "Aaron".to_string(),
+            branch: "branch-a".to_string(),
+            worktree_path: "/tmp/wt-a".to_string(),
+            log_path: "/tmp/agent-A.log".to_string(),
+            detail: "conflict".to_string(),
+            skip_cleanup: false,
+        }];
+        let (cleanup, skipped) = split_cleanup_initials(&['A', 'B'], &failures);
+        assert_eq!(cleanup, vec!['A', 'B']);
+        assert_eq!(skipped, Vec::<char>::new());
+    }
+
+    #[test]
+    fn test_preserve_failed_worktree_moves_and_detaches() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let worktrees_dir = repo_root.join("worktrees");
+        fs::create_dir_all(&worktrees_dir).expect("create worktrees dir");
+
+        let worktree_path = worktrees_dir.join("agent-A");
+        let worktree_path_str = worktree_path.to_string_lossy().to_string();
+        let args = [
+            "worktree",
+            "add",
+            "-B",
+            "agent-branch",
+            worktree_path_str.as_str(),
+            "main",
+        ];
+        run_git_in(&repo_root, &args);
+
+        assert!(worktree_path.exists(), "worktree should exist before preserve");
+
+        let outcome = preserve_failed_worktree(
+            &repo_root,
+            Path::new("worktrees"),
+            &worktree_path,
+            "agent-branch",
+            0,
+        );
+
+        assert!(outcome.error.is_none(), "preserve should not error");
+        assert!(outcome.allow_recreate, "preserve should allow recreate");
+        assert!(!worktree_path.exists(), "original worktree path should be moved");
+        assert!(outcome.path.exists(), "preserved worktree should exist");
+        assert!(
+            outcome
+                .path
+                .starts_with(repo_root.join("worktrees").join("preserved")),
+            "preserved worktree should live under worktrees/preserved"
+        );
+
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(&outcome.path)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .expect("rev-parse head");
+        assert!(head.status.success(), "rev-parse should succeed");
+        let head_ref = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        assert_eq!(head_ref, "HEAD", "preserved worktree should be detached");
+    }
+
+    #[test]
+    fn test_preserve_failed_worktree_missing_path() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let worktree_path = repo_root.join("worktrees").join("missing");
+        let outcome = preserve_failed_worktree(
+            &repo_root,
+            Path::new("worktrees"),
+            &worktree_path,
+            "agent-branch",
+            0,
+        );
+
+        assert!(outcome.error.is_some(), "preserve should error on missing path");
+        assert!(!outcome.allow_recreate, "missing path should not allow recreate");
     }
 
     #[test]
