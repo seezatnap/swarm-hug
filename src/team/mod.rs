@@ -69,23 +69,22 @@ pub fn init_root() -> Result<(), String> {
         let _ = fs::remove_file(&assignments_path);
     }
 
-    // Create .gitignore if it doesn't exist
+    // Always write .gitignore (managed by swarm-hug)
     let gitignore_path = root.join(".gitignore");
-    if !gitignore_path.exists() {
-        let gitignore_content = "# Swarm-hug ignored files\n\
-            # These are transient/local files that shouldn't be committed\n\
-            \n\
-            # Agent worktrees (recreated each sprint)\n\
-            */worktrees/\n\
-            \n\
-            # Agent logs (local debugging)\n\
-            */loop/\n\
-            \n\
-            # Chat logs (local coordination)\n\
-            */chat.md\n";
-        fs::write(&gitignore_path, gitignore_content)
-            .map_err(|e| format!("failed to create .gitignore: {}", e))?;
-    }
+    let gitignore_content = "# Swarm-hug ignored files\n\
+        # This file is managed by swarm-hug. Do not edit.\n\
+        # These are transient/local files that shouldn't be committed\n\
+        \n\
+        # Agent worktrees (recreated each sprint)\n\
+        */worktrees/\n\
+        \n\
+        # Agent logs (local debugging)\n\
+        */loop/\n\
+        \n\
+        # Chat logs (local coordination)\n\
+        */chat.md\n";
+    fs::write(&gitignore_path, gitignore_content)
+        .map_err(|e| format!("failed to create .gitignore: {}", e))?;
 
     Ok(())
 }
@@ -127,11 +126,12 @@ mod tests {
             assert!(content.contains("*/worktrees/"), ".gitignore should ignore worktrees");
             assert!(content.contains("*/loop/"), ".gitignore should ignore loop logs");
             assert!(content.contains("*/chat.md"), ".gitignore should ignore chat.md");
+            assert!(content.contains("Do not edit"), ".gitignore should warn against edits");
         });
     }
 
     #[test]
-    fn test_init_root_preserves_existing_gitignore() {
+    fn test_init_root_overwrites_existing_gitignore() {
         with_temp_cwd(|| {
             // Create .swarm-hug directory and custom .gitignore
             fs::create_dir_all(SWARM_HUG_DIR).unwrap();
@@ -139,11 +139,12 @@ mod tests {
             let custom_content = "# Custom gitignore\n*.custom\n";
             fs::write(&gitignore_path, custom_content).unwrap();
 
-            // init_root should not overwrite existing .gitignore
+            // init_root should overwrite existing .gitignore
             init_root().unwrap();
 
             let content = fs::read_to_string(&gitignore_path).unwrap();
-            assert_eq!(content, custom_content, "existing .gitignore should be preserved");
+            assert_ne!(content, custom_content, "existing .gitignore should be overwritten");
+            assert!(content.contains("*/worktrees/"), ".gitignore should contain swarm-hug defaults");
         });
     }
 

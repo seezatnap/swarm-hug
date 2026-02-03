@@ -16,6 +16,18 @@ You are the merge agent. Your job is to merge a feature/sprint branch into the t
 
 ## Merge Steps
 
+0) Preflight: ensure a clean index in the target worktree.
+```bash
+TARGET_WORKTREE="{{target_worktree_path}}"
+cd "$TARGET_WORKTREE"
+git status --porcelain
+```
+If you see unmerged paths or `git status` indicates a merge in progress:
+- Check for an in-progress merge: `test -f .git/MERGE_HEAD`
+- If present, abort it: `git merge --abort`
+- Re-run `git status --porcelain` to confirm clean state
+If the index is still not clean after aborting, stop and report the blocker (do not use destructive commands).
+
 1) Move into the target branch worktree:
 ```bash
 TARGET_WORKTREE="{{target_worktree_path}}"
@@ -28,6 +40,7 @@ git checkout {{target_branch}}
 git pull --ff-only || true
 ```
 If pulling is not appropriate, skip it and note why.
+If checkout fails with "resolve your current index first", return to step 0 and ensure the index is clean before retrying once. If it still fails, stop and report the blocker.
 
 3) Merge the feature branch (as Swarm ScrumMaster):
 ```bash

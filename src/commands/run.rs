@@ -10,6 +10,7 @@ use swarm::chat;
 use swarm::color::{self, emoji};
 use swarm::config::Config;
 use swarm::shutdown;
+use swarm::team;
 
 use crate::tail::tail_follow;
 use crate::runner::run_sprint;
@@ -19,6 +20,7 @@ use crate::runner::run_sprint;
 const MAX_CONSECUTIVE_FAILURES: usize = 3;
 
 pub fn cmd_run(config: &Config) -> Result<(), String> {
+    team::init_root()?;
     println!("{} {} (max_sprints={}, engine={})...",
              emoji::ROCKET,
              color::label("Running swarm"),
@@ -135,6 +137,8 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
 /// Runs the sprint as a subprocess to avoid stdout corruption of the TUI.
 pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
     use swarm::tui::run_tui_with_subprocess;
+
+    team::init_root()?;
 
     // Clear chat.md before the TUI starts so we preserve the full session history in one run.
     if should_reset_chat() {

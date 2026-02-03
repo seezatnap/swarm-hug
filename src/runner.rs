@@ -31,6 +31,62 @@ use crate::project::project_name_for_config;
 
 type TaskResult = (char, String, bool, Option<String>, Option<Duration>);
 
+#[derive(Debug, Clone)]
+struct MergeFailureInfo {
+    initial: char,
+    agent_name: String,
+    branch: String,
+    worktree_path: String,
+    log_path: String,
+    detail: String,
+}
+
+fn split_cleanup_initials(
+    initials: &[char],
+    merge_failures: &[MergeFailureInfo],
+) -> (Vec<char>, Vec<char>) {
+    let mut cleanup = Vec::new();
+    let mut skipped = Vec::new();
+
+    for initial in initials {
+        let failed = merge_failures.iter().any(|failure| failure.initial == *initial);
+        if failed {
+            skipped.push(*initial);
+        } else {
+            cleanup.push(*initial);
+        }
+    }
+
+    (cleanup, skipped)
+}
+
+fn create_branch_at_commit(repo_root: &Path, branch: &str, commit: &str) -> Result<(), String> {
+    if branch.trim().is_empty() {
+        return Err("branch name is empty".to_string());
+    }
+    if commit.trim().is_empty() {
+        return Err("commit hash is empty".to_string());
+    }
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["branch", branch, commit])
+        .output()
+        .map_err(|e| format!("failed to run git branch: {}", e))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("already exists") {
+        Ok(())
+    } else {
+        Err(format!("git branch failed: {}", stderr.trim()))
+    }
+}
+
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
 pub(crate) struct SprintResult {
@@ -362,6 +418,7 @@ pub(crate) fn run_sprint(
     }
 
     let worktree_lock = Arc::new(Mutex::new(()));
+    let merge_failures: Arc<Mutex<Vec<MergeFailureInfo>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Prepare engine configuration for per-agent random selection
     let engine_types = config.engine_types.clone();
@@ -406,6 +463,7 @@ pub(crate) fn run_sprint(
         let feature_worktree_path = feature_worktree_path.clone();
         let sprint_branch = sprint_branch.clone();
         let worktree_lock = Arc::clone(&worktree_lock);
+        let merge_failures = Arc::clone(&merge_failures);
         let run_ctx = run_ctx.clone();
         // Clone engine config for this thread
         let thread_engine_types = engine_types.clone();
@@ -583,7 +641,7 @@ pub(crate) fn run_sprint(
                     if let Err(e) = logger.log("Merging agent branch into sprint branch...") {
                         eprintln!("warning: failed to write log: {}", e);
                     }
-                    let merge_result = {
+                    let mut merge_result = {
                         let _guard = worktree_lock.lock().unwrap();
                         worktree::merge_agent_branch_in_with_ctx(
                             &feature_worktree_path,
@@ -592,6 +650,66 @@ pub(crate) fn run_sprint(
                             Some(&sprint_branch),
                         )
                     };
+                    let mut recreate_context: Option<(String, String)> = None;
+                    if matches!(merge_result, worktree::MergeResult::NoBranch) {
+                        let expected_branch = run_ctx.agent_branch(initial);
+                        let head_commit = get_current_commit_in(&working_dir);
+                        let head_short =
+                            get_short_commit_for_ref_in(&working_dir, "HEAD")
+                                .unwrap_or_else(|| "unknown".to_string());
+                        recreate_context = Some((expected_branch.clone(), head_short.clone()));
+                        if let Some(commit) = head_commit {
+                            if let Err(e) = logger.log(&format!(
+                                "Missing branch {}. Recreating from HEAD {}...",
+                                expected_branch, head_short
+                            )) {
+                                eprintln!("warning: failed to write log: {}", e);
+                            }
+                            let recreate_result = {
+                                let _guard = worktree_lock.lock().unwrap();
+                                create_branch_at_commit(
+                                    &feature_worktree_path,
+                                    &expected_branch,
+                                    &commit,
+                                )
+                            };
+                            match recreate_result {
+                                Ok(()) => {
+                                    let retry_result = {
+                                        let _guard = worktree_lock.lock().unwrap();
+                                        worktree::merge_agent_branch_in_with_ctx(
+                                            &feature_worktree_path,
+                                            &run_ctx,
+                                            initial,
+                                            Some(&sprint_branch),
+                                        )
+                                    };
+                                    merge_result = retry_result;
+                                }
+                                Err(err) => {
+                                    let detail = format!(
+                                        "agent branch '{}' not found (HEAD {}) and recreate failed: {}",
+                                        expected_branch, head_short, err
+                                    );
+                                    merge_result = worktree::MergeResult::Error(detail);
+                                }
+                            }
+                        } else {
+                            let detail = format!(
+                                "agent branch '{}' not found and HEAD commit unavailable",
+                                expected_branch
+                            );
+                            merge_result = worktree::MergeResult::Error(detail);
+                        }
+                    }
+                    if let (Some((branch, head_short)), worktree::MergeResult::NoBranch) =
+                        (&recreate_context, &merge_result)
+                    {
+                        merge_result = worktree::MergeResult::Error(format!(
+                            "agent branch '{}' still missing after recreate (HEAD {})",
+                            branch, head_short
+                        ));
+                    }
 
                     let mut merge_error_detail = None;
                     let mut should_cleanup = false;
@@ -610,7 +728,9 @@ pub(crate) fn run_sprint(
                             should_cleanup = true;
                         }
                         worktree::MergeResult::NoBranch => {
-                            merge_error_detail = Some("agent branch not found".to_string());
+                            let expected_branch = run_ctx.agent_branch(initial);
+                            merge_error_detail =
+                                Some(format!("agent branch not found: {}", expected_branch));
                         }
                         worktree::MergeResult::Conflict(files) => {
                             let detail = if files.is_empty() {
@@ -653,6 +773,32 @@ pub(crate) fn run_sprint(
                         }
                         if let Err(e) = write_merge_failure_chat(&chat_path, agent_name, detail) {
                             eprintln!("warning: failed to write chat: {}", e);
+                        }
+                        let branch = run_ctx.agent_branch(initial);
+                        let worktree_path = working_dir.display().to_string();
+                        let log_path = log::log_file_path(Path::new(&log_dir), initial)
+                            .display()
+                            .to_string();
+                        let preserve_msg = format!(
+                            "Preserving {} worktree at {} (branch {}, log {}).",
+                            agent_name, worktree_path, branch, log_path
+                        );
+                        if let Err(e) = logger.log(&preserve_msg) {
+                            eprintln!("warning: failed to write log: {}", e);
+                        }
+                        if let Err(e) = chat::write_message(&chat_path, "ScrumMaster", &preserve_msg)
+                        {
+                            eprintln!("warning: failed to write chat: {}", e);
+                        }
+                        if let Ok(mut failures) = merge_failures.lock() {
+                            failures.push(MergeFailureInfo {
+                                initial,
+                                agent_name: agent_name.to_string(),
+                                branch,
+                                worktree_path,
+                                log_path,
+                                detail: detail.clone(),
+                            });
                         }
                     }
 
@@ -821,11 +967,35 @@ pub(crate) fn run_sprint(
     fs::write(&worktree_tasks_path, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
+    let merge_failures_snapshot = merge_failures
+        .lock()
+        .map(|failures| failures.clone())
+        .unwrap_or_default();
+    let (cleanup_initials, skipped_initials) =
+        split_cleanup_initials(&assigned_initials, &merge_failures_snapshot);
+
+    if !skipped_initials.is_empty() {
+        println!(
+            "  Post-sprint cleanup: skipping {} agent worktree(s) due to merge failures",
+            skipped_initials.len()
+        );
+        for failure in &merge_failures_snapshot {
+            println!(
+                "  Merge failure preserved: {} ({}) branch {} at {}",
+                failure.agent_name, failure.initial, failure.branch, failure.worktree_path
+            );
+            println!(
+                "  Merge failure detail: {} (log: {})",
+                failure.detail, failure.log_path
+            );
+        }
+    }
+
     // Clean up worktrees after sprint completes
     // This ensures worktrees are recreated fresh from the feature branch on the next sprint
     let cleanup_summary = worktree::cleanup_agent_worktrees(
         worktrees_dir,
-        &assigned_initials,
+        &cleanup_initials,
         true, // Also delete branches
         &run_ctx,
     );
@@ -1309,7 +1479,10 @@ fn commit_agent_work(
 
 #[cfg(test)]
 mod tests {
-    use super::{chat, sync_target_branch_state, write_merge_failure_chat, SprintResult};
+    use super::{
+        chat, create_branch_at_commit, split_cleanup_initials, sync_target_branch_state,
+        write_merge_failure_chat, MergeFailureInfo, SprintResult,
+    };
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -1400,6 +1573,48 @@ mod tests {
         let (_, agent, message) = chat::parse_line(line).expect("parse chat line");
         assert_eq!(agent, "ScrumMaster");
         assert_eq!(message, "Merge failed for Aaron: conflicts in file.txt");
+    }
+
+    #[test]
+    fn test_split_cleanup_initials_skips_merge_failures() {
+        let failures = vec![MergeFailureInfo {
+            initial: 'A',
+            agent_name: "Aaron".to_string(),
+            branch: "branch-a".to_string(),
+            worktree_path: "/tmp/wt-a".to_string(),
+            log_path: "/tmp/agent-A.log".to_string(),
+            detail: "conflict".to_string(),
+        }];
+        let (cleanup, skipped) = split_cleanup_initials(&['A', 'B', 'C'], &failures);
+        assert_eq!(cleanup, vec!['B', 'C']);
+        assert_eq!(skipped, vec!['A']);
+    }
+
+    #[test]
+    fn test_create_branch_at_commit_creates_branch() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("rev-parse head");
+        assert!(output.status.success());
+        let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        create_branch_at_commit(&repo_root, "agent-branch", &head)
+            .expect("create branch");
+
+        let verify = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["show-ref", "--verify", "--quiet", "refs/heads/agent-branch"])
+            .output()
+            .expect("verify branch");
+        assert!(verify.status.success());
     }
 
     #[test]
