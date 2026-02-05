@@ -229,6 +229,10 @@ pub(crate) fn run_sprint(
 ) -> Result<SprintResult, String> {
     // Load sprint history and determine sprint number (peek, don't write yet)
     let team_name = project_name_for_config(config);
+    let source_branch = config
+        .source_branch
+        .as_deref()
+        .ok_or_else(|| "source branch not configured".to_string())?;
     let target_branch = config
         .target_branch
         .as_deref()
@@ -331,7 +335,7 @@ pub(crate) fn run_sprint(
     let sprint_branch = run_ctx.sprint_branch();
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
 
-    let base_commit = get_short_commit_for_ref_in(&repo_root, target_branch)
+    let base_commit = get_short_commit_for_ref_in(&repo_root, source_branch)
         .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
         .unwrap_or_else(|| "unknown".to_string());
     if let Err(e) = chat::write_message(
@@ -357,7 +361,7 @@ pub(crate) fn run_sprint(
         worktree::create_feature_worktree_in(
             worktrees_dir,
             &sprint_branch,
-            target_branch,
+            source_branch,
         )
         .map_err(|e| format!("failed to create feature worktree: {}", e))?;
 

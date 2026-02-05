@@ -146,15 +146,27 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
             .map_err(|e| format!("failed to write boot message: {}", e))?;
     }
 
-    // Build command-line args to re-run swarm with --no-tui (plain text mode)
-    // Note: SWARM_NO_TAIL env var is set by run_tui_with_subprocess to disable tailing
+    let args = build_tui_subprocess_args(config);
+
+    run_tui_with_subprocess(&config.files_chat, args, true)
+        .map_err(|e| format!("TUI error: {}", e))
+}
+
+/// Build command-line args to re-run swarm as a --no-tui subprocess.
+///
+/// SWARM_NO_TAIL env var is set by run_tui_with_subprocess to disable tailing.
+fn build_tui_subprocess_args(config: &Config) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     args.push("run".to_string());
-    args.push("--no-tui".to_string());  // Subprocess uses plain text mode
+    args.push("--no-tui".to_string());
 
     if let Some(ref project) = config.project {
         args.push("--project".to_string());
         args.push(project.clone());
+    }
+    if let Some(ref source_branch) = config.source_branch {
+        args.push("--source-branch".to_string());
+        args.push(source_branch.clone());
     }
     if let Some(ref target_branch) = config.target_branch {
         args.push("--target-branch".to_string());
@@ -176,8 +188,7 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
         args.push("--stub".to_string());
     }
 
-    run_tui_with_subprocess(&config.files_chat, args, true)
-        .map_err(|e| format!("TUI error: {}", e))
+    args
 }
 
 fn should_reset_chat() -> bool {
@@ -190,7 +201,8 @@ fn should_skip_tail() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_reset_chat;
+    use super::{build_tui_subprocess_args, should_reset_chat};
+    use swarm::config::Config;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -208,5 +220,105 @@ mod tests {
         std::env::set_var("SWARM_SKIP_CHAT_RESET", "1");
         assert!(!should_reset_chat());
         std::env::remove_var("SWARM_SKIP_CHAT_RESET");
+    }
+
+    /// Helper: find the value following a flag in the args list.
+    fn flag_value(args: &[String], flag: &str) -> Option<String> {
+        args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
+    }
+
+    /// Helper: check whether a flag is present at all.
+    fn has_flag(args: &[String], flag: &str) -> bool {
+        args.iter().any(|a| a == flag)
+    }
+
+    #[test]
+    fn tui_args_pass_source_branch_when_set() {
+        let mut config = Config::default();
+        config.source_branch = Some("feature-x".to_string());
+        config.target_branch = Some("main".to_string());
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(flag_value(&args, "--source-branch"), Some("feature-x".to_string()));
+        assert_eq!(flag_value(&args, "--target-branch"), Some("main".to_string()));
+    }
+
+    #[test]
+    fn tui_args_omit_source_branch_when_none() {
+        let mut config = Config::default();
+        config.source_branch = None;
+        config.target_branch = None;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert!(!has_flag(&args, "--source-branch"));
+        assert!(!has_flag(&args, "--target-branch"));
+    }
+
+    #[test]
+    fn tui_args_source_only_sets_source_without_target() {
+        let mut config = Config::default();
+        config.source_branch = Some("develop".to_string());
+        config.target_branch = None;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(flag_value(&args, "--source-branch"), Some("develop".to_string()));
+        assert!(!has_flag(&args, "--target-branch"));
+    }
+
+    #[test]
+    fn tui_args_both_branches_passed_through() {
+        let mut config = Config::default();
+        config.source_branch = Some("main".to_string());
+        config.target_branch = Some("feature-1".to_string());
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(flag_value(&args, "--source-branch"), Some("main".to_string()));
+        assert_eq!(flag_value(&args, "--target-branch"), Some("feature-1".to_string()));
+    }
+
+    #[test]
+    fn tui_args_source_before_target() {
+        let mut config = Config::default();
+        config.source_branch = Some("main".to_string());
+        config.target_branch = Some("feature-1".to_string());
+
+        let args = build_tui_subprocess_args(&config);
+
+        let source_pos = args.iter().position(|a| a == "--source-branch").unwrap();
+        let target_pos = args.iter().position(|a| a == "--target-branch").unwrap();
+        assert!(source_pos < target_pos, "--source-branch should appear before --target-branch");
+    }
+
+    #[test]
+    fn tui_args_always_include_no_tui() {
+        let config = Config::default();
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(args[0], "run");
+        assert_eq!(args[1], "--no-tui");
+    }
+
+    #[test]
+    fn tui_args_include_all_standard_flags() {
+        let mut config = Config::default();
+        config.project = Some("my-proj".to_string());
+        config.sprints_max = 5;
+        config.agents_max_count = 4;
+        config.agents_tasks_per_agent = 3;
+        config.agent_timeout_secs = 1800;
+        config.engine_stub_mode = true;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(flag_value(&args, "--project"), Some("my-proj".to_string()));
+        assert_eq!(flag_value(&args, "--max-sprints"), Some("5".to_string()));
+        assert_eq!(flag_value(&args, "--max-agents"), Some("4".to_string()));
+        assert_eq!(flag_value(&args, "--tasks-per-agent"), Some("3".to_string()));
+        assert_eq!(flag_value(&args, "--agent-timeout"), Some("1800".to_string()));
+        assert!(has_flag(&args, "--stub"));
     }
 }

@@ -7,12 +7,12 @@
 
 ## Runner & Worktree
 
-- [ ] (#3) Refactor branch creation paths in `src/runner.rs` and `src/worktree/` so feature/sprint branches are created from `source_branch` (not `target_branch`), including `create_feature_worktree_in()` / `create_feature_branch_in()` call chains [5 pts] (blocked by #2)
+- [x] (#3) Refactor branch creation paths in `src/runner.rs` and `src/worktree/` so feature/sprint branches are created from `source_branch` (not `target_branch`), including `create_feature_worktree_in()` / `create_feature_branch_in()` call chains [5 pts] (blocked by #2) (A)
 - [ ] (#4) Update sync and merge flow to preserve split semantics: `sync_target_branch_state()` syncs from the correct branch input for the new model, merge operations still merge sprint output into `target_branch`, target-branch merge worktree creation remains target-based, and missing source branch errors are surfaced clearly [5 pts] (blocked by #3)
 
 ## Run Command / TUI
 
-- [ ] (#5) Update `src/commands/run.rs` TUI re-invocation to pass `--source-branch` through to subprocesses and keep argument behavior consistent with non-TUI execution for all supported flag combinations [5 pts] (blocked by #2)
+- [x] (#5) Update `src/commands/run.rs` TUI re-invocation to pass `--source-branch` through to subprocesses and keep argument behavior consistent with non-TUI execution for all supported flag combinations [5 pts] (blocked by #2) (A)
 
 ## Integration Testing
 
