@@ -173,9 +173,8 @@ impl Config {
             config.apply_project_paths(&project_name, cli_args);
         }
 
-        if config.target_branch.is_none() {
-            config.target_branch = detect_target_branch();
-        }
+        // Branch-flag resolution matrix
+        config.resolve_branches()?;
 
         config.validate()?;
 
@@ -256,6 +255,36 @@ impl Config {
         if let Some(ref target) = args.target_branch {
             self.target_branch = Some(target.clone());
         }
+    }
+
+    /// Resolve source_branch and target_branch according to the flag matrix:
+    /// - Neither flag: auto-detect main/master for both
+    /// - --source-branch only: set both source and target to that value
+    /// - --target-branch only: error
+    /// - Both flags: independent values
+    fn resolve_branches(&mut self) -> Result<(), ConfigError> {
+        match (&self.source_branch, &self.target_branch) {
+            (None, None) => {
+                // Neither flag: auto-detect for both
+                let detected = detect_target_branch();
+                self.source_branch = detected.clone();
+                self.target_branch = detected;
+            }
+            (Some(source), None) => {
+                // --source-branch only: set target to same value
+                self.target_branch = Some(source.clone());
+            }
+            (None, Some(_)) => {
+                // --target-branch only: error
+                return Err(ConfigError::Validation(
+                    "--target-branch requires --source-branch. Specify both flags explicitly.\n  Example: swarm run --source-branch main --target-branch feature-1".to_string(),
+                ));
+            }
+            (Some(_), Some(_)) => {
+                // Both flags: already set independently, nothing to do
+            }
+        }
+        Ok(())
     }
 
     /// Merge values from another config (for file-based config).
