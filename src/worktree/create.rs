@@ -222,18 +222,19 @@ pub fn create_worktrees_in(
 
 /// Create a feature/sprint worktree under the specified worktrees directory.
 /// The worktree path is `<worktrees_dir>/<feature_branch>`.
+/// The feature branch is created from `source_branch` (the branch to fork from).
 pub fn create_feature_worktree_in(
     worktrees_dir: &Path,
     feature_branch: &str,
-    target_branch: &str,
+    source_branch: &str,
 ) -> Result<PathBuf, String> {
     let feature = feature_branch.trim();
     if feature.is_empty() {
         return Err("feature branch name is empty".to_string());
     }
-    let target = target_branch.trim();
-    if target.is_empty() {
-        return Err("target branch name is empty".to_string());
+    let source = source_branch.trim();
+    if source.is_empty() {
+        return Err("source branch name is empty".to_string());
     }
 
     let repo_root = git_repo_root()?;
@@ -243,7 +244,7 @@ pub fn create_feature_worktree_in(
     fs::create_dir_all(&worktrees_dir)
         .map_err(|e| format!("failed to create worktrees dir: {}", e))?;
 
-    create_feature_branch_in(&repo_root, feature, target)?;
+    create_feature_branch_in(&repo_root, feature, source)?;
 
     let path = worktrees_dir.join(feature);
     let path_str = path.to_string_lossy().to_string();
@@ -399,13 +400,13 @@ mod tests {
     fn test_create_feature_worktree_in_creates_worktree() {
         with_temp_cwd(|| {
             init_repo();
-            run_git(&["branch", "target-branch"]);
+            run_git(&["branch", "source-branch"]);
 
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let path = create_feature_worktree_in(
                 worktrees_dir,
                 "alpha-sprint-1",
-                "target-branch",
+                "source-branch",
             )
             .expect("create feature worktree");
 
@@ -425,7 +426,7 @@ mod tests {
             let path_again = create_feature_worktree_in(
                 worktrees_dir,
                 "alpha-sprint-1",
-                "target-branch",
+                "source-branch",
             )
             .expect("idempotent create");
             assert_eq!(path, path_again);
@@ -533,6 +534,89 @@ mod tests {
             let wt_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(wt_commit, base_commit);
             assert!(!wt_path_again.join("task.txt").exists());
+        });
+    }
+
+    #[test]
+    fn test_create_feature_worktree_in_forks_from_source_not_target() {
+        with_temp_cwd(|| {
+            init_repo();
+            // Name the default branch explicitly
+            run_git(&["branch", "-M", "main"]);
+
+            // Create a "source" branch with a unique commit
+            run_git(&["checkout", "-b", "source-branch"]);
+            fs::write("source-file.txt", "from source").expect("write source file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "source commit"]);
+            let source_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            // Create a "target" branch with a different commit
+            run_git(&["checkout", "main"]);
+            run_git(&["checkout", "-b", "target-branch"]);
+            fs::write("target-file.txt", "from target").expect("write target file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "target commit"]);
+            let target_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            assert_ne!(source_commit, target_commit, "source and target should differ");
+
+            // Create feature worktree from source_branch (not target_branch)
+            let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
+            let path = create_feature_worktree_in(
+                worktrees_dir,
+                "alpha-sprint-1",
+                "source-branch",
+            )
+            .expect("create feature worktree from source");
+
+            // The feature worktree should be at source_commit, not target_commit
+            let wt_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .arg("-C")
+                    .arg(&path)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse in worktree")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            assert_eq!(
+                wt_commit, source_commit,
+                "feature worktree should fork from source_branch"
+            );
+            assert_ne!(
+                wt_commit, target_commit,
+                "feature worktree should NOT be at target_branch"
+            );
+
+            // Verify the source-branch file exists (not target-branch file)
+            assert!(
+                path.join("source-file.txt").exists(),
+                "source file should exist in worktree"
+            );
+            assert!(
+                !path.join("target-file.txt").exists(),
+                "target file should NOT exist in worktree"
+            );
         });
     }
 
