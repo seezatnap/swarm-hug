@@ -238,7 +238,12 @@ pub(crate) fn run_sprint(
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let repo_root = git_repo_root()?;
-    sync_target_branch_state(&repo_root, target_branch, &team_name, config)?;
+
+    // Validate that source branch exists before proceeding.
+    // This gives a clear error when a non-existent source branch is specified.
+    ensure_branch_exists(&repo_root, source_branch)?;
+
+    sync_target_branch_state(&repo_root, source_branch, target_branch, &team_name, config)?;
 
     // Load tasks from the synced main worktree state.
     let content = fs::read_to_string(&config.files_tasks)
@@ -1509,19 +1514,23 @@ pub(crate) fn run_sprint(
 
 fn sync_target_branch_state(
     repo_root: &Path,
+    source_branch: &str,
     target_branch: &str,
     team_name: &str,
     config: &Config,
 ) -> Result<(), String> {
-    if branch_is_checked_out(repo_root, target_branch)? {
+    // Sync task list and sprint history from source_branch (the branch we fork from).
+    // In the split model (source != target), the source branch has the canonical
+    // task list that agents should work from.
+    if branch_is_checked_out(repo_root, source_branch)? {
         return Ok(());
     }
 
-    let target_worktree = worktree::create_target_branch_worktree_in(repo_root, target_branch)?;
+    let source_worktree = worktree::create_target_branch_worktree_in(repo_root, source_branch)?;
 
     let tasks_path = Path::new(&config.files_tasks);
     if tasks_path.is_relative() {
-        let src = target_worktree.join(tasks_path);
+        let src = source_worktree.join(tasks_path);
         let dst = repo_root.join(tasks_path);
         copy_if_exists(&src, &dst)?;
     }
@@ -1529,11 +1538,38 @@ fn sync_target_branch_state(
     let sprint_rel = Path::new(team::SWARM_HUG_DIR)
         .join(team_name)
         .join(team::SPRINT_HISTORY_FILE);
-    let src = target_worktree.join(&sprint_rel);
+    let src = source_worktree.join(&sprint_rel);
     let dst = repo_root.join(&sprint_rel);
     copy_if_exists(&src, &dst)?;
 
+    // If source and target differ, also ensure the target branch worktree exists
+    // so that later merge operations have a valid target.
+    if source_branch != target_branch
+        && !branch_is_checked_out(repo_root, target_branch)?
+    {
+        worktree::create_target_branch_worktree_in(repo_root, target_branch)?;
+    }
+
     Ok(())
+}
+
+fn ensure_branch_exists(repo_root: &Path, branch: &str) -> Result<(), String> {
+    let ref_name = format!("refs/heads/{}", branch);
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["show-ref", "--verify", "--quiet", &ref_name])
+        .output()
+        .map_err(|e| format!("failed to run git show-ref: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "source branch '{}' does not exist. Check the branch name and try again.",
+            branch
+        ))
+    }
 }
 
 fn branch_is_checked_out(repo_root: &Path, target_branch: &str) -> Result<bool, String> {
@@ -1755,8 +1791,9 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, preserve_failed_worktree, split_cleanup_initials,
-        sync_target_branch_state, write_merge_failure_chat, MergeFailureInfo, SprintResult,
+        chat, create_branch_at_commit, ensure_branch_exists, preserve_failed_worktree,
+        split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
+        MergeFailureInfo, SprintResult,
     };
     use std::fs;
     use std::path::Path;
@@ -2028,12 +2065,118 @@ mod tests {
         config.target_branch = Some("main".to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
 
-        sync_target_branch_state(&repo_root, "main", team_name, &config)
+        sync_target_branch_state(&repo_root, "main", "main", team_name, &config)
             .expect("sync target branch state");
 
         let after = fs::read_to_string(&tasks_path).expect("read tasks after");
         assert!(after.contains("[x]"));
         let history = team::SprintHistory::load_from(&history_path).expect("load history");
         assert_eq!(history.total_sprints, 1);
+    }
+
+    #[test]
+    fn test_sync_target_branch_state_syncs_from_source_not_target() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let team_name = "greenfield";
+        let team_dir = repo_root.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&team_dir).expect("create team dir");
+        let tasks_path = team_dir.join("tasks.md");
+        let history_path = team_dir.join("sprint-history.json");
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Original task\n").expect("write tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 0}"#,
+        )
+        .expect("write history");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "init state"]);
+
+        // Create a source branch with different tasks than target
+        run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+        fs::write(&tasks_path, "# Tasks\n\n- [x] Original task\n- [ ] Source task\n")
+            .expect("write source tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 2}"#,
+        )
+        .expect("write source history");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "source updates"]);
+
+        // Create a target branch from main with different data
+        run_git_in(&repo_root, &["checkout", "main"]);
+        run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Target task\n")
+            .expect("write target tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 1}"#,
+        )
+        .expect("write target history");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "target updates"]);
+
+        // Switch to a detached state so neither source nor target is checked out
+        run_git_in(&repo_root, &["checkout", "main"]);
+        run_git_in(&repo_root, &["checkout", "-b", "dev"]);
+
+        // Reset local files to original state
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Original task\n").expect("reset tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 0}"#,
+        )
+        .expect("reset history");
+
+        let mut config = Config::default();
+        config.project = Some(team_name.to_string());
+        config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+
+        // Sync from source-branch, with target-branch as the target
+        sync_target_branch_state(
+            &repo_root,
+            "source-branch",
+            "target-branch",
+            team_name,
+            &config,
+        )
+        .expect("sync from source branch");
+
+        // Should have source branch data, not target branch data
+        let after = fs::read_to_string(&tasks_path).expect("read tasks after");
+        assert!(
+            after.contains("Source task"),
+            "tasks should come from source branch, got: {}",
+            after
+        );
+        let history = team::SprintHistory::load_from(&history_path).expect("load history");
+        assert_eq!(history.total_sprints, 2, "history should come from source branch");
+    }
+
+    #[test]
+    fn test_ensure_branch_exists_succeeds_for_existing_branch() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        ensure_branch_exists(&repo_root, "main").expect("main should exist");
+    }
+
+    #[test]
+    fn test_ensure_branch_exists_errors_for_missing_branch() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let err = ensure_branch_exists(&repo_root, "nonexistent-branch")
+            .expect_err("should error for missing branch");
+        assert!(
+            err.contains("source branch 'nonexistent-branch' does not exist"),
+            "error should mention branch name, got: {}",
+            err
+        );
     }
 }
