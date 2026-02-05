@@ -3,3 +3,4 @@
 loop
 worktrees
 /.cargo*
+.juliet
