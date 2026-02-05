@@ -8,7 +8,7 @@
 ## Runner & Worktree
 
 - [x] (#3) Refactor branch creation paths in `src/runner.rs` and `src/worktree/` so feature/sprint branches are created from `source_branch` (not `target_branch`), including `create_feature_worktree_in()` / `create_feature_branch_in()` call chains [5 pts] (blocked by #2) (A)
-- [ ] (#4) Update sync and merge flow to preserve split semantics: `sync_target_branch_state()` syncs from the correct branch input for the new model, merge operations still merge sprint output into `target_branch`, target-branch merge worktree creation remains target-based, and missing source branch errors are surfaced clearly [5 pts] (blocked by #3)
+- [A] (#4) Update sync and merge flow to preserve split semantics: `sync_target_branch_state()` syncs from the correct branch input for the new model, merge operations still merge sprint output into `target_branch`, target-branch merge worktree creation remains target-based, and missing source branch errors are surfaced clearly [5 pts] (blocked by #3)
 
 ## Run Command / TUI
 
@@ -16,5 +16,5 @@
 
 ## Integration Testing
 
-- [ ] (#6) Add integration coverage in `tests/integration.rs` for flag semantics and compatibility: exact error message when only `--target-branch` is provided, `--source-branch`-only mode sets both source and target, and neither-flag mode preserves current auto-detection behavior [5 pts] (blocked by #2, #5)
+- [A] (#6) Add integration coverage in `tests/integration.rs` for flag semantics and compatibility: exact error message when only `--target-branch` is provided, `--source-branch`-only mode sets both source and target, and neither-flag mode preserves current auto-detection behavior [5 pts] (blocked by #2, #5)
 - [ ] (#7) Add integration coverage for branch-flow behavior: `--source-branch + --target-branch` forks from source and merges into target, non-existent source branch returns a clear error, and the two-step follow-up workflow (`main -> feature-1`, then `feature-1 -> feature-1-follow-ups`) yields expected commits in `feature-1-follow-ups` [5 pts] (blocked by #3, #4, #6)
