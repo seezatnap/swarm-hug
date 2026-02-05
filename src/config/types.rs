@@ -109,6 +109,8 @@ pub struct Config {
     pub sprints_max: usize,
     /// Project name for multi-project mode.
     pub project: Option<String>,
+    /// Source branch to fork/branch from (defaults to auto-detected main/master).
+    pub source_branch: Option<String>,
     /// Target branch for base/merge operations (defaults to auto-detected main/master).
     pub target_branch: Option<String>,
 }
@@ -127,6 +129,7 @@ impl Default for Config {
             engine_stub_mode: false,
             sprints_max: 0,
             project: None,
+            source_branch: None,
             target_branch: None,
         }
     }
@@ -247,6 +250,9 @@ impl Config {
         if let Some(ref project) = args.project {
             self.project = Some(project.clone());
         }
+        if let Some(ref source) = args.source_branch {
+            self.source_branch = Some(source.clone());
+        }
         if let Some(ref target) = args.target_branch {
             self.target_branch = Some(target.clone());
         }
@@ -263,6 +269,7 @@ impl Config {
         self.engine_types = other.engine_types.clone();
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
+        self.source_branch = other.source_branch.clone();
         self.target_branch = other.target_branch.clone();
     }
 

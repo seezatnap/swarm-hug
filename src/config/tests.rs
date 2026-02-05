@@ -356,6 +356,7 @@ fn test_config_default() {
     assert_eq!(config.engine_types, vec![EngineType::Claude]);
     assert!(!config.engine_stub_mode);
     assert_eq!(config.sprints_max, 0);
+    assert_eq!(config.source_branch, None);
     assert_eq!(config.target_branch, None);
 }
 
@@ -780,4 +781,55 @@ timeout = 1800
 fn test_default_toml_includes_timeout() {
     let toml = Config::default_toml();
     assert!(toml.contains("timeout = 3600"));
+}
+
+#[test]
+fn test_parse_args_source_branch() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "feature-1".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, Some("feature-1".to_string()));
+}
+
+#[test]
+fn test_parse_args_source_and_target_branch() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "main".to_string(),
+        "--target-branch".to_string(),
+        "feature-1".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, Some("main".to_string()));
+    assert_eq!(cli.target_branch, Some("feature-1".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_source_branch() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        source_branch: Some("develop".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.source_branch, Some("develop".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_source_and_target_branch() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        source_branch: Some("main".to_string()),
+        target_branch: Some("feature-1".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.source_branch, Some("main".to_string()));
+    assert_eq!(config.target_branch, Some("feature-1".to_string()));
 }
