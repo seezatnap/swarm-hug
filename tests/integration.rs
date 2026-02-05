@@ -2911,3 +2911,376 @@ fn test_neither_branch_flag_auto_detects() {
         "main branch should have advanced past initial commit"
     );
 }
+
+/// Test that --source-branch + --target-branch forks from source and merges into target.
+/// This is the key "follow-up branch" workflow where the sprint branches off one branch
+/// but merges results into a different branch.
+#[test]
+fn test_source_and_target_branch_forks_from_source_merges_into_target() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Rename default branch to "main"
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    // Initialize project and write tasks on main
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init project on main");
+
+    // Create "feature-1" branch from main AFTER project setup
+    // so feature-1 and main share the same initial state
+    let mut create_target = Command::new("git");
+    create_target
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_target);
+
+    // Add a commit on main that only exists on main (to verify forking from main)
+    fs::write(repo_path.join("main-only.txt"), "main content").expect("write main-only.txt");
+    commit_all(repo_path, "main-only commit");
+
+    // Run with --source-branch main --target-branch feature-1
+    // This should fork from main and merge into feature-1
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "feature-1",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+    // Verify sprint ran
+    assert!(
+        stdout.contains("Sprint 1: assigned"),
+        "Sprint should have run. Output:\n{}",
+        stdout
+    );
+
+    // Verify the sprint was merged into "feature-1" (the target), not "main"
+    let feature_log = git_stdout(repo_path, &["log", "--oneline", "-10", "feature-1"]);
+    assert!(
+        feature_log.contains("Alpha Sprint 1: completed"),
+        "feature-1 branch should have sprint completion commit. Got:\n{}",
+        feature_log
+    );
+
+    // Main should NOT have the sprint completion commit (it was the source, not the target)
+    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
+    assert!(
+        !main_log.contains("Alpha Sprint 1: completed"),
+        "main branch should NOT have sprint completion commit (it's the source, not target). Got:\n{}",
+        main_log
+    );
+
+    // Verify that feature-1 now contains the main-only content (inherited from source branch)
+    // The sprint branch was forked from main which has main-only.txt
+    let feature_files = git_stdout(repo_path, &["ls-tree", "--name-only", "feature-1"]);
+    assert!(
+        feature_files.contains("main-only.txt"),
+        "feature-1 should contain main-only.txt (forked from main). Files:\n{}",
+        feature_files
+    );
+
+    // Verify tasks completed on the target branch
+    let mut checkout_feature = Command::new("git");
+    checkout_feature
+        .args(["checkout", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feature);
+
+    let tasks_content =
+        fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert!(
+        task_list.completed_count() >= 2,
+        "Tasks should be completed on target branch"
+    );
+}
+
+/// Test that a non-existent source branch returns a clear error message.
+#[test]
+fn test_nonexistent_source_branch_returns_clear_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Rename default branch to "main"
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    // Initialize project
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init");
+
+    // Run with a non-existent source branch
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "does-not-exist",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+
+    let output = run_cmd.output().expect("failed to run command");
+    assert!(
+        !output.status.success(),
+        "should fail when source branch does not exist"
+    );
+
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+
+    assert!(
+        stderr.contains("source branch 'does-not-exist' does not exist"),
+        "expected clear error about non-existent source branch, got stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Check the branch name and try again"),
+        "expected guidance in error message, got stderr:\n{}",
+        stderr
+    );
+}
+
+/// Test the two-step follow-up workflow end-to-end:
+/// 1. First run: source=main, target=feature-1 (fork from main, merge into feature-1)
+/// 2. Second run: source=feature-1, target=feature-1-follow-ups (fork from feature-1, merge into follow-ups)
+/// Verify that feature-1-follow-ups contains commits from both runs.
+#[test]
+fn test_two_step_followup_workflow() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Rename default branch to "main"
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "base commit");
+
+    // Initialize project on main
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    // Write initial tasks for the first run
+    let tasks_content = "# Tasks\n\n- [ ] First run task A\n- [ ] First run task B\n";
+    fs::write(&tasks_path, tasks_content).expect("write tasks");
+    commit_all(repo_path, "init project");
+
+    // Create "feature-1" branch from main (target for first run)
+    let mut create_feature1 = Command::new("git");
+    create_feature1
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_feature1);
+
+    // === STEP 1: Run with source=main, target=feature-1 ===
+    let mut run_cmd1 = Command::new(swarm_bin);
+    run_cmd1
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "feature-1",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output1 = run_success(&mut run_cmd1);
+    let stdout1 = strip_ansi(&String::from_utf8_lossy(&output1.stdout));
+
+    assert!(
+        stdout1.contains("Sprint 1: assigned"),
+        "First run should have run. Output:\n{}",
+        stdout1
+    );
+
+    // Verify feature-1 has the sprint completion
+    let feature1_log = git_stdout(repo_path, &["log", "--oneline", "-10", "feature-1"]);
+    assert!(
+        feature1_log.contains("Alpha Sprint 1: completed"),
+        "feature-1 should have sprint 1 completion. Got:\n{}",
+        feature1_log
+    );
+
+    // Record the feature-1 commit for later comparison
+    let feature1_head_after_run1 = git_stdout(repo_path, &["rev-parse", "feature-1"]);
+
+    // === STEP 2: Prepare for second run ===
+    // Checkout feature-1 to update tasks for the second run
+    let mut checkout_feature1 = Command::new("git");
+    checkout_feature1
+        .args(["checkout", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feature1);
+
+    // Write new tasks for the second run (replace completed tasks)
+    let tasks_content2 = "# Tasks\n\n- [ ] Follow-up task X\n- [ ] Follow-up task Y\n";
+    fs::write(&tasks_path, tasks_content2).expect("write second run tasks");
+    commit_all(repo_path, "second run tasks");
+
+    // Create "feature-1-follow-ups" branch from feature-1 (target for second run)
+    let mut create_followups = Command::new("git");
+    create_followups
+        .args(["branch", "feature-1-follow-ups"])
+        .current_dir(repo_path);
+    run_success(&mut create_followups);
+
+    // === STEP 2: Run with source=feature-1, target=feature-1-follow-ups ===
+    let mut run_cmd2 = Command::new(swarm_bin);
+    run_cmd2
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "feature-1",
+            "--target-branch",
+            "feature-1-follow-ups",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output2 = run_success(&mut run_cmd2);
+    let stdout2 = strip_ansi(&String::from_utf8_lossy(&output2.stdout));
+
+    // The second run continues sprint numbering from the first run's history
+    // (inherited from feature-1), so this is Sprint 2
+    assert!(
+        stdout2.contains("Sprint 2: assigned"),
+        "Second run should have run (as Sprint 2, continuing from first run). Output:\n{}",
+        stdout2
+    );
+
+    // === ASSERTIONS ===
+
+    // feature-1-follow-ups should have the sprint completion from the second run
+    // (Sprint 2, since sprint numbering continues from the first run's history)
+    let followups_log = git_stdout(repo_path, &["log", "--oneline", "-20", "feature-1-follow-ups"]);
+    assert!(
+        followups_log.contains("Alpha Sprint 2: completed"),
+        "feature-1-follow-ups should have sprint 2 completion commit. Got:\n{}",
+        followups_log
+    );
+
+    // feature-1-follow-ups should contain commits from both runs:
+    // It was forked from feature-1 (which already had the first run's commits),
+    // then the second run's sprint was merged into it.
+    // So it should have the base commit from main AND the first run's sprint work
+    assert!(
+        followups_log.contains("base commit"),
+        "feature-1-follow-ups should contain the original base commit (inherited from main via feature-1). Got:\n{}",
+        followups_log
+    );
+
+    // feature-1-follow-ups should be a descendant of feature-1's state after run 1
+    // (i.e., the first run's work is reachable from feature-1-follow-ups)
+    let is_ancestor = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["merge-base", "--is-ancestor", &feature1_head_after_run1, "feature-1-follow-ups"])
+        .output()
+        .expect("git merge-base");
+    assert!(
+        is_ancestor.status.success(),
+        "feature-1 (after run 1) should be an ancestor of feature-1-follow-ups. \
+         This proves the follow-up branch contains the first run's commits."
+    );
+
+    // Verify the follow-up tasks were completed
+    let mut checkout_followups = Command::new("git");
+    checkout_followups
+        .args(["checkout", "feature-1-follow-ups"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_followups);
+
+    let followup_tasks_content =
+        fs::read_to_string(&tasks_path).expect("read tasks on follow-ups branch");
+    let followup_task_list = TaskList::parse(&followup_tasks_content);
+    assert!(
+        followup_task_list.completed_count() >= 2,
+        "Follow-up tasks should be completed. Got {} completed.",
+        followup_task_list.completed_count()
+    );
+
+    // Verify main was NOT modified by either run
+    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
+    assert!(
+        !main_log.contains("Alpha Sprint 1: completed"),
+        "main branch should NOT have sprint completion commits. Got:\n{}",
+        main_log
+    );
+}
