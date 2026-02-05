@@ -17,4 +17,4 @@
 ## Integration Testing
 
 - [x] (#6) Add integration coverage in `tests/integration.rs` for flag semantics and compatibility: exact error message when only `--target-branch` is provided, `--source-branch`-only mode sets both source and target, and neither-flag mode preserves current auto-detection behavior [5 pts] (blocked by #2, #5) (A)
-- [A] (#7) Add integration coverage for branch-flow behavior: `--source-branch + --target-branch` forks from source and merges into target, non-existent source branch returns a clear error, and the two-step follow-up workflow (`main -> feature-1`, then `feature-1 -> feature-1-follow-ups`) yields expected commits in `feature-1-follow-ups` [5 pts] (blocked by #3, #4, #6)
+- [x] (#7) Add integration coverage for branch-flow behavior: `--source-branch + --target-branch` forks from source and merges into target, non-existent source branch returns a clear error, and the two-step follow-up workflow (`main -> feature-1`, then `feature-1 -> feature-1-follow-ups`) yields expected commits in `feature-1-follow-ups` [5 pts] (blocked by #3, #4, #6) (A)
