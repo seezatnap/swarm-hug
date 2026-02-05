@@ -3,7 +3,7 @@
 ## CLI & Configuration
 
 - [x] (#1) Add `source_branch: Option<String>` across CLI and config types by updating `src/config/cli.rs` (`CliArgs` + `--source-branch` parsing) and `src/config/types.rs` (`Config` field), and update help output so `--source-branch` describes fork-from plus fallback merge target behavior while `--target-branch` states it requires `--source-branch` [5 pts] (A)
-- [ ] (#2) Implement the full branch-flag resolution matrix in `apply_cli()` / `Config::load()`: neither flag auto-detects `main/master` for both source and target, `--source-branch` alone sets both source and target to that value, both flags set independent source/target, and `--target-branch` alone returns the exact specified error text and example [5 pts] (blocked by #1)
+- [A] (#2) Implement the full branch-flag resolution matrix in `apply_cli()` / `Config::load()`: neither flag auto-detects `main/master` for both source and target, `--source-branch` alone sets both source and target to that value, both flags set independent source/target, and `--target-branch` alone returns the exact specified error text and example [5 pts] (blocked by #1)
 
 ## Runner & Worktree
 
