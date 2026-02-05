@@ -190,44 +190,44 @@ pub fn agent_branch_exists(initial: char) -> bool {
     agent_branch_exists_in(&repo_root, initial)
 }
 
-/// Create a feature/sprint branch from the target branch.
+/// Create a feature/sprint branch from the source branch.
 /// Returns Ok(true) if created, Ok(false) if it already exists.
-pub fn create_feature_branch(feature_branch: &str, target_branch: &str) -> Result<bool, String> {
+pub fn create_feature_branch(feature_branch: &str, source_branch: &str) -> Result<bool, String> {
     let repo_root = git_repo_root()?;
-    create_feature_branch_in(&repo_root, feature_branch, target_branch)
+    create_feature_branch_in(&repo_root, feature_branch, source_branch)
 }
 
-/// Create a feature/sprint branch from the target branch in the specified repo.
+/// Create a feature/sprint branch from the source branch in the specified repo.
 /// Returns Ok(true) if created, Ok(false) if it already exists.
 pub fn create_feature_branch_in(
     repo_root: &Path,
     feature_branch: &str,
-    target_branch: &str,
+    source_branch: &str,
 ) -> Result<bool, String> {
     let feature = feature_branch.trim();
     if feature.is_empty() {
         return Err("feature branch name is empty".to_string());
     }
-    let target = target_branch.trim();
-    if target.is_empty() {
-        return Err("target branch name is empty".to_string());
+    let source = source_branch.trim();
+    if source.is_empty() {
+        return Err("source branch name is empty".to_string());
     }
 
     ensure_head(repo_root)?;
 
-    if !branch_exists(repo_root, target)? {
-        // Create the target branch at HEAD so new projects can seed a base branch on demand.
+    if !branch_exists(repo_root, source)? {
+        // Create the source branch at HEAD so new projects can seed a base branch on demand.
         let output = Command::new("git")
             .arg("-C")
             .arg(repo_root)
-            .args(["branch", target, "HEAD"])
+            .args(["branch", source, "HEAD"])
             .output()
             .map_err(|e| format!("failed to run git branch: {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
-                "target branch '{}' not found and could not be created: {}",
-                target,
+                "source branch '{}' not found and could not be created: {}",
+                source,
                 stderr.trim()
             ));
         }
@@ -239,7 +239,7 @@ pub fn create_feature_branch_in(
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["branch", feature, target])
+        .args(["branch", feature, source])
         .output()
         .map_err(|e| format!("failed to run git branch: {}", e))?;
 
@@ -928,28 +928,28 @@ branch refs/heads/agent-aaron
     }
 
     #[test]
-    fn test_create_feature_branch_from_target() {
+    fn test_create_feature_branch_from_source() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
 
-        // Create target branch at initial commit
-        run_git(repo, &["branch", "target-branch"]);
+        // Create source branch at initial commit
+        run_git(repo, &["branch", "source-branch"]);
 
-        // Advance current branch so HEAD differs from target
+        // Advance current branch so HEAD differs from source
         commit_file(repo, "extra.txt", "extra commit");
 
         let head_rev = rev_parse(repo, "HEAD");
-        let target_rev = rev_parse(repo, "target-branch");
-        assert_ne!(head_rev, target_rev);
+        let source_rev = rev_parse(repo, "source-branch");
+        assert_ne!(head_rev, source_rev);
 
         let created =
-            create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch").unwrap();
+            create_feature_branch_in(repo, "greenfield-sprint-1", "source-branch").unwrap();
         assert!(created);
         assert!(branch_exists(repo, "greenfield-sprint-1"));
 
         let feature_rev = rev_parse(repo, "greenfield-sprint-1");
-        assert_eq!(feature_rev, target_rev);
+        assert_eq!(feature_rev, source_rev);
         assert_ne!(feature_rev, head_rev);
     }
 
@@ -958,19 +958,19 @@ branch refs/heads/agent-aaron
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
-        run_git(repo, &["branch", "target-branch"]);
+        run_git(repo, &["branch", "source-branch"]);
 
-        let created = create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch")
+        let created = create_feature_branch_in(repo, "greenfield-sprint-1", "source-branch")
             .expect("create feature branch");
         assert!(created);
 
-        let created_again = create_feature_branch_in(repo, "greenfield-sprint-1", "target-branch")
+        let created_again = create_feature_branch_in(repo, "greenfield-sprint-1", "source-branch")
             .expect("second create should not error");
         assert!(!created_again);
     }
 
     #[test]
-    fn test_create_feature_branch_missing_target() {
+    fn test_create_feature_branch_missing_source() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
@@ -982,10 +982,39 @@ branch refs/heads/agent-aaron
         assert!(branch_exists(repo, "missing-branch"));
         assert!(branch_exists(repo, "greenfield-sprint-1"));
 
-        let target_rev = rev_parse(repo, "missing-branch");
+        let source_rev = rev_parse(repo, "missing-branch");
         let feature_rev = rev_parse(repo, "greenfield-sprint-1");
-        assert_eq!(target_rev, head_rev);
-        assert_eq!(feature_rev, target_rev);
+        assert_eq!(source_rev, head_rev);
+        assert_eq!(feature_rev, source_rev);
+    }
+
+    #[test]
+    fn test_create_feature_branch_in_forks_from_source_branch() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        // Create divergent source and target branches
+        run_git(repo, &["branch", "-M", "main"]);
+        run_git(repo, &["checkout", "-b", "source-branch"]);
+        commit_file(repo, "source.txt", "source commit");
+        let source_rev = rev_parse(repo, "HEAD");
+
+        run_git(repo, &["checkout", "main"]);
+        run_git(repo, &["checkout", "-b", "target-branch"]);
+        commit_file(repo, "target.txt", "target commit");
+        let target_rev = rev_parse(repo, "HEAD");
+
+        assert_ne!(source_rev, target_rev);
+
+        // Create feature branch from source (not target)
+        let created =
+            create_feature_branch_in(repo, "sprint-1", "source-branch").unwrap();
+        assert!(created);
+
+        let feature_rev = rev_parse(repo, "sprint-1");
+        assert_eq!(feature_rev, source_rev, "feature should fork from source");
+        assert_ne!(feature_rev, target_rev, "feature should NOT be at target");
     }
 
     #[test]
