@@ -2665,3 +2665,249 @@ fn test_different_projects_same_sprint_different_hashes() {
     assert!(ctx_alpha.sprint_branch().starts_with("alpha-sprint-1-"));
     assert!(ctx_beta.sprint_branch().starts_with("beta-sprint-1-"));
 }
+
+/// Test that providing --target-branch without --source-branch produces the exact error message.
+#[test]
+fn test_target_branch_only_flag_returns_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let mut cmd = Command::new(swarm_bin);
+    cmd.args(["--target-branch", "feature-1", "--no-tui", "run"])
+        .current_dir(repo_path);
+
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        !output.status.success(),
+        "should fail when --target-branch is provided without --source-branch"
+    );
+
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+
+    assert!(
+        stderr.contains("--target-branch requires --source-branch. Specify both flags explicitly."),
+        "expected exact error message about --target-branch requiring --source-branch, got stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Example: swarm run --source-branch main --target-branch feature-1"),
+        "expected example usage in error message, got stderr:\n{}",
+        stderr
+    );
+}
+
+/// Test that --source-branch alone sets both source and target to the same branch.
+/// Verifies the sprint forks from and merges into the specified branch.
+#[test]
+fn test_source_branch_only_sets_both_source_and_target() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Rename default branch to "main" and create a separate branch "dev"
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "base commit");
+
+    // Create "dev" branch from main
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .args(["checkout", "-b", "dev"])
+        .current_dir(repo_path);
+    run_success(&mut branch_cmd);
+
+    fs::write(repo_path.join("dev.txt"), "dev content").expect("write dev.txt");
+    commit_all(repo_path, "dev commit");
+
+    // Go back to main for the swarm run
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+
+    // Initialize project
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init project");
+
+    // Also commit the project setup to the dev branch so it has tasks
+    let mut checkout_dev = Command::new("git");
+    checkout_dev
+        .args(["checkout", "dev"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_dev);
+    let dev_team_root = repo_path.join(".swarm-hug").join(team_name);
+    fs::create_dir_all(&dev_team_root).ok();
+    write_team_tasks(&dev_team_root);
+    commit_all(repo_path, "init project on dev");
+
+    // Stay on dev; run with --source-branch dev (no --target-branch)
+    // This should set both source and target to "dev"
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "dev",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+    // Verify sprint ran
+    assert!(
+        stdout.contains("Sprint 1: assigned"),
+        "Sprint should have run. Output:\n{}",
+        stdout
+    );
+
+    // Verify tasks completed
+    let tasks_content =
+        fs::read_to_string(dev_team_root.join("tasks.md")).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert!(
+        task_list.completed_count() >= 2,
+        "Tasks should be completed"
+    );
+
+    // Verify the sprint was merged into "dev" (the target), not "main"
+    let dev_log = git_stdout(repo_path, &["log", "--oneline", "-10", "dev"]);
+    assert!(
+        dev_log.contains("Alpha Sprint 1: completed"),
+        "dev branch should have sprint completion commit. Got:\n{}",
+        dev_log
+    );
+
+    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
+    assert!(
+        !main_log.contains("Alpha Sprint 1: completed"),
+        "main branch should NOT have sprint completion commit (target is dev). Got:\n{}",
+        main_log
+    );
+
+    // Verify chat mentions the correct base (should fork from dev, not main)
+    let chat_content =
+        fs::read_to_string(dev_team_root.join("chat.md")).expect("read chat");
+    assert!(
+        chat_content.contains("Creating worktree"),
+        "chat should contain worktree creation message. Chat:\n{}",
+        chat_content
+    );
+}
+
+/// Test that providing neither --source-branch nor --target-branch auto-detects main/master.
+/// This is the backwards-compatible default behavior.
+#[test]
+fn test_neither_branch_flag_auto_detects() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    // Rename default branch to "main"
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    // Initialize project
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init");
+
+    let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+
+    // Run WITHOUT --source-branch or --target-branch
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+    // Verify sprint ran successfully
+    assert!(
+        stdout.contains("Sprint 1: assigned"),
+        "Sprint should have run. Output:\n{}",
+        stdout
+    );
+
+    // Verify tasks completed
+    let tasks_content =
+        fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(
+        task_list.completed_count(),
+        2,
+        "Both tasks should be completed"
+    );
+
+    // Verify the sprint was merged into auto-detected "main" branch
+    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
+    assert!(
+        main_log.contains("Alpha Sprint 1: completed"),
+        "auto-detected main branch should have sprint completion commit. Got:\n{}",
+        main_log
+    );
+
+    // Verify we're still on main and the branch has advanced past the initial commit
+    let current_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(
+        current_branch, "main",
+        "should still be on main branch"
+    );
+
+    let current_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        current_commit, initial_commit,
+        "main branch should have advanced past initial commit"
+    );
+}
