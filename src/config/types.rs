@@ -109,6 +109,8 @@ pub struct Config {
     pub sprints_max: usize,
     /// Project name for multi-project mode.
     pub project: Option<String>,
+    /// Source branch to fork/branch from (defaults to auto-detected main/master).
+    pub source_branch: Option<String>,
     /// Target branch for base/merge operations (defaults to auto-detected main/master).
     pub target_branch: Option<String>,
 }
@@ -127,6 +129,7 @@ impl Default for Config {
             engine_stub_mode: false,
             sprints_max: 0,
             project: None,
+            source_branch: None,
             target_branch: None,
         }
     }
@@ -170,9 +173,8 @@ impl Config {
             config.apply_project_paths(&project_name, cli_args);
         }
 
-        if config.target_branch.is_none() {
-            config.target_branch = detect_target_branch();
-        }
+        // Branch-flag resolution matrix
+        config.resolve_branches()?;
 
         config.validate()?;
 
@@ -247,9 +249,42 @@ impl Config {
         if let Some(ref project) = args.project {
             self.project = Some(project.clone());
         }
+        if let Some(ref source) = args.source_branch {
+            self.source_branch = Some(source.clone());
+        }
         if let Some(ref target) = args.target_branch {
             self.target_branch = Some(target.clone());
         }
+    }
+
+    /// Resolve source_branch and target_branch according to the flag matrix:
+    /// - Neither flag: auto-detect main/master for both
+    /// - --source-branch only: set both source and target to that value
+    /// - --target-branch only: error
+    /// - Both flags: independent values
+    fn resolve_branches(&mut self) -> Result<(), ConfigError> {
+        match (&self.source_branch, &self.target_branch) {
+            (None, None) => {
+                // Neither flag: auto-detect for both
+                let detected = detect_target_branch();
+                self.source_branch = detected.clone();
+                self.target_branch = detected;
+            }
+            (Some(source), None) => {
+                // --source-branch only: set target to same value
+                self.target_branch = Some(source.clone());
+            }
+            (None, Some(_)) => {
+                // --target-branch only: error
+                return Err(ConfigError::Validation(
+                    "--target-branch requires --source-branch. Specify both flags explicitly.\n  Example: swarm run --source-branch main --target-branch feature-1".to_string(),
+                ));
+            }
+            (Some(_), Some(_)) => {
+                // Both flags: already set independently, nothing to do
+            }
+        }
+        Ok(())
     }
 
     /// Merge values from another config (for file-based config).
@@ -263,6 +298,7 @@ impl Config {
         self.engine_types = other.engine_types.clone();
         self.engine_stub_mode = other.engine_stub_mode;
         self.sprints_max = other.sprints_max;
+        self.source_branch = other.source_branch.clone();
         self.target_branch = other.target_branch.clone();
     }
 

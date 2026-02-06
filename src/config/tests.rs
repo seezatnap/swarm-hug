@@ -356,6 +356,7 @@ fn test_config_default() {
     assert_eq!(config.engine_types, vec![EngineType::Claude]);
     assert!(!config.engine_stub_mode);
     assert_eq!(config.sprints_max, 0);
+    assert_eq!(config.source_branch, None);
     assert_eq!(config.target_branch, None);
 }
 
@@ -681,14 +682,17 @@ fn test_config_load_openrouter_with_api_key() {
 }
 
 #[test]
-fn test_config_load_cli_target_branch_overrides_auto_detection() {
+fn test_config_load_target_branch_alone_errors() {
     let cli = CliArgs {
         target_branch: Some("override-branch".to_string()),
         ..Default::default()
     };
 
-    let config = Config::load(&cli).expect("config load");
-    assert_eq!(config.target_branch.as_deref(), Some("override-branch"));
+    let err = Config::load(&cli).expect_err("expected error for --target-branch without --source-branch");
+    let msg = err.to_string();
+    assert!(msg.contains("--target-branch requires --source-branch"), "error should mention requirement: {}", msg);
+    assert!(msg.contains("Specify both flags explicitly"), "error should include instruction: {}", msg);
+    assert!(msg.contains("Example: swarm run --source-branch main --target-branch feature-1"), "error should include example: {}", msg);
 }
 
 #[test]
@@ -780,4 +784,107 @@ timeout = 1800
 fn test_default_toml_includes_timeout() {
     let toml = Config::default_toml();
     assert!(toml.contains("timeout = 3600"));
+}
+
+#[test]
+fn test_parse_args_source_branch() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "feature-1".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, Some("feature-1".to_string()));
+}
+
+#[test]
+fn test_parse_args_source_and_target_branch() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "main".to_string(),
+        "--target-branch".to_string(),
+        "feature-1".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, Some("main".to_string()));
+    assert_eq!(cli.target_branch, Some("feature-1".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_source_branch() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        source_branch: Some("develop".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.source_branch, Some("develop".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_source_and_target_branch() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        source_branch: Some("main".to_string()),
+        target_branch: Some("feature-1".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.source_branch, Some("main".to_string()));
+    assert_eq!(config.target_branch, Some("feature-1".to_string()));
+}
+
+// === Branch-flag resolution matrix tests (via Config::load) ===
+
+#[test]
+fn test_resolve_branches_neither_flag_auto_detects() {
+    // Neither flag: auto-detect main/master for both source and target
+    let cli = CliArgs::default();
+    let config = Config::load(&cli).expect("config load");
+    // Both should be auto-detected (main, master, or current branch)
+    assert!(config.source_branch.is_some(), "source_branch should be auto-detected");
+    assert!(config.target_branch.is_some(), "target_branch should be auto-detected");
+    assert_eq!(config.source_branch, config.target_branch, "source and target should match when neither is specified");
+}
+
+#[test]
+fn test_resolve_branches_source_only_sets_both() {
+    // --source-branch alone: sets both source and target to that value
+    let cli = CliArgs {
+        source_branch: Some("feature-x".to_string()),
+        ..Default::default()
+    };
+    let config = Config::load(&cli).expect("config load");
+    assert_eq!(config.source_branch.as_deref(), Some("feature-x"));
+    assert_eq!(config.target_branch.as_deref(), Some("feature-x"));
+}
+
+#[test]
+fn test_resolve_branches_both_flags_independent() {
+    // Both flags: set independent source/target
+    let cli = CliArgs {
+        source_branch: Some("main".to_string()),
+        target_branch: Some("feature-1".to_string()),
+        ..Default::default()
+    };
+    let config = Config::load(&cli).expect("config load");
+    assert_eq!(config.source_branch.as_deref(), Some("main"));
+    assert_eq!(config.target_branch.as_deref(), Some("feature-1"));
+}
+
+#[test]
+fn test_resolve_branches_target_only_errors() {
+    // --target-branch alone: returns error
+    let cli = CliArgs {
+        target_branch: Some("feature-1".to_string()),
+        ..Default::default()
+    };
+    let err = Config::load(&cli).expect_err("expected error");
+    let msg = err.to_string();
+    assert!(msg.contains("--target-branch requires --source-branch"), "msg: {}", msg);
+    assert!(msg.contains("Specify both flags explicitly"), "msg: {}", msg);
+    assert!(msg.contains("Example: swarm run --source-branch main --target-branch feature-1"), "msg: {}", msg);
 }
