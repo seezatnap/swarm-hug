@@ -227,7 +227,7 @@ pub(crate) fn run_sprint(
     config: &Config,
     session_sprint_number: usize,
 ) -> Result<SprintResult, String> {
-    // Load sprint history and determine sprint number (peek, don't write yet)
+    // Resolve runtime state namespace and determine sprint number (peek, don't write yet).
     let team_name = project_name_for_config(config);
     let source_branch = config
         .source_branch
@@ -238,19 +238,38 @@ pub(crate) fn run_sprint(
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let repo_root = git_repo_root()?;
+    let runtime_paths = team::RuntimeStatePaths::for_branches(
+        &team_name,
+        source_branch,
+        target_branch,
+    );
 
     // Validate that source branch exists before proceeding.
     // This gives a clear error when a non-existent source branch is specified.
     ensure_branch_exists(&repo_root, source_branch)?;
 
-    sync_target_branch_state(&repo_root, source_branch, target_branch, &team_name, config)?;
+    sync_target_branch_state(
+        &repo_root,
+        source_branch,
+        target_branch,
+        &team_name,
+        config,
+        &runtime_paths,
+    )?;
 
-    // Load tasks from the synced main worktree state.
-    let content = fs::read_to_string(&config.files_tasks)
-        .map_err(|e| format!("failed to read {}: {}", config.files_tasks, e))?;
+    // Load tasks from runtime-scoped state.
+    let runtime_tasks_path = runtime_paths.tasks_path();
+    let runtime_history_path = runtime_paths.sprint_history_path();
+    let runtime_team_state_path = runtime_paths.team_state_path();
+
+    let content = fs::read_to_string(&runtime_tasks_path)
+        .map_err(|e| format!("failed to read {}: {}", runtime_tasks_path.display(), e))?;
     let mut task_list = TaskList::parse(&content);
 
-    let sprint_history = team::SprintHistory::load(&team_name)?;
+    let mut sprint_history = team::SprintHistory::load_from(&runtime_history_path)?;
+    if sprint_history.team_name == "unknown" {
+        sprint_history.team_name = team_name.clone();
+    }
     let historical_sprint = sprint_history.peek_next_sprint();
     let formatted_team = sprint_history.formatted_team_name();
 
@@ -431,6 +450,18 @@ pub(crate) fn run_sprint(
     fs::write(&worktree_tasks_path, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
+    // Persist runtime-scoped planning state for this variation.
+    if runtime_paths.is_namespaced() {
+        persist_runtime_state_files(
+            &worktree_tasks_path,
+            &runtime_tasks_path,
+            &worktree_history_path,
+            &runtime_history_path,
+            &worktree_state_path,
+            &runtime_team_state_path,
+        )?;
+    }
+
     // Collect assignments
     let assignments: Vec<(char, String)> = task_list
         .tasks
@@ -568,8 +599,8 @@ pub(crate) fn run_sprint(
     // Return type includes: (initial, description, success, error, duration)
     let mut handles: Vec<thread::JoinHandle<Vec<TaskResult>>> = Vec::new();
 
-    // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
-    let team_dir: Option<String> = Path::new(&config.files_tasks)
+    // Derive team directory from runtime tasks path.
+    let team_dir: Option<String> = runtime_tasks_path
         .parent()
         .map(|p| p.to_string_lossy().to_string());
 
@@ -1323,6 +1354,19 @@ pub(crate) fn run_sprint(
     let final_content = fs::read_to_string(&worktree_tasks_path)
         .map_err(|e| format!("failed to read {}: {}", worktree_tasks_path.display(), e))?;
     let final_task_list = TaskList::parse(&final_content);
+
+    // Persist final runtime-scoped state (including follow-up tasks if added).
+    if runtime_paths.is_namespaced() {
+        persist_runtime_state_files(
+            &worktree_tasks_path,
+            &runtime_tasks_path,
+            &worktree_history_path,
+            &runtime_history_path,
+            &worktree_state_path,
+            &runtime_team_state_path,
+        )?;
+    }
+
     let remaining_tasks = final_task_list.unassigned_count() + final_task_list.assigned_count();
     let total_tasks = final_task_list.tasks.len();
 
@@ -1518,10 +1562,66 @@ fn sync_target_branch_state(
     target_branch: &str,
     team_name: &str,
     config: &Config,
+    runtime_paths: &team::RuntimeStatePaths,
 ) -> Result<(), String> {
-    // Sync task list and sprint history from source_branch (the branch we fork from).
-    // In the split model (source != target), the source branch has the canonical
-    // task list that agents should work from.
+    // Split source/target variations keep runtime-scoped state under
+    // `.swarm-hug/<team>/runs/<target>/` and only bootstrap from source once.
+    if runtime_paths.is_namespaced() {
+        let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
+        let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
+        let runtime_state = repo_root.join(runtime_paths.team_state_path());
+        let needs_bootstrap =
+            !runtime_tasks.exists() || !runtime_history.exists() || !runtime_state.exists();
+
+        if needs_bootstrap {
+            let branch_tasks_rel = runtime_paths.branch_tasks_path();
+            let branch_history_rel = runtime_paths.branch_sprint_history_path();
+            let branch_state_rel = runtime_paths.branch_team_state_path();
+            let configured_tasks_rel = Path::new(&config.files_tasks);
+
+            if branch_is_checked_out(repo_root, source_branch)? {
+                let src_tasks = repo_root.join(&branch_tasks_rel);
+                let src_history = repo_root.join(&branch_history_rel);
+                let src_state = repo_root.join(&branch_state_rel);
+                copy_if_missing(&src_tasks, &runtime_tasks)?;
+                if !runtime_tasks.exists() && configured_tasks_rel.is_relative() {
+                    copy_if_missing(&repo_root.join(configured_tasks_rel), &runtime_tasks)?;
+                }
+                copy_if_missing(&src_history, &runtime_history)?;
+                copy_if_missing(&src_state, &runtime_state)?;
+            } else {
+                let source_worktree =
+                    worktree::create_target_branch_worktree_in(repo_root, source_branch)?;
+                let src_tasks = source_worktree.join(&branch_tasks_rel);
+                let src_history = source_worktree.join(&branch_history_rel);
+                let src_state = source_worktree.join(&branch_state_rel);
+                copy_if_missing(&src_tasks, &runtime_tasks)?;
+                if !runtime_tasks.exists() && configured_tasks_rel.is_relative() {
+                    copy_if_missing(&source_worktree.join(configured_tasks_rel), &runtime_tasks)?;
+                }
+                copy_if_missing(&src_history, &runtime_history)?;
+                copy_if_missing(&src_state, &runtime_state)?;
+            }
+        }
+
+        if !runtime_history.exists() {
+            let mut history = team::SprintHistory::load_from(&runtime_history)?;
+            if history.team_name == "unknown" {
+                history.team_name = team_name.to_string();
+            }
+            history.save()?;
+        }
+
+        if !runtime_state.exists() {
+            let mut state = team::TeamState::load_from(&runtime_state)?;
+            state.team_name = team_name.to_string();
+            state.save()?;
+        }
+
+        return Ok(());
+    }
+
+    // Legacy behavior: sync task list and sprint history from source_branch.
     if branch_is_checked_out(repo_root, source_branch)? {
         return Ok(());
     }
@@ -1602,6 +1702,27 @@ fn copy_if_exists(src: &Path, dst: &Path) -> Result<(), String> {
     fs::copy(src, dst)
         .map(|_| ())
         .map_err(|e| format!("failed to copy {} to {}: {}", src.display(), dst.display(), e))
+}
+
+fn copy_if_missing(src: &Path, dst: &Path) -> Result<(), String> {
+    if dst.exists() {
+        return Ok(());
+    }
+    copy_if_exists(src, dst)
+}
+
+fn persist_runtime_state_files(
+    worktree_tasks_path: &Path,
+    runtime_tasks_path: &Path,
+    worktree_history_path: &Path,
+    runtime_history_path: &Path,
+    worktree_state_path: &Path,
+    runtime_state_path: &Path,
+) -> Result<(), String> {
+    copy_if_exists(worktree_tasks_path, runtime_tasks_path)?;
+    copy_if_exists(worktree_history_path, runtime_history_path)?;
+    copy_if_exists(worktree_state_path, runtime_state_path)?;
+    Ok(())
 }
 
 /// Run post-sprint review to identify follow-up tasks.
@@ -2064,8 +2185,17 @@ mod tests {
         config.project = Some(team_name.to_string());
         config.target_branch = Some("main".to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+        let runtime_paths =
+            team::RuntimeStatePaths::for_branches(team_name, "main", "main");
 
-        sync_target_branch_state(&repo_root, "main", "main", team_name, &config)
+        sync_target_branch_state(
+            &repo_root,
+            "main",
+            "main",
+            team_name,
+            &config,
+            &runtime_paths,
+        )
             .expect("sync target branch state");
 
         let after = fs::read_to_string(&tasks_path).expect("read tasks after");
@@ -2075,7 +2205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_target_branch_state_syncs_from_source_not_target() {
+    fn test_sync_target_branch_state_bootstraps_namespaced_runtime_from_source() {
         let temp = tempfile::TempDir::new().expect("temp repo");
         let repo_root = temp.path().to_path_buf();
         init_repo(&repo_root);
@@ -2134,6 +2264,11 @@ mod tests {
         let mut config = Config::default();
         config.project = Some(team_name.to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+        let runtime_paths = team::RuntimeStatePaths::for_branches(
+            team_name,
+            "source-branch",
+            "target-branch",
+        );
 
         // Sync from source-branch, with target-branch as the target
         sync_target_branch_state(
@@ -2142,18 +2277,113 @@ mod tests {
             "target-branch",
             team_name,
             &config,
+            &runtime_paths,
         )
         .expect("sync from source branch");
 
-        // Should have source branch data, not target branch data
-        let after = fs::read_to_string(&tasks_path).expect("read tasks after");
+        // Runtime namespace should have source branch data.
+        let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
+        let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
+        let runtime_state = repo_root.join(runtime_paths.team_state_path());
+
+        let after = fs::read_to_string(&runtime_tasks).expect("read runtime tasks after");
         assert!(
             after.contains("Source task"),
             "tasks should come from source branch, got: {}",
             after
         );
-        let history = team::SprintHistory::load_from(&history_path).expect("load history");
+        let history = team::SprintHistory::load_from(&runtime_history).expect("load history");
         assert_eq!(history.total_sprints, 2, "history should come from source branch");
+        assert!(runtime_state.exists(), "team-state should also be bootstrapped");
+
+        // Shared team path must remain untouched in namespaced mode.
+        let shared_after = fs::read_to_string(&tasks_path).expect("read shared tasks after");
+        assert!(
+            shared_after.contains("Original task"),
+            "shared tasks should remain unchanged in namespaced mode"
+        );
+    }
+
+    #[test]
+    fn test_sync_target_branch_state_preserves_existing_namespaced_runtime_state() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let team_name = "greenfield";
+        let team_dir = repo_root.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&team_dir).expect("create team dir");
+        let tasks_path = team_dir.join("tasks.md");
+        let history_path = team_dir.join("sprint-history.json");
+        let state_path = team_dir.join("team-state.json");
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Shared source task\n").expect("write tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 1}"#,
+        )
+        .expect("write history");
+        fs::write(
+            &state_path,
+            r#"{"team": "greenfield", "feature_branch": "greenfield-sprint-1"}"#,
+        )
+        .expect("write state");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "init state"]);
+        run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+
+        let runtime_paths = team::RuntimeStatePaths::for_branches(
+            team_name,
+            "source-branch",
+            "target-branch",
+        );
+        let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
+        let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
+        let runtime_state = repo_root.join(runtime_paths.team_state_path());
+        fs::create_dir_all(runtime_tasks.parent().expect("runtime parent"))
+            .expect("create runtime dir");
+        fs::write(&runtime_tasks, "# Tasks\n\n- [ ] Runtime task\n").expect("write runtime tasks");
+        fs::write(
+            &runtime_history,
+            r#"{"team": "greenfield", "total_sprints": 9}"#,
+        )
+        .expect("write runtime history");
+        fs::write(
+            &runtime_state,
+            r#"{"team": "greenfield", "feature_branch": "runtime-sprint"}"#,
+        )
+        .expect("write runtime state");
+
+        let mut config = Config::default();
+        config.project = Some(team_name.to_string());
+        config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+
+        sync_target_branch_state(
+            &repo_root,
+            "source-branch",
+            "target-branch",
+            team_name,
+            &config,
+            &runtime_paths,
+        )
+        .expect("sync namespaced runtime");
+
+        let tasks_after = fs::read_to_string(&runtime_tasks).expect("read runtime tasks");
+        let history_after = team::SprintHistory::load_from(&runtime_history)
+            .expect("load runtime history");
+        let state_after = fs::read_to_string(&runtime_state).expect("read runtime state");
+
+        assert!(
+            tasks_after.contains("Runtime task"),
+            "runtime tasks should not be overwritten"
+        );
+        assert_eq!(
+            history_after.total_sprints, 9,
+            "runtime history should not be overwritten"
+        );
+        assert!(
+            state_after.contains("runtime-sprint"),
+            "runtime team-state should not be overwritten"
+        );
     }
 
     #[test]
