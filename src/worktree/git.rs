@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -99,6 +100,232 @@ fn parse_registered_worktrees(porcelain_output: &str, repo_root: &Path) -> HashS
         }
     }
     registered
+}
+
+#[derive(Debug, Clone)]
+struct WorktreeRegistration {
+    path: PathBuf,
+    branch: Option<String>,
+}
+
+fn parse_worktree_registrations(
+    porcelain_output: &str,
+    repo_root: &Path,
+) -> Vec<WorktreeRegistration> {
+    let mut registrations = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in porcelain_output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(path) = current_path.take() {
+                registrations.push(WorktreeRegistration {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                current_branch = None;
+                continue;
+            }
+            let candidate = PathBuf::from(trimmed);
+            current_path = Some(if candidate.is_absolute() {
+                candidate
+            } else {
+                repo_root.join(candidate)
+            });
+            current_branch = None;
+        } else if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
+            if current_path.is_some() {
+                current_branch = Some(branch_ref.trim().to_string());
+            }
+        } else if line.is_empty() {
+            if let Some(path) = current_path.take() {
+                registrations.push(WorktreeRegistration {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+        }
+    }
+
+    if let Some(path) = current_path.take() {
+        registrations.push(WorktreeRegistration {
+            path,
+            branch: current_branch.take(),
+        });
+    }
+
+    registrations
+}
+
+fn paths_match(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let a_canonical = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b_canonical = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a_canonical == b_canonical
+}
+
+fn find_registered_worktree_by_path(
+    repo_root: &Path,
+    path: &Path,
+) -> Result<Option<WorktreeRegistration>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let registrations = parse_worktree_registrations(&stdout, repo_root);
+    let expected = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo_root.join(path)
+    };
+
+    Ok(registrations
+        .into_iter()
+        .find(|registration| paths_match(&registration.path, &expected)))
+}
+
+fn worktree_has_uncommitted_changes(worktree_path: &Path) -> Result<bool, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git status: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git status failed: {}", stderr.trim()));
+    }
+
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+pub(super) fn prune_stale_worktree_registrations(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "prune", "--expire", "now"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree prune: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git worktree prune failed: {}", stderr.trim()))
+    }
+}
+
+/// Reconcile a reserved worktree path with the expected branch.
+///
+/// Behavior:
+/// - If path is registered to `expected_branch` and exists, keep it.
+/// - If registration is stale (missing path), prune it.
+/// - If path is registered to another branch and has uncommitted changes, abort
+///   to avoid losing active work.
+/// - Otherwise, force-remove the mismatched registration so caller can recreate.
+pub(super) fn reconcile_worktree_registration(
+    repo_root: &Path,
+    reserved_path: &Path,
+    expected_branch: &str,
+) -> Result<(), String> {
+    let expected = expected_branch.trim();
+    if expected.is_empty() {
+        return Err("expected branch name is empty".to_string());
+    }
+
+    prune_stale_worktree_registrations(repo_root)?;
+
+    let Some(existing) = find_registered_worktree_by_path(repo_root, reserved_path)? else {
+        return Ok(());
+    };
+
+    let branch_matches = existing.branch.as_deref() == Some(expected);
+    if branch_matches && existing.path.exists() {
+        return Ok(());
+    }
+
+    let branch_name = existing.branch.as_deref().unwrap_or("detached HEAD");
+
+    if !branch_matches && existing.path.exists() {
+        let has_changes = worktree_has_uncommitted_changes(&existing.path).map_err(|e| {
+            format!(
+                "failed to inspect worktree '{}' before cleanup: {}",
+                existing.path.display(),
+                e
+            )
+        })?;
+        if has_changes {
+            return Err(format!(
+                "worktree path '{}' is active on '{}' with uncommitted changes; refusing to replace it with '{}'",
+                existing.path.display(),
+                branch_name,
+                expected
+            ));
+        }
+    }
+
+    let path_str = existing.path.to_string_lossy().to_string();
+    let remove = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "remove", "--force", &path_str])
+        .output()
+        .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+    if !remove.status.success() && existing.path.exists() {
+        let stderr = String::from_utf8_lossy(&remove.stderr);
+        let detail = stderr.trim();
+        if detail.is_empty() {
+            return Err(format!(
+                "failed to remove worktree '{}' (branch '{}')",
+                existing.path.display(),
+                branch_name
+            ));
+        }
+        return Err(format!(
+            "failed to remove worktree '{}' (branch '{}'): {}",
+            existing.path.display(),
+            branch_name,
+            detail
+        ));
+    }
+
+    prune_stale_worktree_registrations(repo_root)?;
+
+    if find_registered_worktree_by_path(repo_root, &existing.path)?.is_some() {
+        return Err(format!(
+            "worktree path '{}' is still registered after cleanup",
+            existing.path.display()
+        ));
+    }
+
+    if existing.path.exists() {
+        fs::remove_dir_all(&existing.path).map_err(|e| {
+            format!(
+                "failed to remove stale worktree dir {}: {}",
+                existing.path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 /// Parse git worktree list --porcelain output to find worktrees with a specific branch.
