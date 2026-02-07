@@ -1565,7 +1565,8 @@ fn sync_target_branch_state(
     runtime_paths: &team::RuntimeStatePaths,
 ) -> Result<(), String> {
     // Split source/target variations keep runtime-scoped state under
-    // `.swarm-hug/<team>/runs/<target>/` and only bootstrap from source once.
+    // `.swarm-hug/<team>/runs/<target>/`. Bootstrap tasks from target branch
+    // (variation-specific), and bootstrap history/state from source once.
     if runtime_paths.is_namespaced() {
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
@@ -1579,26 +1580,37 @@ fn sync_target_branch_state(
             let branch_state_rel = runtime_paths.branch_team_state_path();
             let configured_tasks_rel = Path::new(&config.files_tasks);
 
-            if branch_is_checked_out(repo_root, source_branch)? {
+            if branch_is_checked_out(repo_root, target_branch)? {
                 let src_tasks = repo_root.join(&branch_tasks_rel);
-                let src_history = repo_root.join(&branch_history_rel);
-                let src_state = repo_root.join(&branch_state_rel);
                 copy_if_missing(&src_tasks, &runtime_tasks)?;
                 if !runtime_tasks.exists() && configured_tasks_rel.is_relative() {
                     copy_if_missing(&repo_root.join(configured_tasks_rel), &runtime_tasks)?;
                 }
+            } else {
+                let target_worktree_preexisting =
+                    worktree::find_target_branch_worktree_in(repo_root, target_branch)?;
+                let target_worktree =
+                    worktree::create_target_branch_worktree_in(repo_root, target_branch)?;
+                let src_tasks = target_worktree.join(&branch_tasks_rel);
+                copy_if_missing(&src_tasks, &runtime_tasks)?;
+                if !runtime_tasks.exists() && configured_tasks_rel.is_relative() {
+                    copy_if_missing(&target_worktree.join(configured_tasks_rel), &runtime_tasks)?;
+                }
+                if target_worktree_preexisting.is_none() {
+                    remove_worktree_path(repo_root, &target_worktree)?;
+                }
+            }
+
+            if branch_is_checked_out(repo_root, source_branch)? {
+                let src_history = repo_root.join(&branch_history_rel);
+                let src_state = repo_root.join(&branch_state_rel);
                 copy_if_missing(&src_history, &runtime_history)?;
                 copy_if_missing(&src_state, &runtime_state)?;
             } else {
                 let source_worktree =
                     worktree::create_target_branch_worktree_in(repo_root, source_branch)?;
-                let src_tasks = source_worktree.join(&branch_tasks_rel);
                 let src_history = source_worktree.join(&branch_history_rel);
                 let src_state = source_worktree.join(&branch_state_rel);
-                copy_if_missing(&src_tasks, &runtime_tasks)?;
-                if !runtime_tasks.exists() && configured_tasks_rel.is_relative() {
-                    copy_if_missing(&source_worktree.join(configured_tasks_rel), &runtime_tasks)?;
-                }
                 copy_if_missing(&src_history, &runtime_history)?;
                 copy_if_missing(&src_state, &runtime_state)?;
             }
@@ -1709,6 +1721,27 @@ fn copy_if_missing(src: &Path, dst: &Path) -> Result<(), String> {
         return Ok(());
     }
     copy_if_exists(src, dst)
+}
+
+fn remove_worktree_path(repo_root: &Path, worktree_path: &Path) -> Result<(), String> {
+    let path_str = worktree_path.to_string_lossy().to_string();
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "remove", "--force", &path_str])
+        .output()
+        .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "git worktree remove failed for {}: {}",
+            worktree_path.display(),
+            stderr.trim()
+        ))
+    }
 }
 
 fn persist_runtime_state_files(
@@ -2205,7 +2238,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_target_branch_state_bootstraps_namespaced_runtime_from_source() {
+    fn test_sync_target_branch_state_bootstraps_namespaced_runtime_tasks_from_target() {
         let temp = tempfile::TempDir::new().expect("temp repo");
         let repo_root = temp.path().to_path_buf();
         init_repo(&repo_root);
@@ -2281,15 +2314,15 @@ mod tests {
         )
         .expect("sync from source branch");
 
-        // Runtime namespace should have source branch data.
+        // Runtime namespace should use target-branch tasks and source-branch history/state.
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
         let runtime_state = repo_root.join(runtime_paths.team_state_path());
 
         let after = fs::read_to_string(&runtime_tasks).expect("read runtime tasks after");
         assert!(
-            after.contains("Source task"),
-            "tasks should come from source branch, got: {}",
+            after.contains("Target task"),
+            "tasks should come from target branch, got: {}",
             after
         );
         let history = team::SprintHistory::load_from(&runtime_history).expect("load history");
