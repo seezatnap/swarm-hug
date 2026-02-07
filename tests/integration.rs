@@ -293,10 +293,21 @@ fn test_swarm_run_stub_integration() {
         "worktrees should be cleaned up after sprint"
     );
 
-    let sprint_worktree = worktrees_dir.join(format!("{}-sprint-1", team_name));
+    let sprint_prefix = format!("{}-sprint-1-", team_name);
+    let sprint_worktrees_remaining = fs::read_dir(&worktrees_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&sprint_prefix)
+        });
     assert!(
-        !sprint_worktree.exists(),
-        "feature worktree should be removed after merge"
+        !sprint_worktrees_remaining,
+        "feature worktree(s) with prefix '{}' should be removed after merge",
+        sprint_prefix
     );
 
     // Branches are also cleaned up after sprint
@@ -313,7 +324,7 @@ fn test_swarm_run_stub_integration() {
 
     let mut feature_branch_cmd = Command::new("git");
     feature_branch_cmd
-        .args(["branch", "--list", &format!("{}-sprint-1", team_name)])
+        .args(["branch", "--list", &format!("{}-sprint-1-*", team_name)])
         .current_dir(repo_path);
     let feature_branch_output = run_success(&mut feature_branch_cmd);
     let feature_branch_stdout = String::from_utf8_lossy(&feature_branch_output.stdout);
@@ -2912,11 +2923,11 @@ fn test_neither_branch_flag_auto_detects() {
     );
 }
 
-/// Test that --source-branch + --target-branch forks from source and merges into target.
-/// This is the key "follow-up branch" workflow where the sprint branches off one branch
-/// but merges results into a different branch.
+/// Test that --source-branch + --target-branch forks from target and merges into target.
+/// The source branch remains the planning-state source (tasks/history sync), but sprint
+/// worktrees must fork from the live target tip.
 #[test]
-fn test_source_and_target_branch_forks_from_source_merges_into_target() {
+fn test_source_and_target_branch_forks_from_target_merges_into_target() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();
     let team_name = "alpha";
@@ -2950,12 +2961,12 @@ fn test_source_and_target_branch_forks_from_source_merges_into_target() {
         .current_dir(repo_path);
     run_success(&mut create_target);
 
-    // Add a commit on main that only exists on main (to verify forking from main)
+    // Add a commit on main that only exists on main (source-only)
     fs::write(repo_path.join("main-only.txt"), "main content").expect("write main-only.txt");
     commit_all(repo_path, "main-only commit");
 
     // Run with --source-branch main --target-branch feature-1
-    // This should fork from main and merge into feature-1
+    // This should fork from feature-1 (target) and merge back into feature-1
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
@@ -3000,12 +3011,12 @@ fn test_source_and_target_branch_forks_from_source_merges_into_target() {
         main_log
     );
 
-    // Verify that feature-1 now contains the main-only content (inherited from source branch)
-    // The sprint branch was forked from main which has main-only.txt
+    // Verify that feature-1 does NOT contain the source-only content.
+    // If the sprint branch incorrectly forked from source/main, this file would appear.
     let feature_files = git_stdout(repo_path, &["ls-tree", "--name-only", "feature-1"]);
     assert!(
-        feature_files.contains("main-only.txt"),
-        "feature-1 should contain main-only.txt (forked from main). Files:\n{}",
+        !feature_files.contains("main-only.txt"),
+        "feature-1 should NOT contain main-only.txt (sprint must fork from target tip). Files:\n{}",
         feature_files
     );
 
