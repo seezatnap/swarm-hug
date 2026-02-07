@@ -695,6 +695,231 @@ fn test_target_branch_worktree_creates_when_missing() {
     assert_eq!(head, "target-branch");
 }
 
+#[test]
+fn test_target_branch_worktree_reconciles_mismatch_and_reregisters() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut target_branch_cmd = Command::new("git");
+    target_branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut target_branch_cmd);
+
+    let mut other_branch_cmd = Command::new("git");
+    other_branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("other");
+    run_success(&mut other_branch_cmd);
+
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+    let reserved_path = shared_root.join("target-branch");
+
+    let mut add_mismatch_cmd = Command::new("git");
+    add_mismatch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(reserved_path.to_str().expect("reserved path"))
+        .arg("other");
+    run_success(&mut add_mismatch_cmd);
+
+    let recovered = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect("reconcile mismatched worktree registration");
+    assert_eq!(
+        canonical_path_str(&recovered),
+        canonical_path_str(&reserved_path),
+        "recovered worktree should reuse reserved shared path"
+    );
+
+    let head = git_stdout(&recovered, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "target-branch");
+}
+
+#[test]
+fn test_target_branch_worktree_recovers_missing_prior_run_registration() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut branch_cmd = Command::new("git");
+    branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut branch_cmd);
+
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+    let reserved_path = shared_root.join("target-branch");
+
+    let mut add_cmd = Command::new("git");
+    add_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(reserved_path.to_str().expect("reserved path"))
+        .arg("target-branch");
+    run_success(&mut add_cmd);
+
+    fs::remove_dir_all(&reserved_path).expect("remove registered worktree path");
+
+    let recovered = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect("recover from stale prior-run registration");
+    assert_eq!(
+        canonical_path_str(&recovered),
+        canonical_path_str(&reserved_path),
+        "recovered worktree should reuse stale reserved path"
+    );
+    assert!(recovered.exists(), "recovered worktree should exist");
+
+    let head = git_stdout(&recovered, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "target-branch");
+}
+
+#[test]
+fn test_target_branch_worktree_dirty_mismatch_preserves_work() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let mut target_branch_cmd = Command::new("git");
+    target_branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("target-branch");
+    run_success(&mut target_branch_cmd);
+
+    let mut other_branch_cmd = Command::new("git");
+    other_branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("other");
+    run_success(&mut other_branch_cmd);
+
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+    let reserved_path = shared_root.join("target-branch");
+
+    let mut add_mismatch_cmd = Command::new("git");
+    add_mismatch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(reserved_path.to_str().expect("reserved path"))
+        .arg("other");
+    run_success(&mut add_mismatch_cmd);
+
+    let dirty_file = reserved_path.join("dirty.txt");
+    fs::write(&dirty_file, "keep me").expect("write dirty file");
+
+    let err = worktree::create_target_branch_worktree_in(repo_path, "target-branch")
+        .expect_err("dirty mismatched worktree should not be replaced");
+    assert!(
+        err.contains("uncommitted changes"),
+        "expected dirty-worktree safety error, got: {}",
+        err
+    );
+    assert!(reserved_path.exists(), "dirty worktree path should be preserved");
+    assert!(dirty_file.exists(), "dirty file should be preserved");
+
+    let head = git_stdout(&reserved_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "other");
+}
+
+#[test]
+fn test_single_variation_run_succeeds_with_shared_mismatch_present() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = write_team_tasks(&team_root);
+    commit_all(repo_path, "init");
+
+    let default_target = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+
+    let mut other_branch_cmd = Command::new("git");
+    other_branch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("other");
+    run_success(&mut other_branch_cmd);
+
+    let shared_root = worktree::ensure_shared_worktrees_root(repo_path).expect("shared root");
+    let reserved_path = shared_root.join(&default_target);
+
+    let mut add_mismatch_cmd = Command::new("git");
+    add_mismatch_cmd
+        .arg("-C")
+        .arg(repo_path)
+        .arg("worktree")
+        .arg("add")
+        .arg(reserved_path.to_str().expect("reserved path"))
+        .arg("other");
+    run_success(&mut add_mismatch_cmd);
+
+    let keep_file = reserved_path.join("keep.txt");
+    fs::write(&keep_file, "keep").expect("write keep file");
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    run_success(&mut run_cmd);
+
+    let tasks_content = fs::read_to_string(&tasks_path).expect("read tasks");
+    let task_list = TaskList::parse(&tasks_content);
+    assert_eq!(task_list.completed_count(), 2, "single variation run should complete tasks");
+
+    assert!(
+        reserved_path.exists(),
+        "shared mismatch path should not break single variation run"
+    );
+    assert!(keep_file.exists(), "existing work under mismatch path should remain");
+
+    let head = git_stdout(&reserved_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "other");
+}
+
 // test_swarm_status_shows_counts_and_recent_chat removed: status command was deprecated
 
 /// Test that multiple consecutive sprints correctly reassign agents.
