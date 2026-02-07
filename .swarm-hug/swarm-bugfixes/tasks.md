@@ -3,9 +3,9 @@
 ## Runtime State Isolation
 
 - [x] (#1) Introduce a per-run runtime identifier (for example, derived from project + target branch + run instance) and thread it through swarm run context so concurrent variations no longer share runtime state keys [5 pts] (A)
-- [A] (#2) Refactor planning/task orchestration to use per-run state namespaces, including sprint planning artifacts, task assignment state, and persisted sprint history so each target branch variation is fully isolated [5 pts] (blocked by #1)
-- [A] (#3) Change `tasks.md` resolution to read from the target branch worktree instead of the main worktree, with explicit fallback to current behavior when running single-variation/no `--target-branch` [5 pts] (blocked by #1)
-- [B] (#4) Update sprint worktree creation to fork from the current target-branch tip (not the initial base commit) and generate per-run worktree names/paths to eliminate cross-variation collisions [5 pts] (blocked by #1)
+- [x] (#2) Refactor planning/task orchestration to use per-run state namespaces, including sprint planning artifacts, task assignment state, and persisted sprint history so each target branch variation is fully isolated [5 pts] (blocked by #1) (A)
+- [x] (#3) Change `tasks.md` resolution to read from the target branch worktree instead of the main worktree, with explicit fallback to current behavior when running single-variation/no `--target-branch` [5 pts] (blocked by #1) (A)
+- [x] (#4) Update sprint worktree creation to fork from the current target-branch tip (not the initial base commit) and generate per-run worktree names/paths to eliminate cross-variation collisions [5 pts] (blocked by #1) (B)
 
 ## Worktree And Merge Recovery
 
