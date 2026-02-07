@@ -14,7 +14,7 @@
 
 ## Compatibility And Migration
 
-- [A] (#7) Preserve backward compatibility with existing `.swarm-hug/` project layout by adding migration/fallback handling for legacy runtime keys/worktree conventions and confirming no behavior change for single-variation runs [5 pts] (blocked by #2, #3, #4, #6)
+- [x] (#7) Preserve backward compatibility with existing `.swarm-hug/` project layout by adding migration/fallback handling for legacy runtime keys/worktree conventions and confirming no behavior change for single-variation runs [5 pts] (blocked by #2, #3, #4, #6) (A)
 
 ## Testing And Validation
 
