@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{TEAM_STATE_FILE, SWARM_HUG_DIR};
+use super::{SWARM_HUG_DIR, TEAM_STATE_FILE};
 
 /// Persisted team state for merge operations.
 #[derive(Debug, Clone)]
@@ -46,7 +46,17 @@ impl TeamState {
         if path.exists() {
             let content = fs::read_to_string(path)
                 .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
-            let (team_name, feature_branch) = Self::parse_json_full(&content)?;
+            let (team_name, feature_branch) = match Self::parse_json_full(&content) {
+                Ok(parsed) => parsed,
+                Err(err) if err == "missing team field in team state" => {
+                    // Legacy compatibility: old team-state.json files may omit "team".
+                    // Fall back to deriving team from the path and parsing feature branch only.
+                    let team_name = derive_team_name_from_path(path)?;
+                    let feature_branch = Self::parse_json(&content)?;
+                    (team_name, feature_branch)
+                }
+                Err(err) => return Err(err),
+            };
             Ok(Self {
                 team_name,
                 feature_branch: feature_branch.filter(|branch| !branch.trim().is_empty()),
@@ -54,12 +64,7 @@ impl TeamState {
             })
         } else {
             // Derive team name from parent directory (path is .swarm-hug/<team>/team-state.json)
-            let team_name = path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| format!("cannot derive team name from path: {}", path.display()))?
-                .to_string();
+            let team_name = derive_team_name_from_path(path)?;
 
             Ok(Self {
                 team_name,
@@ -72,8 +77,7 @@ impl TeamState {
     /// Save team state to disk.
     pub fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create directory: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {}", e))?;
         }
 
         let content = self.to_json();
@@ -108,20 +112,22 @@ impl TeamState {
             return Err("invalid team state JSON".to_string());
         }
 
-        let key = "\"feature_branch\"";
-        if let Some(idx) = content.find(key) {
-            let after_key = &content[idx + key.len()..];
-            if let Some(colon_idx) = after_key.find(':') {
-                let after_colon = after_key[colon_idx + 1..].trim_start();
-                if after_colon.starts_with("null") {
-                    return Ok(None);
+        // "feature_branch" is canonical; "sprint_branch" is a legacy alias.
+        for key in ["\"feature_branch\"", "\"sprint_branch\""] {
+            if let Some(idx) = content.find(key) {
+                let after_key = &content[idx + key.len()..];
+                if let Some(colon_idx) = after_key.find(':') {
+                    let after_colon = after_key[colon_idx + 1..].trim_start();
+                    if after_colon.starts_with("null") {
+                        return Ok(None);
+                    }
+                    if after_colon.starts_with('"') {
+                        let value = parse_json_string(after_colon)?;
+                        return Ok(Some(value));
+                    }
                 }
-                if after_colon.starts_with('"') {
-                    let value = parse_json_string(after_colon)?;
-                    return Ok(Some(value));
-                }
+                return Err("invalid feature_branch value".to_string());
             }
-            return Err("invalid feature_branch value".to_string());
         }
 
         Ok(None)
@@ -169,6 +175,14 @@ impl TeamState {
             team, feature
         )
     }
+}
+
+fn derive_team_name_from_path(path: &Path) -> Result<String, String> {
+    path.parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("cannot derive team name from path: {}", path.display()))
 }
 
 fn escape_json_string(value: &str) -> String {
@@ -286,7 +300,10 @@ mod tests {
             let loaded = TeamState::load_from(&path).unwrap();
 
             assert_eq!(loaded.team_name, "load-from-team");
-            assert_eq!(loaded.feature_branch, Some("load-from-sprint-1".to_string()));
+            assert_eq!(
+                loaded.feature_branch,
+                Some("load-from-sprint-1".to_string())
+            );
             assert_eq!(loaded.path(), &path);
         });
     }
@@ -328,23 +345,25 @@ mod tests {
             // Reload and verify
             let reloaded = TeamState::load_from(&path).unwrap();
             assert_eq!(reloaded.team_name, "save-reload-team");
-            assert_eq!(reloaded.feature_branch, Some("save-reload-sprint-1".to_string()));
+            assert_eq!(
+                reloaded.feature_branch,
+                Some("save-reload-sprint-1".to_string())
+            );
         });
     }
 
     #[test]
     fn test_team_state_parse_json_full() {
         // Valid JSON with feature branch
-        let (team, feature) = TeamState::parse_json_full(
-            r#"{"team": "alpha", "feature_branch": "alpha-sprint-1"}"#
-        ).unwrap();
+        let (team, feature) =
+            TeamState::parse_json_full(r#"{"team": "alpha", "feature_branch": "alpha-sprint-1"}"#)
+                .unwrap();
         assert_eq!(team, "alpha");
         assert_eq!(feature, Some("alpha-sprint-1".to_string()));
 
         // Valid JSON with null feature branch
-        let (team, feature) = TeamState::parse_json_full(
-            r#"{"team": "beta", "feature_branch": null}"#
-        ).unwrap();
+        let (team, feature) =
+            TeamState::parse_json_full(r#"{"team": "beta", "feature_branch": null}"#).unwrap();
         assert_eq!(team, "beta");
         assert_eq!(feature, None);
 
@@ -355,5 +374,37 @@ mod tests {
         // Invalid JSON should error
         let result = TeamState::parse_json_full("not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_team_state_load_from_legacy_without_team_field() {
+        with_temp_cwd(|| {
+            let team_dir = PathBuf::from(SWARM_HUG_DIR).join("legacy-team");
+            fs::create_dir_all(&team_dir).unwrap();
+            let path = team_dir.join(TEAM_STATE_FILE);
+
+            // Legacy shape: no "team" key.
+            fs::write(&path, r#"{"feature_branch":"legacy-sprint-2"}"#).unwrap();
+
+            let loaded = TeamState::load_from(&path).unwrap();
+            assert_eq!(loaded.team_name, "legacy-team");
+            assert_eq!(loaded.feature_branch, Some("legacy-sprint-2".to_string()));
+        });
+    }
+
+    #[test]
+    fn test_team_state_load_from_legacy_sprint_branch_key() {
+        with_temp_cwd(|| {
+            let team_dir = PathBuf::from(SWARM_HUG_DIR).join("legacy-key-team");
+            fs::create_dir_all(&team_dir).unwrap();
+            let path = team_dir.join(TEAM_STATE_FILE);
+
+            // Legacy key alias: "sprint_branch".
+            fs::write(&path, r#"{"sprint_branch":"legacy-sprint-3"}"#).unwrap();
+
+            let loaded = TeamState::load_from(&path).unwrap();
+            assert_eq!(loaded.team_name, "legacy-key-team");
+            assert_eq!(loaded.feature_branch, Some("legacy-sprint-3".to_string()));
+        });
     }
 }
