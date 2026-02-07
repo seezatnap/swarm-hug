@@ -20,3 +20,6 @@
 
 - [ ] (#8) Add automated concurrency tests for same-project/different-target-branch runs verifying independent sprint plans, independent task assignments, target-branch `tasks.md` loading, target-tip worktree forking, and isolated sprint history [5 pts] (blocked by #2, #3, #4)
 - [ ] (#9) Add automated stale-worktree/merge regression tests covering mismatch cleanup + re-registration, recovery from prior-run stale worktrees, no lost-work merge behavior, and single-variation regression checks [5 pts] (blocked by #6, #7)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#10) In split source/target runs, pass the canonical team directory (`.swarm-hug/<team>`) to agent engines instead of the namespaced runtime directory (`.swarm-hug/<team>/runs/<target>`), so prompt-derived paths for `team-state.json` and sprint worktrees resolve correctly.
