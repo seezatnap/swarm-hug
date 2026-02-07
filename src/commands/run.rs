@@ -9,6 +9,7 @@ use std::time::Duration;
 use swarm::chat;
 use swarm::color::{self, emoji};
 use swarm::config::Config;
+use swarm::run_hash;
 use swarm::shutdown;
 use swarm::team;
 
@@ -53,6 +54,7 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
     let mut sprint_number = 0;
     let mut interrupted = false;
     let mut consecutive_failures = 0;
+    let run_instance = run_hash::generate_run_hash();
 
     loop {
         sprint_number += 1;
@@ -71,7 +73,7 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
         }
 
         // Run one sprint (may return early if shutdown requested)
-        let result = run_sprint(config, sprint_number);
+        let result = run_sprint(config, sprint_number, &run_instance);
 
         // Check if we were interrupted during the sprint
         if shutdown::requested() {
