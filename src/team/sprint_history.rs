@@ -81,21 +81,24 @@ impl SprintHistory {
             return Err("invalid sprint history JSON".to_string());
         }
 
-        // Find "total_sprints": N
-        if let Some(idx) = content.find("\"total_sprints\"") {
-            let after_key = &content[idx + 15..]; // Skip past "total_sprints"
-            if let Some(colon_idx) = after_key.find(':') {
-                let after_colon = after_key[colon_idx + 1..].trim();
-                // Extract the number (ends at comma, brace, or whitespace)
-                let num_str: String = after_colon
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-                if !num_str.is_empty() {
-                    return num_str
-                        .parse()
-                        .map_err(|_| "invalid total_sprints value".to_string());
+        // "total_sprints" is canonical. "sprint_count" and "sprint" are legacy aliases.
+        for key in ["\"total_sprints\"", "\"sprint_count\"", "\"sprint\""] {
+            if let Some(idx) = content.find(key) {
+                let after_key = &content[idx + key.len()..];
+                if let Some(colon_idx) = after_key.find(':') {
+                    let after_colon = after_key[colon_idx + 1..].trim();
+                    // Extract the number (ends at comma, brace, or whitespace)
+                    let num_str: String = after_colon
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    if !num_str.is_empty() {
+                        return num_str
+                            .parse()
+                            .map_err(|_| "invalid total_sprints value".to_string());
+                    }
                 }
+                return Err("invalid total_sprints value".to_string());
             }
         }
 
@@ -183,8 +186,7 @@ impl SprintHistory {
     pub fn save(&self) -> Result<(), String> {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create directory: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {}", e))?;
         }
 
         let content = self.to_json();
@@ -222,8 +224,8 @@ impl SprintHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::Team;
+    use super::*;
     use crate::testutil::with_temp_cwd;
 
     #[test]
@@ -280,10 +282,12 @@ mod tests {
         assert_eq!(result.unwrap(), 42);
 
         // With whitespace
-        let result = SprintHistory::parse_json(r#"{
+        let result = SprintHistory::parse_json(
+            r#"{
             "team": "test",
             "total_sprints": 100
-        }"#);
+        }"#,
+        );
         assert_eq!(result.unwrap(), 100);
 
         // Invalid JSON (not an object)
@@ -532,10 +536,12 @@ mod tests {
         assert_eq!(result, Some("test-team".to_string()));
 
         // With whitespace
-        let result = SprintHistory::parse_team_name(r#"{
+        let result = SprintHistory::parse_team_name(
+            r#"{
             "team": "spaced-team",
             "total_sprints": 5
-        }"#);
+        }"#,
+        );
         assert_eq!(result, Some("spaced-team".to_string()));
 
         // Missing team field
@@ -547,7 +553,19 @@ mod tests {
         assert_eq!(result, Some("".to_string()));
 
         // Team name with escaped characters
-        let result = SprintHistory::parse_team_name(r#"{"team": "test\"team", "total_sprints": 1}"#);
+        let result =
+            SprintHistory::parse_team_name(r#"{"team": "test\"team", "total_sprints": 1}"#);
         assert_eq!(result, Some("test\"team".to_string()));
+    }
+
+    #[test]
+    fn test_parse_json_supports_legacy_sprint_keys() {
+        let count = SprintHistory::parse_json(r#"{"team":"legacy","sprint_count":7}"#)
+            .expect("parse legacy sprint_count");
+        assert_eq!(count, 7);
+
+        let sprint = SprintHistory::parse_json(r#"{"team":"legacy","sprint":3}"#)
+            .expect("parse legacy sprint");
+        assert_eq!(sprint, 3);
     }
 }

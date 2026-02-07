@@ -65,8 +65,8 @@ pub fn cmd_cleanup_worktrees(_config: &Config) -> Result<(), String> {
         return Ok(());
     }
 
-    let selection = run_selector(&entries)
-        .map_err(|e| format!("cleanup selector failed: {}", e))?;
+    let selection =
+        run_selector(&entries).map_err(|e| format!("cleanup selector failed: {}", e))?;
 
     let selected = match selection {
         Some(selected) => selected,
@@ -166,15 +166,24 @@ fn build_entry(repo_root: &Path, raw_path: &str, branch: Option<String>) -> Opti
     } else if resolved.starts_with(&projects_root) {
         let rel = resolved.strip_prefix(&projects_root).ok()?;
         let mut components = rel.components();
-        let team = components.next()?.as_os_str().to_string_lossy().to_string();
-        if team == ".shared" {
+        let first = components.next()?.as_os_str().to_string_lossy().to_string();
+        if first == ".shared" {
             return None;
         }
-        let worktrees_marker = components.next()?.as_os_str().to_string_lossy();
-        if worktrees_marker != "worktrees" {
-            return None;
+
+        if first == "worktrees" {
+            // Legacy single-project layout: .swarm-hug/worktrees/<worktree>
+            if components.next().is_none() {
+                return None;
+            }
+            (WorktreeGroup::Project, Some("default".to_string()))
+        } else {
+            let worktrees_marker = components.next()?.as_os_str().to_string_lossy();
+            if worktrees_marker != "worktrees" {
+                return None;
+            }
+            (WorktreeGroup::Project, Some(first))
         }
-        (WorktreeGroup::Project, Some(team))
     } else {
         return None;
     };
@@ -228,7 +237,11 @@ fn run_selector(entries: &[WorktreeEntry]) -> io::Result<Option<Vec<usize>>> {
                 .collect();
 
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title("Cleanup Worktrees"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Cleanup Worktrees"),
+                )
                 .highlight_style(
                     Style::default()
                         .bg(Color::DarkGray)
@@ -348,7 +361,9 @@ fn build_rows(entries: &[WorktreeEntry]) -> Vec<Row> {
         .map(|(i, _)| i)
         .collect();
     if shared_entries.is_empty() {
-        rows.push(Row { kind: RowKind::Empty });
+        rows.push(Row {
+            kind: RowKind::Empty,
+        });
     } else {
         for idx in shared_entries {
             rows.push(Row {
@@ -357,7 +372,9 @@ fn build_rows(entries: &[WorktreeEntry]) -> Vec<Row> {
         }
     }
 
-    rows.push(Row { kind: RowKind::Spacer });
+    rows.push(Row {
+        kind: RowKind::Spacer,
+    });
 
     rows.push(Row {
         kind: RowKind::Header(WorktreeGroup::Project),
@@ -375,7 +392,9 @@ fn build_rows(entries: &[WorktreeEntry]) -> Vec<Row> {
         .map(|(i, _)| i)
         .collect();
     if project_entries.is_empty() {
-        rows.push(Row { kind: RowKind::Empty });
+        rows.push(Row {
+            kind: RowKind::Empty,
+        });
     } else {
         for idx in project_entries {
             rows.push(Row {
@@ -384,9 +403,13 @@ fn build_rows(entries: &[WorktreeEntry]) -> Vec<Row> {
         }
     }
 
-    rows.push(Row { kind: RowKind::Spacer });
+    rows.push(Row {
+        kind: RowKind::Spacer,
+    });
     rows.push(Row { kind: RowKind::Ok });
-    rows.push(Row { kind: RowKind::Cancel });
+    rows.push(Row {
+        kind: RowKind::Cancel,
+    });
 
     rows
 }
@@ -495,13 +518,7 @@ fn handle_key(
                         let selected = selections
                             .iter()
                             .enumerate()
-                            .filter_map(|(idx, selected)| {
-                                if *selected {
-                                    Some(idx)
-                                } else {
-                                    None
-                                }
-                            })
+                            .filter_map(|(idx, selected)| if *selected { Some(idx) } else { None })
                             .collect();
                         return Some(SelectorOutcome::Selected(selected));
                     }
@@ -577,5 +594,28 @@ worktree {}\nHEAD ghi\nbranch refs/heads/feat-1\n\n",
         assert_eq!(project.path, project_abs);
         assert_eq!(project.branch.as_deref(), Some("feat-1"));
         assert!(project.display.starts_with("alpha/feat-1 -"));
+    }
+
+    #[test]
+    fn test_parse_worktree_list_output_supports_legacy_single_project_layout() {
+        let temp = TempDir::new().expect("tempdir");
+        let repo_root = temp.path();
+
+        let legacy_rel = Path::new(".swarm-hug/worktrees/agent-A-Aaron");
+        let stdout = format!(
+            "worktree {}\nHEAD abc\nbranch refs/heads/main\n\n\
+worktree {}\nHEAD def\nbranch refs/heads/agent-aaron\n\n",
+            repo_root.display(),
+            legacy_rel.display(),
+        );
+
+        let entries = parse_worktree_list_output(repo_root, &stdout);
+        assert_eq!(entries.len(), 1);
+
+        let legacy = &entries[0];
+        assert_eq!(legacy.group, WorktreeGroup::Project);
+        assert_eq!(legacy.path, repo_root.join(legacy_rel));
+        assert_eq!(legacy.branch.as_deref(), Some("agent-aaron"));
+        assert!(legacy.display.starts_with("default/agent-aaron -"));
     }
 }
