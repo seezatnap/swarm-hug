@@ -201,6 +201,21 @@ fn create_branch_at_commit(repo_root: &Path, branch: &str, commit: &str) -> Resu
     }
 }
 
+fn engine_team_dir(team_name: &str, fallback_tasks_path: &str) -> String {
+    let trimmed = team_name.trim();
+    if trimmed.is_empty() {
+        return Path::new(fallback_tasks_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+    }
+
+    Path::new(team::SWARM_HUG_DIR)
+        .join(trimmed)
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
 pub(crate) struct SprintResult {
@@ -606,10 +621,10 @@ pub(crate) fn run_sprint(
     // Return type includes: (initial, description, success, error, duration)
     let mut handles: Vec<thread::JoinHandle<Vec<TaskResult>>> = Vec::new();
 
-    // Derive team directory from runtime tasks path.
-    let team_dir: Option<String> = runtime_tasks_path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    // Always pass canonical team directory to engines. In split source/target
+    // runs, files_tasks may be namespaced under runs/<target>, but prompt-derived
+    // team-state/worktree paths should resolve from .swarm-hug/<team>.
+    let team_dir = Some(engine_team_dir(&team_name, &config.files_tasks));
 
     for (initial, tasks) in agent_tasks {
         let mut working_dir = worktree_map
@@ -1952,7 +1967,7 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, ensure_branch_exists, preserve_failed_worktree,
+        chat, create_branch_at_commit, engine_team_dir, ensure_branch_exists, preserve_failed_worktree,
         split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
         MergeFailureInfo, SprintResult,
     };
@@ -1999,6 +2014,18 @@ mod tests {
             tasks_failed: 3,
         };
         assert!(result.all_failed());
+    }
+
+    #[test]
+    fn test_engine_team_dir_uses_canonical_team_root() {
+        let path = engine_team_dir("greenfield", ".swarm-hug/greenfield/runs/main/tasks.md");
+        assert_eq!(path, ".swarm-hug/greenfield");
+    }
+
+    #[test]
+    fn test_engine_team_dir_falls_back_to_tasks_parent_when_team_empty() {
+        let path = engine_team_dir("", ".swarm-hug/greenfield/runs/main/tasks.md");
+        assert_eq!(path, ".swarm-hug/greenfield/runs/main");
     }
 
     #[test]

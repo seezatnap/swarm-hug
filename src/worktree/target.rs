@@ -55,6 +55,161 @@ fn normalize_target_branch(target_branch: &str) -> Result<&str, String> {
     Ok(target)
 }
 
+#[derive(Debug, Clone)]
+struct WorktreeRegistration {
+    path: PathBuf,
+    branch: Option<String>,
+}
+
+fn resolve_worktree_path(repo_root: &Path, worktree_path: &str) -> PathBuf {
+    let candidate = PathBuf::from(worktree_path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        repo_root.join(candidate)
+    }
+}
+
+fn parse_worktree_registrations(
+    porcelain_output: &str,
+    repo_root: &Path,
+) -> Vec<WorktreeRegistration> {
+    let mut registrations = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in porcelain_output.lines().chain(std::iter::once("")) {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(path) = current_path.take() {
+                registrations.push(WorktreeRegistration {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                current_path = Some(resolve_worktree_path(repo_root, trimmed));
+            }
+            current_branch = None;
+        } else if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
+            let trimmed = branch_ref.trim();
+            if current_path.is_some() && !trimmed.is_empty() {
+                current_branch = Some(trimmed.to_string());
+            }
+        } else if line.is_empty() {
+            if let Some(path) = current_path.take() {
+                registrations.push(WorktreeRegistration {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            current_branch = None;
+        }
+    }
+
+    registrations
+}
+
+fn worktree_paths_match(repo_root: &Path, expected: &Path, registered: &Path) -> bool {
+    let expected_abs = if expected.is_absolute() {
+        expected.to_path_buf()
+    } else {
+        repo_root.join(expected)
+    };
+    let registered_abs = if registered.is_absolute() {
+        registered.to_path_buf()
+    } else {
+        repo_root.join(registered)
+    };
+
+    if expected_abs == registered_abs {
+        return true;
+    }
+
+    match (expected_abs.canonicalize(), registered_abs.canonicalize()) {
+        (Ok(expected), Ok(registered)) => expected == registered,
+        _ => false,
+    }
+}
+
+fn find_worktree_registration_for_path(
+    repo_root: &Path,
+    expected_path: &Path,
+) -> Result<Option<WorktreeRegistration>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let registrations = parse_worktree_registrations(&stdout, repo_root);
+    Ok(registrations
+        .into_iter()
+        .find(|reg| worktree_paths_match(repo_root, expected_path, &reg.path)))
+}
+
+fn recover_stale_registration(
+    repo_root: &Path,
+    path: &Path,
+    expected_branch: &str,
+) -> Result<(), String> {
+    let Some(registration) = find_worktree_registration_for_path(repo_root, path)? else {
+        return Ok(());
+    };
+
+    if registration.branch.as_deref() == Some(expected_branch) {
+        return Ok(());
+    }
+
+    let registered_path = registration.path.to_string_lossy().to_string();
+    let remove_output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "remove", "--force", &registered_path])
+        .output()
+        .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
+
+    if !remove_output.status.success() {
+        let prune_output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["worktree", "prune", "--expire", "now"])
+            .output()
+            .map_err(|e| format!("failed to run git worktree prune: {}", e))?;
+        if !prune_output.status.success() {
+            let remove_stderr = String::from_utf8_lossy(&remove_output.stderr);
+            let prune_stderr = String::from_utf8_lossy(&prune_output.stderr);
+            return Err(format!(
+                "failed to force-remove stale worktree registration '{}': remove failed ({}) and prune failed ({})",
+                registration.path.display(),
+                remove_stderr.trim(),
+                prune_stderr.trim()
+            ));
+        }
+    }
+
+    if worktree_is_registered(repo_root, path)? {
+        let found = find_worktree_registration_for_path(repo_root, path)?
+            .and_then(|reg| reg.branch)
+            .unwrap_or_else(|| "unknown".to_string());
+        return Err(format!(
+            "stale worktree path '{}' is still registered to '{}' (expected '{}')",
+            path.display(),
+            found,
+            expected_branch
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate that the target branch worktree (if any) is under the shared root.
 ///
 /// Returns the worktree path when it exists under the shared root, Ok(None) if
@@ -96,9 +251,7 @@ pub fn validate_target_branch_worktree_in(
 /// If an existing worktree for the target branch is already under the shared root,
 /// it is reused. If a worktree exists elsewhere, this errors. If no worktree exists,
 /// a new one is created at `./.swarm-hug/.shared/worktrees/<sanitized-target>`.
-pub fn create_target_branch_worktree(
-    target_branch: &str,
-) -> Result<PathBuf, String> {
+pub fn create_target_branch_worktree(target_branch: &str) -> Result<PathBuf, String> {
     let repo_root = git_repo_root()?;
     create_target_branch_worktree_in(&repo_root, target_branch)
 }
@@ -129,6 +282,8 @@ pub fn create_target_branch_worktree_in(
     let sanitized = sanitize_target_branch_component(target);
     let path = shared_root.join(&sanitized);
     let path_str = path.to_string_lossy().to_string();
+
+    recover_stale_registration(repo_root, &path, target)?;
 
     if worktree_is_registered(repo_root, &path)? {
         return Err(format!(
@@ -225,7 +380,11 @@ fn find_target_branch_worktree_in_normalized(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_target_worktree_path(&stdout, target_branch, repo_root))
+    Ok(parse_target_worktree_path(
+        &stdout,
+        target_branch,
+        repo_root,
+    ))
 }
 
 fn sanitize_target_branch_component(target_branch: &str) -> String {
@@ -293,9 +452,7 @@ fn is_repo_root_worktree(repo_root: &Path, path: &Path) -> bool {
     let repo_canonical = repo_root
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
-    let path_canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let path_canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     repo_canonical == path_canonical
 }
 
@@ -355,8 +512,7 @@ branch refs/heads/main
 
 ";
         let repo_root = Path::new("/repo");
-        let result =
-            parse_target_worktree_path(porcelain, "main", repo_root).expect("path found");
+        let result = parse_target_worktree_path(porcelain, "main", repo_root).expect("path found");
         assert_eq!(
             result,
             PathBuf::from("/repo/.swarm-hug/.shared/worktrees/main")
@@ -374,6 +530,38 @@ branch refs/heads/main
         let repo_root = Path::new("/repo");
         let result = parse_target_worktree_path(porcelain, "develop", repo_root);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_worktree_registrations_tracks_path_and_branch() {
+        let porcelain = "\\
+worktree /repo
+HEAD abc123
+branch refs/heads/main
+
+worktree .swarm-hug/.shared/worktrees/target
+HEAD def456
+branch refs/heads/target-branch
+
+worktree /repo/.swarm-hug/.shared/worktrees/detached
+HEAD 123abc
+detached
+
+";
+        let regs = parse_worktree_registrations(porcelain, Path::new("/repo"));
+        assert_eq!(regs.len(), 3);
+        assert_eq!(regs[0].path, PathBuf::from("/repo"));
+        assert_eq!(regs[0].branch.as_deref(), Some("main"));
+        assert_eq!(
+            regs[1].path,
+            PathBuf::from("/repo/.swarm-hug/.shared/worktrees/target")
+        );
+        assert_eq!(regs[1].branch.as_deref(), Some("target-branch"));
+        assert_eq!(
+            regs[2].path,
+            PathBuf::from("/repo/.swarm-hug/.shared/worktrees/detached")
+        );
+        assert!(regs[2].branch.is_none());
     }
 
     #[test]
@@ -481,8 +669,7 @@ branch refs/heads/main
         for entry in entries {
             let entry = entry.expect("worktree entry");
             let gitdir_path = entry.path().join("gitdir");
-            let gitdir_contents =
-                std::fs::read_to_string(&gitdir_path).expect("read gitdir");
+            let gitdir_contents = std::fs::read_to_string(&gitdir_path).expect("read gitdir");
             let gitdir_trimmed = gitdir_contents.trim();
             let gitdir_path_buf = PathBuf::from(gitdir_trimmed);
             let gitdir_resolved = if gitdir_path_buf.is_absolute() {
@@ -511,8 +698,7 @@ branch refs/heads/main
     }
 
     fn canonical_path(path: &Path) -> PathBuf {
-        path.canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf())
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     }
 
     fn path_relative_to(target: &Path, base: &Path) -> PathBuf {
@@ -575,8 +761,8 @@ branch refs/heads/main
         init_repo(repo);
 
         let current = git_stdout(repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
-        let result = validate_target_branch_worktree_in(repo, &current)
-            .expect("validate target worktree");
+        let result =
+            validate_target_branch_worktree_in(repo, &current).expect("validate target worktree");
         let expected = canonical_path(repo);
         let actual = result.as_ref().map(|path| canonical_path(path));
         assert_eq!(actual, Some(expected));
@@ -665,8 +851,7 @@ branch refs/heads/main
         init_repo(repo);
         run_git(repo, &["branch", "release/v1"]);
 
-        let path =
-            create_target_branch_worktree_in(repo, "release/v1").expect("create worktree");
+        let path = create_target_branch_worktree_in(repo, "release/v1").expect("create worktree");
         let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
         let expected = shared_root.join("release%2Fv1");
         assert_eq!(path, expected);
@@ -686,7 +871,7 @@ branch refs/heads/main
     }
 
     #[test]
-    fn test_create_target_branch_worktree_rejects_registered_relative_path() {
+    fn test_create_target_branch_worktree_recovers_registered_relative_path_mismatch() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
@@ -707,15 +892,58 @@ branch refs/heads/main
 
         make_worktree_gitdir_relative(repo, &worktree_path);
 
-        let err = create_target_branch_worktree_in(repo, "target-branch")
-            .expect_err("should reject registered worktree path");
+        let recovered = create_target_branch_worktree_in(repo, "target-branch")
+            .expect("recover stale registration");
+        assert_eq!(canonical_path(&recovered), canonical_path(&worktree_path));
         assert!(
-            err.contains("already registered"),
-            "unexpected error: {}",
-            err
+            worktree_path.exists(),
+            "worktree should exist after recovery"
         );
-        assert!(worktree_path.exists(), "worktree should not be deleted");
+
+        let resolved = find_target_branch_worktree_in(repo, "target-branch")
+            .expect("find target worktree")
+            .expect("target worktree should exist");
+        assert_eq!(canonical_path(&resolved), canonical_path(&worktree_path));
+
         let head = git_stdout(&worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
-        assert_eq!(head, "other");
+        assert_eq!(head, "target-branch");
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_recovers_prunable_mismatch_registration() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "target-branch"]);
+        run_git(repo, &["branch", "other"]);
+
+        let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
+        let worktree_path = shared_root.join("target-branch");
+        run_git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                worktree_path.to_str().expect("worktree path"),
+                "other",
+            ],
+        );
+
+        std::fs::remove_dir_all(&worktree_path).expect("remove worktree dir");
+        assert!(
+            !worktree_path.exists(),
+            "worktree directory should be missing before recovery"
+        );
+
+        let recovered = create_target_branch_worktree_in(repo, "target-branch")
+            .expect("recover stale prunable registration");
+        assert_eq!(canonical_path(&recovered), canonical_path(&worktree_path));
+        assert!(
+            worktree_path.exists(),
+            "worktree should exist after recovery"
+        );
+
+        let head = git_stdout(&worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(head, "target-branch");
     }
 }

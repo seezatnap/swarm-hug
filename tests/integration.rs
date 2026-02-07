@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
+use std::thread;
 
 use tempfile::TempDir;
 
@@ -3101,6 +3102,415 @@ fn test_nonexistent_source_branch_returns_clear_error() {
         "expected guidance in error message, got stderr:\n{}",
         stderr
     );
+}
+
+/// Test same-project concurrent variation prep across different target branches.
+///
+/// This verifies runtime isolation guarantees from #2/#3/#4 without relying on
+/// merge-agent behavior:
+/// 1. Sprint plans are independent per target branch
+/// 2. Task assignments are independent per target branch
+/// 3. tasks.md is loaded from each target-branch worktree
+/// 4. Sprint worktrees fork from each target branch tip
+/// 5. Sprint history remains isolated per variation
+#[test]
+fn test_same_project_different_target_branches_isolated_variation_prep() {
+    #[derive(Debug)]
+    struct VariationPlan {
+        branch: String,
+        next_sprint: usize,
+        run_ctx: RunContext,
+        tasks_content: String,
+        assigned_tasks: Vec<String>,
+    }
+
+    with_temp_cwd(|repo_path| {
+        let repo_path = repo_path.to_path_buf();
+        let team_name = "alpha";
+
+        init_git_repo(&repo_path);
+        fs::write(repo_path.join("README.md"), "init").expect("write README");
+        commit_all(&repo_path, "init");
+        run_success(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo_path)
+                .args(["branch", "-M", "main"]),
+        );
+
+        // Seed shared project directory on main.
+        let team_root = repo_path.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&team_root).expect("create team root");
+        fs::write(team_root.join("tasks.md"), "# Tasks\n\n- [ ] Seed task\n")
+            .expect("write seed tasks");
+        commit_all(&repo_path, "seed project");
+
+        // target-one has distinct tasks/history/tip marker.
+        run_success(Command::new("git").arg("-C").arg(&repo_path).args([
+            "checkout",
+            "-b",
+            "target-one",
+        ]));
+        fs::write(
+            team_root.join("tasks.md"),
+            "# Tasks\n\n- [ ] Alpha one task A\n- [ ] Alpha one task B\n",
+        )
+        .expect("write target-one tasks");
+        fs::write(
+            team_root.join("sprint-history.json"),
+            "{\n  \"team\": \"alpha\",\n  \"total_sprints\": 4\n}\n",
+        )
+        .expect("write target-one history");
+        fs::write(repo_path.join("target-one-tip.txt"), "target one tip\n")
+            .expect("write target-one tip marker");
+        commit_all(&repo_path, "seed target-one");
+
+        // target-two has different tasks/history/tip marker.
+        run_success(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo_path)
+                .args(["checkout", "main"]),
+        );
+        run_success(Command::new("git").arg("-C").arg(&repo_path).args([
+            "checkout",
+            "-b",
+            "target-two",
+        ]));
+        fs::write(
+            team_root.join("tasks.md"),
+            "# Tasks\n\n- [ ] Alpha two task X\n- [ ] Alpha two task Y\n",
+        )
+        .expect("write target-two tasks");
+        fs::write(
+            team_root.join("sprint-history.json"),
+            "{\n  \"team\": \"alpha\",\n  \"total_sprints\": 9\n}\n",
+        )
+        .expect("write target-two history");
+        fs::write(repo_path.join("target-two-tip.txt"), "target two tip\n")
+            .expect("write target-two tip marker");
+        commit_all(&repo_path, "seed target-two");
+        run_success(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo_path)
+                .args(["checkout", "main"]),
+        );
+
+        let target_one_worktree =
+            worktree::create_target_branch_worktree_in(&repo_path, "target-one")
+                .expect("create target-one worktree");
+        let target_two_worktree =
+            worktree::create_target_branch_worktree_in(&repo_path, "target-two")
+                .expect("create target-two worktree");
+        assert_ne!(
+            canonical_path_str(&target_one_worktree),
+            canonical_path_str(&target_two_worktree),
+            "target branch worktrees should be distinct"
+        );
+
+        let plan_one = {
+            let team_name = team_name.to_string();
+            let target_one_worktree = target_one_worktree.clone();
+            thread::spawn(move || {
+                let tasks_path = target_one_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("tasks.md");
+                let tasks_content = fs::read_to_string(&tasks_path).expect("read target-one tasks");
+                let task_list = TaskList::parse(&tasks_content);
+
+                let loop_dir = target_one_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("loop");
+                let engine = StubEngine::new(loop_dir.to_string_lossy().to_string());
+                let plan_result = swarm::planning::run_llm_assignment(
+                    &engine,
+                    &task_list,
+                    &['A', 'B'],
+                    1,
+                    &loop_dir,
+                );
+                assert!(plan_result.success, "target-one plan should succeed");
+
+                let mut assigned_list = task_list.clone();
+                for (line_num, initial) in &plan_result.assignments {
+                    let idx = line_num.saturating_sub(1);
+                    if idx < assigned_list.tasks.len() {
+                        assigned_list.tasks[idx].assign(*initial);
+                    }
+                }
+                let assigned_tasks: Vec<String> = assigned_list
+                    .tasks
+                    .iter()
+                    .filter_map(|t| match t.status {
+                        TaskStatus::Assigned(_) => Some(t.description.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                let history_path = target_one_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("sprint-history.json");
+                let history = swarm::team::SprintHistory::load_from(&history_path)
+                    .expect("load target-one history");
+                let next_sprint = history.peek_next_sprint();
+
+                VariationPlan {
+                    branch: "target-one".to_string(),
+                    next_sprint,
+                    run_ctx: RunContext::new(&team_name, next_sprint as u32),
+                    tasks_content,
+                    assigned_tasks,
+                }
+            })
+        };
+
+        let plan_two = {
+            let team_name = team_name.to_string();
+            let target_two_worktree = target_two_worktree.clone();
+            thread::spawn(move || {
+                let tasks_path = target_two_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("tasks.md");
+                let tasks_content = fs::read_to_string(&tasks_path).expect("read target-two tasks");
+                let task_list = TaskList::parse(&tasks_content);
+
+                let loop_dir = target_two_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("loop");
+                let engine = StubEngine::new(loop_dir.to_string_lossy().to_string());
+                let plan_result = swarm::planning::run_llm_assignment(
+                    &engine,
+                    &task_list,
+                    &['A', 'B'],
+                    1,
+                    &loop_dir,
+                );
+                assert!(plan_result.success, "target-two plan should succeed");
+
+                let mut assigned_list = task_list.clone();
+                for (line_num, initial) in &plan_result.assignments {
+                    let idx = line_num.saturating_sub(1);
+                    if idx < assigned_list.tasks.len() {
+                        assigned_list.tasks[idx].assign(*initial);
+                    }
+                }
+                let assigned_tasks: Vec<String> = assigned_list
+                    .tasks
+                    .iter()
+                    .filter_map(|t| match t.status {
+                        TaskStatus::Assigned(_) => Some(t.description.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                let history_path = target_two_worktree
+                    .join(".swarm-hug")
+                    .join(&team_name)
+                    .join("sprint-history.json");
+                let history = swarm::team::SprintHistory::load_from(&history_path)
+                    .expect("load target-two history");
+                let next_sprint = history.peek_next_sprint();
+
+                VariationPlan {
+                    branch: "target-two".to_string(),
+                    next_sprint,
+                    run_ctx: RunContext::new(&team_name, next_sprint as u32),
+                    tasks_content,
+                    assigned_tasks,
+                }
+            })
+        };
+
+        let mut plans = vec![
+            plan_one.join().expect("join target-one plan"),
+            plan_two.join().expect("join target-two plan"),
+        ];
+        plans.sort_by(|a, b| a.branch.cmp(&b.branch));
+        let plan_one = &plans[0];
+        let plan_two = &plans[1];
+
+        // Independent sprint plans + target-branch tasks.md loading.
+        assert!(
+            plan_one.tasks_content.contains("Alpha one task A")
+                && plan_one.tasks_content.contains("Alpha one task B"),
+            "target-one plan should load target-one tasks"
+        );
+        assert!(
+            !plan_one.tasks_content.contains("Alpha two task X"),
+            "target-one plan should not load target-two tasks"
+        );
+        assert!(
+            plan_two.tasks_content.contains("Alpha two task X")
+                && plan_two.tasks_content.contains("Alpha two task Y"),
+            "target-two plan should load target-two tasks"
+        );
+        assert!(
+            !plan_two.tasks_content.contains("Alpha one task A"),
+            "target-two plan should not load target-one tasks"
+        );
+
+        // Independent task assignments.
+        assert_eq!(
+            plan_one.assigned_tasks.len(),
+            2,
+            "target-one should assign two tasks"
+        );
+        assert_eq!(
+            plan_two.assigned_tasks.len(),
+            2,
+            "target-two should assign two tasks"
+        );
+        assert!(
+            plan_one
+                .assigned_tasks
+                .iter()
+                .all(|t| t.contains("Alpha one")),
+            "target-one assignments should stay in target-one task set: {:?}",
+            plan_one.assigned_tasks
+        );
+        assert!(
+            plan_two
+                .assigned_tasks
+                .iter()
+                .all(|t| t.contains("Alpha two")),
+            "target-two assignments should stay in target-two task set: {:?}",
+            plan_two.assigned_tasks
+        );
+        assert_ne!(
+            plan_one.assigned_tasks, plan_two.assigned_tasks,
+            "target variations should not share assignment lists"
+        );
+
+        // Isolated sprint numbering from per-branch sprint history.
+        assert_eq!(
+            plan_one.next_sprint, 5,
+            "target-one should continue from history=4"
+        );
+        assert_eq!(
+            plan_two.next_sprint, 10,
+            "target-two should continue from history=9"
+        );
+
+        let sprint_branch_one = plan_one.run_ctx.sprint_branch();
+        let sprint_branch_two = plan_two.run_ctx.sprint_branch();
+        assert!(
+            sprint_branch_one.starts_with("alpha-sprint-5-"),
+            "target-one sprint branch should use sprint 5: {}",
+            sprint_branch_one
+        );
+        assert!(
+            sprint_branch_two.starts_with("alpha-sprint-10-"),
+            "target-two sprint branch should use sprint 10: {}",
+            sprint_branch_two
+        );
+        assert_ne!(
+            sprint_branch_one, sprint_branch_two,
+            "same-project variations should still use distinct sprint branches"
+        );
+
+        // Target-tip worktree forking.
+        let worktrees_dir = repo_path
+            .join(".swarm-hug")
+            .join(team_name)
+            .join("worktrees");
+        let feature_one =
+            worktree::create_feature_worktree_in(&worktrees_dir, &sprint_branch_one, "target-one")
+                .expect("create target-one sprint worktree");
+        let feature_two =
+            worktree::create_feature_worktree_in(&worktrees_dir, &sprint_branch_two, "target-two")
+                .expect("create target-two sprint worktree");
+        assert!(feature_one.join("target-one-tip.txt").exists());
+        assert!(!feature_one.join("target-two-tip.txt").exists());
+        assert!(feature_two.join("target-two-tip.txt").exists());
+        assert!(!feature_two.join("target-one-tip.txt").exists());
+
+        let feature_one_tasks = fs::read_to_string(
+            feature_one
+                .join(".swarm-hug")
+                .join(team_name)
+                .join("tasks.md"),
+        )
+        .expect("read target-one sprint tasks");
+        assert!(feature_one_tasks.contains("Alpha one task A"));
+        assert!(!feature_one_tasks.contains("Alpha two task X"));
+
+        let feature_two_tasks = fs::read_to_string(
+            feature_two
+                .join(".swarm-hug")
+                .join(team_name)
+                .join("tasks.md"),
+        )
+        .expect("read target-two sprint tasks");
+        assert!(feature_two_tasks.contains("Alpha two task X"));
+        assert!(!feature_two_tasks.contains("Alpha one task A"));
+
+        // Isolated sprint-history mutation in each variation worktree (run concurrently).
+        let history_one_path = feature_one
+            .join(".swarm-hug")
+            .join(team_name)
+            .join("sprint-history.json");
+        let history_two_path = feature_two
+            .join(".swarm-hug")
+            .join(team_name)
+            .join("sprint-history.json");
+
+        let history_one_handle = {
+            let history_one_path = history_one_path.clone();
+            thread::spawn(move || {
+                let mut history = swarm::team::SprintHistory::load_from(&history_one_path)
+                    .expect("load feature-one history");
+                assert_eq!(history.total_sprints, 4);
+                history.increment();
+                history.save().expect("save feature-one history");
+                history.total_sprints
+            })
+        };
+        let history_two_handle = {
+            let history_two_path = history_two_path.clone();
+            thread::spawn(move || {
+                let mut history = swarm::team::SprintHistory::load_from(&history_two_path)
+                    .expect("load feature-two history");
+                assert_eq!(history.total_sprints, 9);
+                history.increment();
+                history.save().expect("save feature-two history");
+                history.total_sprints
+            })
+        };
+
+        assert_eq!(
+            history_one_handle.join().expect("join feature-one history"),
+            5
+        );
+        assert_eq!(
+            history_two_handle.join().expect("join feature-two history"),
+            10
+        );
+
+        let final_history_one = swarm::team::SprintHistory::load_from(&history_one_path)
+            .expect("reload feature-one history");
+        let final_history_two = swarm::team::SprintHistory::load_from(&history_two_path)
+            .expect("reload feature-two history");
+        assert_eq!(final_history_one.total_sprints, 5);
+        assert_eq!(final_history_two.total_sprints, 10);
+
+        // Target branches remain unchanged until merge (history updates are isolated in sprint branches).
+        let target_one_history = git_stdout(
+            &repo_path,
+            &["show", "target-one:.swarm-hug/alpha/sprint-history.json"],
+        );
+        let target_two_history = git_stdout(
+            &repo_path,
+            &["show", "target-two:.swarm-hug/alpha/sprint-history.json"],
+        );
+        assert!(target_one_history.contains("\"total_sprints\": 4"));
+        assert!(target_two_history.contains("\"total_sprints\": 9"));
+    });
 }
 
 /// Test the two-step follow-up workflow end-to-end:

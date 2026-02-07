@@ -9,7 +9,7 @@
 
 ## Worktree And Merge Recovery
 
-- [ ] (#5) Implement merge-agent branch-mismatch recovery for registered worktree paths by detecting stale path-to-branch registrations, force-removing stale entries, and re-registering expected branch/path before merge [5 pts] (blocked by #4)
+- [x] (#5) Implement merge-agent branch-mismatch recovery for registered worktree paths by detecting stale path-to-branch registrations, force-removing stale entries, and re-registering expected branch/path before merge [5 pts] (blocked by #4) (A)
 - [ ] (#6) Add stale worktree cleanup in merge/worktree lifecycle flows to handle leftovers from previous runs, preserving valid active worktrees while reconciling abandoned stale registrations safely [5 pts] (blocked by #5)
 
 ## Compatibility And Migration
@@ -18,7 +18,7 @@
 
 ## Testing And Validation
 
-- [ ] (#8) Add automated concurrency tests for same-project/different-target-branch runs verifying independent sprint plans, independent task assignments, target-branch `tasks.md` loading, target-tip worktree forking, and isolated sprint history [5 pts] (blocked by #2, #3, #4)
+- [x] (#8) Add automated concurrency tests for same-project/different-target-branch runs verifying independent sprint plans, independent task assignments, target-branch `tasks.md` loading, target-tip worktree forking, and isolated sprint history [5 pts] (blocked by #2, #3, #4) (B)
 - [ ] (#9) Add automated stale-worktree/merge regression tests covering mismatch cleanup + re-registration, recovery from prior-run stale worktrees, no lost-work merge behavior, and single-variation regression checks [5 pts] (blocked by #6, #7)
 
 ## Follow-up tasks (from sprint review)
