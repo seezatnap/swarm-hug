@@ -27,6 +27,11 @@ use crate::run_hash::generate_run_hash;
 pub struct RunContext {
     /// Project name (team name).
     pub project: String,
+    /// Target branch for this run variation.
+    pub target_branch: String,
+    /// Runtime identifier shared by all sprints in a single `swarm run`.
+    /// Derived from project + target branch + run instance.
+    pub runtime_id: String,
     /// Sprint number within the project.
     pub sprint_number: u32,
     /// Unique hash for this run (6 alphanumeric characters).
@@ -50,8 +55,25 @@ impl RunContext {
     /// assert_eq!(ctx.run_hash.len(), 6);
     /// ```
     pub fn new(project: &str, sprint_number: u32) -> Self {
+        let run_instance = generate_run_hash();
+        Self::new_for_run(project, "default-target", &run_instance, sprint_number)
+    }
+
+    /// Creates a run context for a specific run variation.
+    ///
+    /// The `run_instance` should be created once per `swarm run` invocation and
+    /// reused for every sprint in that invocation. This keeps runtime state keys
+    /// stable within a run while still allowing per-sprint artifact hashes.
+    pub fn new_for_run(
+        project: &str,
+        target_branch: &str,
+        run_instance: &str,
+        sprint_number: u32,
+    ) -> Self {
         Self {
             project: project.to_string(),
+            target_branch: target_branch.to_string(),
+            runtime_id: compose_runtime_id(project, target_branch, run_instance),
             sprint_number,
             run_hash: generate_run_hash(),
         }
@@ -110,6 +132,57 @@ impl RunContext {
     pub fn hash(&self) -> &str {
         &self.run_hash
     }
+
+    /// Returns the stable runtime identifier for this run variation.
+    pub fn runtime_id(&self) -> &str {
+        &self.runtime_id
+    }
+
+    /// Prefix a state key with this context's runtime identifier.
+    ///
+    /// This ensures concurrent variations don't share runtime state keys.
+    pub fn runtime_state_key(&self, key: &str) -> String {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            self.runtime_id.clone()
+        } else {
+            format!("{}::{}", self.runtime_id, trimmed)
+        }
+    }
+}
+
+fn compose_runtime_id(project: &str, target_branch: &str, run_instance: &str) -> String {
+    let project = sanitize_runtime_component(project, "project");
+    let target_branch = sanitize_runtime_component(target_branch, "target");
+    let run_instance = sanitize_runtime_component(run_instance, "run");
+    format!("{}::{}::{}", project, target_branch, run_instance)
+}
+
+fn sanitize_runtime_component(component: &str, fallback: &str) -> String {
+    let mut sanitized = String::with_capacity(component.len());
+    for byte in component.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('%');
+            sanitized.push(hex_char(byte >> 4));
+            sanitized.push(hex_char(byte & 0x0f));
+        }
+    }
+    if sanitized.is_empty() {
+        fallback.to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn hex_char(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + (nibble - 10)) as char,
+        _ => '0',
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +193,12 @@ mod tests {
     fn test_new_sets_project() {
         let ctx = RunContext::new("greenfield", 1);
         assert_eq!(ctx.project, "greenfield");
+    }
+
+    #[test]
+    fn test_new_for_run_sets_target_branch() {
+        let ctx = RunContext::new_for_run("greenfield", "feature/x", "run42", 1);
+        assert_eq!(ctx.target_branch, "feature/x");
     }
 
     #[test]
@@ -204,6 +283,36 @@ mod tests {
     fn test_hash_returns_run_hash() {
         let ctx = RunContext::new("greenfield", 1);
         assert_eq!(ctx.hash(), &ctx.run_hash);
+    }
+
+    #[test]
+    fn test_runtime_id_contains_project_target_and_run_instance() {
+        let ctx = RunContext::new_for_run("greenfield", "feature/x", "abc123", 1);
+        assert_eq!(ctx.runtime_id(), "greenfield::feature%2Fx::abc123");
+    }
+
+    #[test]
+    fn test_runtime_id_differs_for_different_target_branches() {
+        let ctx_main = RunContext::new_for_run("greenfield", "main", "run42", 1);
+        let ctx_feature = RunContext::new_for_run("greenfield", "feature/a", "run42", 1);
+        assert_ne!(ctx_main.runtime_id(), ctx_feature.runtime_id());
+    }
+
+    #[test]
+    fn test_runtime_id_stays_same_for_same_run_instance_across_sprints() {
+        let sprint1 = RunContext::new_for_run("greenfield", "feature/a", "run42", 1);
+        let sprint2 = RunContext::new_for_run("greenfield", "feature/a", "run42", 2);
+        assert_eq!(sprint1.runtime_id(), sprint2.runtime_id());
+        assert_ne!(sprint1.hash(), sprint2.hash());
+    }
+
+    #[test]
+    fn test_runtime_state_key_prefixes_runtime_id() {
+        let ctx = RunContext::new_for_run("greenfield", "feature/a", "run42", 1);
+        assert_eq!(
+            ctx.runtime_state_key("sprint-history"),
+            "greenfield::feature%2Fa::run42::sprint-history"
+        );
     }
 
     #[test]

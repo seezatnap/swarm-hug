@@ -226,6 +226,7 @@ impl SprintResult {
 pub(crate) fn run_sprint(
     config: &Config,
     session_sprint_number: usize,
+    run_instance: &str,
 ) -> Result<SprintResult, String> {
     // Load sprint history and determine sprint number (peek, don't write yet)
     let team_name = project_name_for_config(config);
@@ -325,14 +326,20 @@ pub(crate) fn run_sprint(
 
     // Create run context for namespaced artifacts (worktrees, branches)
     // This is created early so the sprint branch uses the run hash
-    let run_ctx = RunContext::new(&team_name, historical_sprint as u32);
+    let run_ctx = RunContext::new_for_run(
+        &team_name,
+        target_branch,
+        run_instance,
+        historical_sprint as u32,
+    );
 
     // Log run hash at sprint start for visibility
     println!(
-        "{} {} Sprint {} (run {}): starting",
+        "{} {} Sprint {} (runtime {}, run {}): starting",
         emoji::SPRINT,
         color::info(&formatted_team),
         color::number(historical_sprint),
+        color::info(run_ctx.runtime_id()),
         color::info(run_ctx.hash())
     );
 
