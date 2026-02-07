@@ -10,7 +10,7 @@
 ## Worktree And Merge Recovery
 
 - [x] (#5) Implement merge-agent branch-mismatch recovery for registered worktree paths by detecting stale path-to-branch registrations, force-removing stale entries, and re-registering expected branch/path before merge [5 pts] (blocked by #4) (A)
-- [A] (#6) Add stale worktree cleanup in merge/worktree lifecycle flows to handle leftovers from previous runs, preserving valid active worktrees while reconciling abandoned stale registrations safely [5 pts] (blocked by #5)
+- [x] (#6) Add stale worktree cleanup in merge/worktree lifecycle flows to handle leftovers from previous runs, preserving valid active worktrees while reconciling abandoned stale registrations safely [5 pts] (blocked by #5) (A)
 
 ## Compatibility And Migration
 
@@ -22,4 +22,4 @@
 - [ ] (#9) Add automated stale-worktree/merge regression tests covering mismatch cleanup + re-registration, recovery from prior-run stale worktrees, no lost-work merge behavior, and single-variation regression checks [5 pts] (blocked by #6, #7)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#10) In split source/target runs, pass the canonical team directory (`.swarm-hug/<team>`) to agent engines instead of the namespaced runtime directory (`.swarm-hug/<team>/runs/<target>`), so prompt-derived paths for `team-state.json` and sprint worktrees resolve correctly.
+- [x] (#10) In split source/target runs, pass the canonical team directory (`.swarm-hug/<team>`) to agent engines instead of the namespaced runtime directory (`.swarm-hug/<team>/runs/<target>`), so prompt-derived paths for `team-state.json` and sprint worktrees resolve correctly. (A)
