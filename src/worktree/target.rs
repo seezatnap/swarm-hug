@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::create::worktree_is_registered;
-use super::git::{ensure_head, git_repo_root, repair_worktree_links};
+use super::git::{
+    ensure_head, git_repo_root, prune_stale_worktree_registrations, reconcile_worktree_registration,
+    repair_worktree_links,
+};
 
 /// Returns the shared worktrees root for target branch operations.
 ///
@@ -225,6 +228,7 @@ pub fn validate_target_branch_worktree_in(
     target_branch: &str,
 ) -> Result<Option<PathBuf>, String> {
     let target = normalize_target_branch(target_branch)?;
+    prune_stale_worktree_registrations(repo_root)?;
     let shared_root = ensure_shared_worktrees_root(repo_root)?;
     let existing = find_target_branch_worktree_in_normalized(repo_root, target)?;
 
@@ -283,7 +287,7 @@ pub fn create_target_branch_worktree_in(
     let path = shared_root.join(&sanitized);
     let path_str = path.to_string_lossy().to_string();
 
-    recover_stale_registration(repo_root, &path, target)?;
+    reconcile_worktree_registration(repo_root, &path, target)?;
 
     if worktree_is_registered(repo_root, &path)? {
         return Err(format!(
@@ -871,7 +875,7 @@ detached
     }
 
     #[test]
-    fn test_create_target_branch_worktree_recovers_registered_relative_path_mismatch() {
+    fn test_create_target_branch_worktree_reconciles_registered_relative_path() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
@@ -892,13 +896,10 @@ detached
 
         make_worktree_gitdir_relative(repo, &worktree_path);
 
-        let recovered = create_target_branch_worktree_in(repo, "target-branch")
-            .expect("recover stale registration");
-        assert_eq!(canonical_path(&recovered), canonical_path(&worktree_path));
-        assert!(
-            worktree_path.exists(),
-            "worktree should exist after recovery"
-        );
+        let created = create_target_branch_worktree_in(repo, "target-branch")
+            .expect("should reconcile mismatched registered path");
+        assert_eq!(canonical_path(&created), canonical_path(&worktree_path));
+        assert!(worktree_path.exists(), "worktree should exist after reconcile");
 
         let resolved = find_target_branch_worktree_in(repo, "target-branch")
             .expect("find target worktree")
@@ -910,7 +911,7 @@ detached
     }
 
     #[test]
-    fn test_create_target_branch_worktree_recovers_prunable_mismatch_registration() {
+    fn test_create_target_branch_worktree_preserves_dirty_mismatch() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path();
         init_repo(repo);
@@ -929,21 +930,49 @@ detached
             ],
         );
 
-        std::fs::remove_dir_all(&worktree_path).expect("remove worktree dir");
-        assert!(
-            !worktree_path.exists(),
-            "worktree directory should be missing before recovery"
-        );
+        std::fs::write(worktree_path.join("dirty.txt"), "dirty").expect("write dirty file");
 
-        let recovered = create_target_branch_worktree_in(repo, "target-branch")
-            .expect("recover stale prunable registration");
-        assert_eq!(canonical_path(&recovered), canonical_path(&worktree_path));
+        let err = create_target_branch_worktree_in(repo, "target-branch")
+            .expect_err("should not replace active dirty worktree");
         assert!(
-            worktree_path.exists(),
-            "worktree should exist after recovery"
+            err.contains("uncommitted changes"),
+            "unexpected error: {}",
+            err
         );
-
+        assert!(worktree_path.exists(), "dirty worktree should be preserved");
         let head = git_stdout(&worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(head, "other");
+        assert!(
+            worktree_path.join("dirty.txt").exists(),
+            "dirty file should remain in preserved worktree"
+        );
+    }
+
+    #[test]
+    fn test_create_target_branch_worktree_recovers_missing_stale_registration() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+        run_git(repo, &["branch", "target-branch"]);
+
+        let shared_root = ensure_shared_worktrees_root(repo).expect("shared root");
+        let worktree_path = shared_root.join("target-branch");
+        run_git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                worktree_path.to_str().expect("worktree path"),
+                "target-branch",
+            ],
+        );
+        std::fs::remove_dir_all(&worktree_path).expect("remove worktree dir");
+
+        let created = create_target_branch_worktree_in(repo, "target-branch")
+            .expect("should recreate from stale registration");
+        assert_eq!(canonical_path(&created), canonical_path(&worktree_path));
+        assert!(created.exists(), "recreated worktree should exist");
+        let head = git_stdout(&created, &["rev-parse", "--abbrev-ref", "HEAD"]);
         assert_eq!(head, "target-branch");
     }
 }
