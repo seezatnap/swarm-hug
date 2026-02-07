@@ -201,6 +201,21 @@ fn create_branch_at_commit(repo_root: &Path, branch: &str, commit: &str) -> Resu
     }
 }
 
+fn engine_team_dir(config: &Config, team_name: &str, source_branch: &str, target_branch: &str) -> Option<String> {
+    if source_branch != target_branch {
+        return Some(
+            Path::new(team::SWARM_HUG_DIR)
+                .join(team_name)
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+
+    Path::new(&config.files_tasks)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 /// Result of a single sprint execution.
 #[derive(Debug, Clone)]
 pub(crate) struct SprintResult {
@@ -568,10 +583,9 @@ pub(crate) fn run_sprint(
     // Return type includes: (initial, description, success, error, duration)
     let mut handles: Vec<thread::JoinHandle<Vec<TaskResult>>> = Vec::new();
 
-    // Derive team directory from tasks file path (e.g., ".swarm-hug/greenfield/tasks.md" -> ".swarm-hug/greenfield")
-    let team_dir: Option<String> = Path::new(&config.files_tasks)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    // In split source/target mode, prompts must reference canonical team paths
+    // (".swarm-hug/<team>"), not per-target runtime namespaces.
+    let team_dir = engine_team_dir(config, &team_name, source_branch, target_branch);
 
     for (initial, tasks) in agent_tasks {
         let mut working_dir = worktree_map
@@ -1791,8 +1805,9 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, ensure_branch_exists, preserve_failed_worktree,
-        split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
+        chat, create_branch_at_commit, engine_team_dir, ensure_branch_exists,
+        preserve_failed_worktree, split_cleanup_initials, sync_target_branch_state,
+        write_merge_failure_chat,
         MergeFailureInfo, SprintResult,
     };
     use std::fs;
@@ -1917,6 +1932,26 @@ mod tests {
         let (cleanup, skipped) = split_cleanup_initials(&['A', 'B'], &failures);
         assert_eq!(cleanup, vec!['A', 'B']);
         assert_eq!(skipped, Vec::<char>::new());
+    }
+
+    #[test]
+    fn test_engine_team_dir_split_run_uses_canonical_team_dir() {
+        let mut config = Config::default();
+        config.files_tasks = ".swarm-hug/greenfield/runs/feature-1/tasks.md".to_string();
+
+        let team_dir = engine_team_dir(&config, "greenfield", "main", "feature-1");
+
+        assert_eq!(team_dir.as_deref(), Some(".swarm-hug/greenfield"));
+    }
+
+    #[test]
+    fn test_engine_team_dir_non_split_uses_tasks_parent() {
+        let mut config = Config::default();
+        config.files_tasks = "custom-runtime/tasks.md".to_string();
+
+        let team_dir = engine_team_dir(&config, "greenfield", "main", "main");
+
+        assert_eq!(team_dir.as_deref(), Some("custom-runtime"));
     }
 
     #[test]
