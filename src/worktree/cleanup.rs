@@ -2,8 +2,10 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use super::create::{worktree_is_registered, worktree_path_with_context, worktrees_dir_abs};
-use super::git::{find_worktrees_with_branch, git_repo_root};
+use super::create::{
+    worktree_is_registered, worktree_path, worktree_path_with_context, worktrees_dir_abs,
+};
+use super::git::{agent_branch_name_legacy, find_worktrees_with_branch, git_repo_root};
 use super::list::list_worktrees;
 use crate::run_context::RunContext;
 
@@ -159,21 +161,39 @@ pub fn cleanup_agent_worktree(
     let worktrees_dir = worktrees_dir_abs(worktrees_dir, &repo_root);
 
     // Validate agent initial
-    crate::agent::name_from_initial(initial)
+    let upper = initial.to_ascii_uppercase();
+    let agent_name = crate::agent::name_from_initial(upper)
         .ok_or_else(|| format!("invalid agent initial: {}", initial))?;
 
-    // Use namespaced path from RunContext
-    let path = worktree_path_with_context(&worktrees_dir, ctx, initial);
-    let branch = ctx.agent_branch(initial);
+    // Primary namespaced artifacts for this run.
+    let path = worktree_path_with_context(&worktrees_dir, ctx, upper);
+    let branch = ctx.agent_branch(upper);
+    cleanup_agent_artifacts(&repo_root, &path, &branch, delete_branch)?;
 
+    // Backward compatibility: also reconcile legacy agent naming conventions
+    // (agent-A-Aaron worktree path and agent-aaron branch).
+    let legacy_path = worktree_path(&worktrees_dir, upper, agent_name);
+    if let Some(legacy_branch) = agent_branch_name_legacy(upper) {
+        cleanup_agent_artifacts(&repo_root, &legacy_path, &legacy_branch, delete_branch)?;
+    }
+
+    Ok(())
+}
+
+fn cleanup_agent_artifacts(
+    repo_root: &Path,
+    path: &Path,
+    branch: &str,
+    delete_branch: bool,
+) -> Result<(), String> {
     // Remove the worktree if it exists
     if path.exists() {
-        let is_registered = worktree_is_registered(&repo_root, &path)?;
+        let is_registered = worktree_is_registered(repo_root, path)?;
         if is_registered {
             let path_str = path.to_string_lossy().to_string();
             let output = Command::new("git")
                 .arg("-C")
-                .arg(&repo_root)
+                .arg(repo_root)
                 .args(["worktree", "remove", "--force", &path_str])
                 .output()
                 .map_err(|e| format!("failed to run git worktree remove: {}", e))?;
@@ -184,22 +204,20 @@ pub fn cleanup_agent_worktree(
             }
         } else {
             // Not registered, just remove the directory
-            fs::remove_dir_all(&path)
+            fs::remove_dir_all(path)
                 .map_err(|e| format!("failed to remove worktree dir: {}", e))?;
         }
     }
 
-    // Optionally delete the branch
     if delete_branch {
         // Before deleting the branch, remove any worktrees that have it checked out
         // (this handles multi-team scenarios where another team's worktree uses this branch)
-        if let Ok(worktrees_with_branch) = find_worktrees_with_branch(&repo_root, &branch) {
+        if let Ok(worktrees_with_branch) = find_worktrees_with_branch(repo_root, branch) {
             for wt_path in worktrees_with_branch {
-                let _ = remove_worktree_by_path(&repo_root, &wt_path);
+                let _ = remove_worktree_by_path(repo_root, &wt_path);
             }
         }
-        // Delete the namespaced branch
-        delete_branch_in(&repo_root, &branch)?;
+        delete_branch_in(repo_root, branch)?;
     }
 
     Ok(())
@@ -356,13 +374,8 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create the worktree
-            let worktrees = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx,
-            )
-            .expect("create worktrees");
+            let worktrees = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
+                .expect("create worktrees");
             let wt_path = &worktrees[0].path;
             assert!(wt_path.exists(), "worktree should exist before cleanup");
 
@@ -388,13 +401,8 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create the worktree
-            let worktrees = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx,
-            )
-            .expect("create worktrees");
+            let worktrees = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
+                .expect("create worktrees");
             let wt_path = &worktrees[0].path;
             let branch = ctx.agent_branch('A');
 
@@ -402,11 +410,13 @@ mod tests {
             assert!(branch_exists(&branch), "branch should exist before cleanup");
 
             // Clean up with branch deletion
-            cleanup_agent_worktree(worktrees_dir, 'A', true, &ctx)
-                .expect("cleanup should succeed");
+            cleanup_agent_worktree(worktrees_dir, 'A', true, &ctx).expect("cleanup should succeed");
 
             assert!(!wt_path.exists(), "worktree should not exist after cleanup");
-            assert!(!branch_exists(&branch), "branch should not exist after cleanup");
+            assert!(
+                !branch_exists(&branch),
+                "branch should not exist after cleanup"
+            );
         });
     }
 
@@ -422,20 +432,10 @@ mod tests {
             let worktrees_dir = Path::new(".swarm-hug/greenfield/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
 
-            let worktrees1 = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx1,
-            )
-            .expect("create worktrees for run 1");
-            let worktrees2 = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx2,
-            )
-            .expect("create worktrees for run 2");
+            let worktrees1 = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx1)
+                .expect("create worktrees for run 1");
+            let worktrees2 = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx2)
+                .expect("create worktrees for run 2");
 
             let wt_path1 = &worktrees1[0].path;
             let wt_path2 = &worktrees2[0].path;
@@ -459,19 +459,11 @@ mod tests {
 
             let ctx = RunContext::new("greenfield", 1);
             let worktrees_dir = Path::new(".swarm-hug/greenfield/worktrees");
-            let assignments = vec![
-                ('A', "Task one".to_string()),
-                ('B', "Task two".to_string()),
-            ];
+            let assignments = vec![('A', "Task one".to_string()), ('B', "Task two".to_string())];
 
             // Create the worktrees
-            let worktrees = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx,
-            )
-            .expect("create worktrees");
+            let worktrees = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
+                .expect("create worktrees");
             assert_eq!(worktrees.len(), 2);
 
             let wt_path_a = &worktrees[0].path;
@@ -500,13 +492,8 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create only one worktree (for 'A')
-            create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx,
-            )
-            .expect("create worktrees");
+            create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx)
+                .expect("create worktrees");
 
             // Try to clean up 'A' and 'B' - 'B' doesn't exist but shouldn't error
             let summary = cleanup_agent_worktrees(worktrees_dir, &['A', 'B'], true, &ctx);
@@ -549,6 +536,48 @@ mod tests {
     }
 
     #[test]
+    fn test_cleanup_agent_worktree_migrates_legacy_names() {
+        with_temp_cwd(|| {
+            init_repo();
+            run_git(&["checkout", "-b", "base-branch"]);
+
+            let worktrees_dir = Path::new(".swarm-hug/greenfield/worktrees");
+            fs::create_dir_all(worktrees_dir).expect("create worktrees dir");
+            let legacy_path = worktrees_dir.join("agent-A-Aaron");
+            let legacy_path_str = legacy_path.to_string_lossy().to_string();
+
+            // Legacy convention: branch agent-aaron at worktree agent-A-Aaron.
+            run_git(&[
+                "worktree",
+                "add",
+                "-B",
+                "agent-aaron",
+                legacy_path_str.as_str(),
+                "base-branch",
+            ]);
+
+            assert!(
+                legacy_path.exists(),
+                "legacy worktree should exist before cleanup"
+            );
+            assert!(
+                branch_exists("agent-aaron"),
+                "legacy branch should exist before cleanup"
+            );
+
+            let ctx = RunContext::new("greenfield", 1);
+            cleanup_agent_worktree(worktrees_dir, 'A', true, &ctx)
+                .expect("cleanup should reconcile legacy artifacts");
+
+            assert!(!legacy_path.exists(), "legacy worktree should be removed");
+            assert!(
+                !branch_exists("agent-aaron"),
+                "legacy branch should be removed"
+            );
+        });
+    }
+
+    #[test]
     fn test_cleanup_different_projects_isolated() {
         with_temp_cwd(|| {
             init_repo();
@@ -560,20 +589,12 @@ mod tests {
             let worktrees_dir = Path::new(".swarm-hug/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
 
-            let worktrees_greenfield = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx_greenfield,
-            )
-            .expect("create greenfield worktrees");
-            let worktrees_payments = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx_payments,
-            )
-            .expect("create payments worktrees");
+            let worktrees_greenfield =
+                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx_greenfield)
+                    .expect("create greenfield worktrees");
+            let worktrees_payments =
+                create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx_payments)
+                    .expect("create payments worktrees");
 
             let wt_greenfield = &worktrees_greenfield[0].path;
             let wt_payments = &worktrees_payments[0].path;
@@ -584,7 +605,10 @@ mod tests {
             cleanup_agent_worktree(worktrees_dir, 'A', true, &ctx_greenfield)
                 .expect("cleanup greenfield");
 
-            assert!(!wt_greenfield.exists(), "greenfield worktree should be removed");
+            assert!(
+                !wt_greenfield.exists(),
+                "greenfield worktree should be removed"
+            );
             assert!(wt_payments.exists(), "payments worktree should still exist");
 
             // Cleanup payments

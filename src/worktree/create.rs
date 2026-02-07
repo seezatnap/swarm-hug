@@ -78,7 +78,6 @@ pub(super) fn worktree_is_registered(repo_root: &Path, path: &Path) -> Result<bo
 
 /// Legacy worktree path without namespacing.
 /// Format: agent-{INITIAL}-{name} (e.g., agent-A-Aaron)
-#[cfg(test)]
 pub(super) fn worktree_path(root: &Path, initial: char, name: &str) -> PathBuf {
     root.join(format!("agent-{}-{}", initial, name))
 }
@@ -167,8 +166,13 @@ pub fn create_worktrees_in(
 
         // If path exists but not registered, remove the directory
         if path.exists() {
-            fs::remove_dir_all(&path)
-                .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
+            fs::remove_dir_all(&path).map_err(|e| {
+                format!(
+                    "failed to remove stale worktree dir {}: {}",
+                    path.display(),
+                    e
+                )
+            })?;
         }
 
         // Before deleting the branch, remove any worktrees that have it checked out
@@ -272,8 +276,13 @@ pub fn create_feature_worktree_in(
     }
 
     if path.exists() {
-        fs::remove_dir_all(&path)
-            .map_err(|e| format!("failed to remove stale worktree dir {}: {}", path.display(), e))?;
+        fs::remove_dir_all(&path).map_err(|e| {
+            format!(
+                "failed to remove stale worktree dir {}: {}",
+                path.display(),
+                e
+            )
+        })?;
     }
 
     let mut cmd = Command::new("git");
@@ -313,7 +322,9 @@ mod tests {
     use crate::run_context::RunContext;
     use crate::testutil::with_temp_cwd;
 
-    use super::{create_feature_worktree_in, create_worktrees_in, worktree_path, worktree_path_with_context};
+    use super::{
+        create_feature_worktree_in, create_worktrees_in, worktree_path, worktree_path_with_context,
+    };
 
     fn run_git(args: &[&str]) -> Output {
         let output = Command::new("git")
@@ -403,12 +414,8 @@ mod tests {
             run_git(&["branch", "source-branch"]);
 
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
-            let path = create_feature_worktree_in(
-                worktrees_dir,
-                "alpha-sprint-1",
-                "source-branch",
-            )
-            .expect("create feature worktree");
+            let path = create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "source-branch")
+                .expect("create feature worktree");
 
             assert!(path.ends_with("alpha-sprint-1"));
             assert!(path.exists());
@@ -423,12 +430,9 @@ mod tests {
             let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             assert_eq!(branch, "alpha-sprint-1");
 
-            let path_again = create_feature_worktree_in(
-                worktrees_dir,
-                "alpha-sprint-1",
-                "source-branch",
-            )
-            .expect("idempotent create");
+            let path_again =
+                create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "source-branch")
+                    .expect("idempotent create");
             assert_eq!(path, path_again);
         });
     }
@@ -448,13 +452,9 @@ mod tests {
             let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
-            let worktrees = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "alpha-sprint-1",
-                &ctx,
-            )
-            .expect("create worktrees");
+            let worktrees =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
+                    .expect("create worktrees");
             assert_eq!(worktrees.len(), 1);
             let wt_path = &worktrees[0].path;
             assert!(wt_path.exists());
@@ -480,7 +480,9 @@ mod tests {
                 .args(["rev-parse", "--abbrev-ref", "HEAD"])
                 .output()
                 .expect("failed to run git rev-parse --abbrev-ref");
-            let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+            let branch = String::from_utf8_lossy(&branch_output.stdout)
+                .trim()
+                .to_string();
             assert_eq!(branch, ctx.agent_branch('A'));
         });
     }
@@ -501,13 +503,9 @@ mod tests {
             let ctx = RunContext::new("alpha", 1);
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
             let assignments = vec![('A', "Task one".to_string())];
-            let worktrees = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "alpha-sprint-1",
-                &ctx,
-            )
-            .expect("create worktrees");
+            let worktrees =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
+                    .expect("create worktrees");
             let wt_path = &worktrees[0].path;
 
             fs::write(wt_path.join("task.txt"), "task").expect("write task file");
@@ -515,13 +513,9 @@ mod tests {
             run_git_in(wt_path, &["commit", "-m", "task commit"]);
 
             // Recreate with same context - should reset to base_commit
-            let worktrees_again = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "alpha-sprint-1",
-                &ctx,
-            )
-            .expect("recreate worktree");
+            let worktrees_again =
+                create_worktrees_in(worktrees_dir, &assignments, "alpha-sprint-1", &ctx)
+                    .expect("recreate worktree");
             let wt_path_again = &worktrees_again[0].path;
 
             let output = Command::new("git")
@@ -575,16 +569,15 @@ mod tests {
             .trim()
             .to_string();
 
-            assert_ne!(source_commit, target_commit, "source and target should differ");
+            assert_ne!(
+                source_commit, target_commit,
+                "source and target should differ"
+            );
 
             // Create feature worktree from source_branch (not target_branch)
             let worktrees_dir = Path::new(".swarm-hug/alpha/worktrees");
-            let path = create_feature_worktree_in(
-                worktrees_dir,
-                "alpha-sprint-1",
-                "source-branch",
-            )
-            .expect("create feature worktree from source");
+            let path = create_feature_worktree_in(worktrees_dir, "alpha-sprint-1", "source-branch")
+                .expect("create feature worktree from source");
 
             // The feature worktree should be at source_commit, not target_commit
             let wt_commit = String::from_utf8_lossy(
@@ -632,23 +625,13 @@ mod tests {
             let assignments = vec![('A', "Task one".to_string())];
 
             // Create worktree for greenfield
-            let worktrees1 = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx1,
-            )
-            .expect("create greenfield worktrees");
+            let worktrees1 = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx1)
+                .expect("create greenfield worktrees");
             assert_eq!(worktrees1.len(), 1);
 
             // Create worktree for payments - should succeed without conflict
-            let worktrees2 = create_worktrees_in(
-                worktrees_dir,
-                &assignments,
-                "base-branch",
-                &ctx2,
-            )
-            .expect("create payments worktrees");
+            let worktrees2 = create_worktrees_in(worktrees_dir, &assignments, "base-branch", &ctx2)
+                .expect("create payments worktrees");
             assert_eq!(worktrees2.len(), 1);
 
             // Both worktrees should exist
