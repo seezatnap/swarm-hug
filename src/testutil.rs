@@ -6,6 +6,8 @@
 //! changing the process-wide working directory.
 
 #[cfg(test)]
+use std::env;
+#[cfg(test)]
 use std::sync::Mutex;
 
 #[cfg(test)]
@@ -18,6 +20,47 @@ use tempfile::TempDir;
 /// for tests that need to operate in a temporary directory.
 #[cfg(test)]
 pub static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+/// Global mutex for tests that mutate process-wide environment variables.
+///
+/// Environment variables are shared process state, so tests that set/unset
+/// values (for example `OPENROUTER_API_KEY`) must be serialized.
+#[cfg(test)]
+pub static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Guard for temporarily setting or unsetting an environment variable.
+///
+/// Restores the previous value on drop.
+#[cfg(test)]
+pub struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+#[cfg(test)]
+impl EnvVarGuard {
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let previous = env::var(key).ok();
+        env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    pub fn unset(key: &'static str) -> Self {
+        let previous = env::var(key).ok();
+        env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => env::set_var(self.key, value),
+            None => env::remove_var(self.key),
+        }
+    }
+}
 
 /// Execute a closure in a temporary directory, returning to the original
 /// directory afterward.

@@ -253,43 +253,9 @@ impl ClaudeEngine {
 mod tests {
     use super::*;
     #[cfg(unix)]
+    use crate::testutil::{EnvVarGuard, ENV_LOCK};
+    #[cfg(unix)]
     use std::path::Path;
-    #[cfg(unix)]
-    use std::sync::Mutex;
-
-    #[cfg(unix)]
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[cfg(unix)]
-    struct EnvVarGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    #[cfg(unix)]
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, previous }
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let previous = std::env::var(key).ok();
-            std::env::remove_var(key);
-            Self { key, previous }
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
 
     #[test]
     fn test_claude_engine_type() {

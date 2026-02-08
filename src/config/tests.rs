@@ -1,40 +1,10 @@
 use super::*;
 use super::types::detect_target_branch_in;
+use crate::testutil::{EnvVarGuard, ENV_LOCK};
 use std::fs;
 use std::path::Path;
 use std::process::Command as ProcessCommand;
-use std::sync::Mutex;
 use tempfile::TempDir;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-
-    fn unset(key: &'static str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::remove_var(key);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
 
 fn run_git(repo: &Path, args: &[&str]) {
     let output = ProcessCommand::new("git")
@@ -641,7 +611,7 @@ fn test_config_load_with_cli_precedence() {
 
 #[test]
 fn test_config_load_openrouter_requires_api_key() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
     let cli = CliArgs {
         engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
@@ -654,7 +624,7 @@ fn test_config_load_openrouter_requires_api_key() {
 
 #[test]
 fn test_config_load_openrouter_requires_model() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
     let cli = CliArgs {
         engine: Some("openrouter".to_string()),
@@ -667,7 +637,7 @@ fn test_config_load_openrouter_requires_model() {
 
 #[test]
 fn test_config_load_openrouter_with_api_key() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
     let cli = CliArgs {
         engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
