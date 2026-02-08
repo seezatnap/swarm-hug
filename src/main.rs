@@ -10,6 +10,8 @@ mod output;
 mod project;
 mod runner;
 mod tail;
+#[cfg(test)]
+mod testutil;
 
 use commands::{
     cmd_agents, cmd_cleanup_worktrees, cmd_customize_prompts, cmd_init, cmd_project_init,

@@ -165,25 +165,7 @@ pub fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-    use tempfile::TempDir;
-
-    // Global mutex for tests that change the current working directory.
-    // Must be shared across all tests that change cwd to avoid race conditions.
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-    fn with_temp_cwd<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let original = std::env::current_dir().expect("failed to get current directory");
-        let temp = TempDir::new().expect("failed to create temp directory");
-        std::env::set_current_dir(temp.path()).expect("failed to change to temp directory");
-        let result = f();
-        std::env::set_current_dir(original).expect("failed to restore original directory");
-        result
-    }
+    use crate::testutil::with_temp_cwd;
 
     #[test]
     fn test_count_tasks_missing_file() {

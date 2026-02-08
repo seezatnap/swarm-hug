@@ -3149,11 +3149,9 @@ fn test_neither_branch_flag_auto_detects() {
     );
 }
 
-/// Test that --source-branch + --target-branch forks from target and merges into target.
-/// The source branch remains the planning-state source (tasks/history sync), but sprint
-/// worktrees must fork from the live target tip.
+/// Test that --source-branch + --target-branch forks from source and merges into target.
 #[test]
-fn test_source_and_target_branch_forks_from_target_merges_into_target() {
+fn test_source_and_target_branch_forks_from_source_merges_into_target() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();
     let team_name = "alpha";
@@ -3191,8 +3189,16 @@ fn test_source_and_target_branch_forks_from_target_merges_into_target() {
     fs::write(repo_path.join("main-only.txt"), "main content").expect("write main-only.txt");
     commit_all(repo_path, "main-only commit");
 
+    // Sanity check: target branch does not have the source-only file before the run.
+    let feature_files_before = git_stdout(repo_path, &["ls-tree", "--name-only", "feature-1"]);
+    assert!(
+        !feature_files_before.contains("main-only.txt"),
+        "feature-1 should not contain main-only.txt before sprint. Files:\n{}",
+        feature_files_before
+    );
+
     // Run with --source-branch main --target-branch feature-1
-    // This should fork from feature-1 (target) and merge back into feature-1
+    // This should fork from main (source) and merge back into feature-1 (target).
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
@@ -3237,12 +3243,12 @@ fn test_source_and_target_branch_forks_from_target_merges_into_target() {
         main_log
     );
 
-    // Verify that feature-1 does NOT contain the source-only content.
-    // If the sprint branch incorrectly forked from source/main, this file would appear.
+    // Verify that feature-1 now contains the source-only content from main.
+    // This confirms sprint worktree creation forked from source branch.
     let feature_files = git_stdout(repo_path, &["ls-tree", "--name-only", "feature-1"]);
     assert!(
-        !feature_files.contains("main-only.txt"),
-        "feature-1 should NOT contain main-only.txt (sprint must fork from target tip). Files:\n{}",
+        feature_files.contains("main-only.txt"),
+        "feature-1 should contain main-only.txt after sprint (sprint must fork from source tip). Files:\n{}",
         feature_files
     );
 

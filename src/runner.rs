@@ -201,6 +201,15 @@ fn create_branch_at_commit(repo_root: &Path, branch: &str, commit: &str) -> Resu
     }
 }
 
+fn create_sprint_worktree_in(
+    worktrees_dir: &Path,
+    sprint_branch: &str,
+    source_branch: &str,
+) -> Result<PathBuf, String> {
+    worktree::create_feature_worktree_in(worktrees_dir, sprint_branch, source_branch)
+        .map_err(|e| format!("failed to create feature worktree: {}", e))
+}
+
 fn engine_team_dir(team_name: &str, fallback_tasks_path: &str) -> String {
     let trimmed = team_name.trim();
     if trimmed.is_empty() {
@@ -381,7 +390,7 @@ pub(crate) fn run_sprint(
     let sprint_branch = run_ctx.sprint_branch();
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
 
-    let base_commit = get_short_commit_for_ref_in(&repo_root, target_branch)
+    let base_commit = get_short_commit_for_ref_in(&repo_root, source_branch)
         .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
         .unwrap_or_else(|| "unknown".to_string());
     if let Err(e) = chat::write_message(
@@ -396,20 +405,18 @@ pub(crate) fn run_sprint(
     // This ensures all sprint setup files are written to the sprint worktree,
     // not the target branch (main/master)
 
-    // Clean up any existing feature worktree from a failed previous sprint
-    // This ensures we start fresh from the target branch
+    // Clean up any existing feature worktree from a failed previous sprint.
+    // This ensures we start fresh from the source branch for this run.
     if let Err(e) = worktree::cleanup_feature_worktree(worktrees_dir, &sprint_branch, true) {
         // Log but don't fail - the worktree might not exist
         eprintln!("  note: pre-sprint feature worktree cleanup: {}", e);
     }
 
-    let feature_worktree_path =
-        worktree::create_feature_worktree_in(
-            worktrees_dir,
-            &sprint_branch,
-            target_branch,
-        )
-        .map_err(|e| format!("failed to create feature worktree: {}", e))?;
+    let feature_worktree_path = create_sprint_worktree_in(
+        worktrees_dir,
+        &sprint_branch,
+        source_branch,
+    )?;
 
     // Print sprint start banner (after worktree creation to ensure we have a valid sprint)
     print_sprint_start_banner(&formatted_team, historical_sprint);
@@ -1967,8 +1974,9 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, engine_team_dir, ensure_branch_exists, preserve_failed_worktree,
-        split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
+        chat, create_branch_at_commit, create_sprint_worktree_in, engine_team_dir,
+        ensure_branch_exists, preserve_failed_worktree, split_cleanup_initials,
+        sync_target_branch_state, write_merge_failure_chat,
         MergeFailureInfo, SprintResult,
     };
     use std::fs;
@@ -1976,6 +1984,7 @@ mod tests {
     use std::process::Command;
     use tempfile::NamedTempFile;
 
+    use crate::testutil::with_temp_cwd;
     use swarm::config::Config;
     use swarm::{team, worktree};
 
@@ -2204,6 +2213,92 @@ mod tests {
             .output()
             .expect("verify branch");
         assert!(verify.status.success());
+    }
+
+    #[test]
+    fn test_create_sprint_worktree_in_forks_from_source_branch() {
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+
+            let source_file = repo_root.join("source-only.txt");
+            let target_file = repo_root.join("target-only.txt");
+
+            run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+            fs::write(&source_file, "source").expect("write source file");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "source commit"]);
+            let source_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .arg("-C")
+                    .arg(&repo_root)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse source")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            run_git_in(&repo_root, &["checkout", "main"]);
+            run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
+            fs::write(&target_file, "target").expect("write target file");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "target commit"]);
+            let target_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .arg("-C")
+                    .arg(&repo_root)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse target")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+            assert_ne!(
+                source_commit, target_commit,
+                "source and target branches should diverge"
+            );
+
+            run_git_in(&repo_root, &["checkout", "main"]);
+            let worktrees_dir = repo_root.join("worktrees");
+            let worktree_path = create_sprint_worktree_in(
+                &worktrees_dir,
+                "alpha-sprint-1",
+                "source-branch",
+            )
+            .expect("create sprint worktree");
+
+            let sprint_commit = String::from_utf8_lossy(
+                &Command::new("git")
+                    .arg("-C")
+                    .arg(&worktree_path)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("rev-parse sprint")
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            assert_eq!(
+                sprint_commit, source_commit,
+                "sprint branch should fork from source branch"
+            );
+            assert_ne!(
+                sprint_commit, target_commit,
+                "sprint branch should not fork from target branch"
+            );
+            assert!(
+                worktree_path.join("source-only.txt").exists(),
+                "sprint worktree should contain source branch file"
+            );
+            assert!(
+                !worktree_path.join("target-only.txt").exists(),
+                "sprint worktree should not contain target-only file"
+            );
+        });
     }
 
     #[test]
