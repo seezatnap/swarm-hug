@@ -561,6 +561,67 @@ fn agent_branch_has_changes_with_ctx(
     branch_has_changes_in(repo_root, &branch, target)
 }
 
+fn checkout_branch(repo_root: &Path, target: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["checkout", target])
+        .output()
+        .map_err(|e| format!("failed to run git checkout: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(stderr.trim().to_string())
+    }
+}
+
+fn checkout_error_has_unresolved_index(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("resolve your current index first") || lower.contains("unmerged files")
+}
+
+fn abort_merge_if_in_progress(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["merge", "--abort"])
+        .output()
+        .map_err(|e| format!("failed to run git merge --abort: {}", e))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("no merge to abort")
+        || lower.contains("merge_head missing")
+        || lower.contains("no merge in progress")
+    {
+        Ok(())
+    } else {
+        Err(format!("git merge --abort failed: {}", stderr))
+    }
+}
+
+fn checkout_branch_with_merge_recovery(repo_root: &Path, target: &str) -> Result<(), String> {
+    match checkout_branch(repo_root, target) {
+        Ok(()) => Ok(()),
+        Err(stderr) => {
+            if !checkout_error_has_unresolved_index(&stderr) {
+                return Err(stderr);
+            }
+
+            abort_merge_if_in_progress(repo_root)?;
+            checkout_branch(repo_root, target).map_err(|retry| {
+                format!("{} (after attempting git merge --abort)", retry)
+            })
+        }
+    }
+}
+
 /// Merge an agent branch into the current branch.
 /// Returns MergeResult indicating success, conflict, or error.
 pub fn merge_agent_branch(initial: char, target_branch: Option<&str>) -> MergeResult {
@@ -590,21 +651,11 @@ pub fn merge_agent_branch_in(
         Err(e) => return MergeResult::Error(e),
     }
 
-    // If target branch specified, checkout first
+    // If target branch specified, checkout first. If checkout fails due a stale
+    // unresolved index, attempt `git merge --abort` and retry checkout once.
     if let Some(target) = target_branch {
-        let checkout = Command::new("git")
-            .arg("-C")
-            .arg(repo_root)
-            .args(["checkout", target])
-            .output();
-
-        if let Err(e) = checkout {
+        if let Err(e) = checkout_branch_with_merge_recovery(repo_root, target) {
             return MergeResult::Error(format!("checkout failed: {}", e));
-        }
-        let checkout = checkout.unwrap();
-        if !checkout.status.success() {
-            let stderr = String::from_utf8_lossy(&checkout.stderr);
-            return MergeResult::Error(format!("checkout failed: {}", stderr));
         }
 
         // Check if branch has changes
@@ -667,21 +718,11 @@ pub fn merge_agent_branch_in_with_ctx(
         Err(e) => return MergeResult::Error(e),
     }
 
-    // If target branch specified, checkout first
+    // If target branch specified, checkout first. If checkout fails due a stale
+    // unresolved index, attempt `git merge --abort` and retry checkout once.
     if let Some(target) = target_branch {
-        let checkout = Command::new("git")
-            .arg("-C")
-            .arg(repo_root)
-            .args(["checkout", target])
-            .output();
-
-        if let Err(e) = checkout {
+        if let Err(e) = checkout_branch_with_merge_recovery(repo_root, target) {
             return MergeResult::Error(format!("checkout failed: {}", e));
-        }
-        let checkout = checkout.unwrap();
-        if !checkout.status.success() {
-            let stderr = String::from_utf8_lossy(&checkout.stderr);
-            return MergeResult::Error(format!("checkout failed: {}", stderr));
         }
 
         // Check if branch has changes
@@ -1003,11 +1044,13 @@ mod tests {
     use std::process::{Command, Output};
 
     use tempfile::TempDir;
+    use crate::run_context::RunContext;
 
     use super::{
         branch_is_merged_in,
         create_feature_branch_in,
         merge_agent_branch_in,
+        merge_agent_branch_in_with_ctx,
         merge_feature_branch_in,
         parse_worktrees_with_branch,
         MergeResult,
@@ -1264,6 +1307,69 @@ branch refs/heads/agent-aaron
 
         let content = fs::read_to_string(repo.join("task.txt")).expect("read file");
         assert_eq!(content, "change");
+    }
+
+    #[test]
+    fn test_merge_agent_branch_in_with_ctx_recovers_from_unresolved_index() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path();
+        init_repo(repo);
+
+        run_git(repo, &["branch", "-M", "main"]);
+        let ctx = RunContext::new("alpha", 1);
+        let sprint_branch = ctx.sprint_branch();
+        let agent_branch = ctx.agent_branch('A');
+
+        run_git(repo, &["checkout", "-b", &sprint_branch]);
+        fs::write(repo.join("conflict.txt"), "base\n").expect("write base conflict");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "base conflict"]);
+
+        run_git(repo, &["checkout", "-b", &agent_branch]);
+        fs::write(repo.join("agent.txt"), "agent change\n").expect("write agent file");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "agent change"]);
+
+        run_git(repo, &["checkout", &sprint_branch]);
+        run_git(repo, &["checkout", "-b", "tmp-conflict"]);
+        fs::write(repo.join("conflict.txt"), "tmp side\n").expect("write tmp conflict");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "tmp conflict"]);
+
+        run_git(repo, &["checkout", &sprint_branch]);
+        fs::write(repo.join("conflict.txt"), "sprint side\n").expect("write sprint conflict");
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "sprint conflict"]);
+
+        let merge_output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["merge", "tmp-conflict"])
+            .output()
+            .expect("run merge");
+        assert!(
+            !merge_output.status.success(),
+            "expected merge conflict before recovery"
+        );
+        assert!(
+            !super::get_merge_conflicts_in(repo).is_empty(),
+            "repo should have unresolved merge conflicts"
+        );
+
+        let result = merge_agent_branch_in_with_ctx(repo, &ctx, 'A', Some(&sprint_branch));
+        assert!(
+            matches!(result, MergeResult::Success),
+            "expected stale merge recovery and successful agent merge, got: {:?}",
+            result
+        );
+        assert!(
+            super::get_merge_conflicts_in(repo).is_empty(),
+            "conflicts should be cleared after merge recovery"
+        );
+
+        let merged = branch_is_merged_in(repo, &agent_branch, &sprint_branch)
+            .expect("check agent merged into sprint");
+        assert!(merged, "agent branch should be merged into sprint branch");
     }
 
     #[test]
