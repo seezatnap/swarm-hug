@@ -80,6 +80,9 @@ pub fn init_root() -> Result<(), String> {
         # Agent worktrees (recreated each sprint)\n\
         */worktrees/\n\
         \n\
+        # Target-branch runtime state (variation-scoped)\n\
+        */runs/\n\
+        \n\
         # Agent logs (local debugging)\n\
         */loop/\n\
         \n\
@@ -126,6 +129,7 @@ mod tests {
 
             let content = fs::read_to_string(&gitignore_path).unwrap();
             assert!(content.contains("*/worktrees/"), ".gitignore should ignore worktrees");
+            assert!(content.contains("*/runs/"), ".gitignore should ignore runtime state");
             assert!(content.contains("*/loop/"), ".gitignore should ignore loop logs");
             assert!(content.contains("*/chat.md"), ".gitignore should ignore chat.md");
             assert!(content.contains("Do not edit"), ".gitignore should warn against edits");
@@ -147,6 +151,7 @@ mod tests {
             let content = fs::read_to_string(&gitignore_path).unwrap();
             assert_ne!(content, custom_content, "existing .gitignore should be overwritten");
             assert!(content.contains("*/worktrees/"), ".gitignore should contain swarm-hug defaults");
+            assert!(content.contains("*/runs/"), ".gitignore should contain runtime-state ignore");
         });
     }
 

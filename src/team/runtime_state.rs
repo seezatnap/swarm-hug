@@ -4,11 +4,11 @@ use super::{SPRINT_HISTORY_FILE, SWARM_HUG_DIR, TEAM_STATE_FILE};
 
 /// Runtime state paths for a swarm run.
 ///
-/// For split source/target branch runs, state is namespaced under:
+/// Runtime state is namespaced by target branch under:
 /// `.swarm-hug/<team>/runs/<sanitized-target-branch>/`
 ///
-/// For single-variation runs (source == target), legacy paths are preserved:
-/// `.swarm-hug/<team>/`
+/// If target branch is unavailable/empty, paths fall back to the legacy team root:
+/// `.swarm-hug/<team>/` (best-effort compatibility).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStatePaths {
     team_name: String,
@@ -18,12 +18,11 @@ pub struct RuntimeStatePaths {
 
 impl RuntimeStatePaths {
     /// Build runtime paths for the given team and branch configuration.
-    pub fn for_branches(team_name: &str, source_branch: &str, target_branch: &str) -> Self {
+    pub fn for_branches(team_name: &str, _source_branch: &str, target_branch: &str) -> Self {
         let base = PathBuf::from(SWARM_HUG_DIR).join(team_name);
-        let source = source_branch.trim();
         let target = target_branch.trim();
 
-        let namespaced = !source.is_empty() && !target.is_empty() && source != target;
+        let namespaced = !target.is_empty();
         let root = if namespaced {
             base.join("runs").join(sanitize_target_branch_component(target))
         } else {
@@ -115,19 +114,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn single_variation_uses_legacy_paths() {
+    fn target_branch_main_is_namespaced() {
         let paths = RuntimeStatePaths::for_branches("alpha", "main", "main");
-        assert!(!paths.is_namespaced());
-        assert_eq!(paths.root(), Path::new(".swarm-hug/alpha"));
-        assert_eq!(paths.tasks_path(), PathBuf::from(".swarm-hug/alpha/tasks.md"));
+        assert!(paths.is_namespaced());
+        assert_eq!(paths.root(), Path::new(".swarm-hug/alpha/runs/main"));
+        assert_eq!(
+            paths.tasks_path(),
+            PathBuf::from(".swarm-hug/alpha/runs/main/tasks.md")
+        );
         assert_eq!(
             paths.sprint_history_path(),
-            PathBuf::from(".swarm-hug/alpha/sprint-history.json")
+            PathBuf::from(".swarm-hug/alpha/runs/main/sprint-history.json")
         );
         assert_eq!(
             paths.team_state_path(),
-            PathBuf::from(".swarm-hug/alpha/team-state.json")
+            PathBuf::from(".swarm-hug/alpha/runs/main/team-state.json")
         );
+    }
+
+    #[test]
+    fn same_source_and_target_feature_branch_is_namespaced_by_target() {
+        let paths =
+            RuntimeStatePaths::for_branches("alpha", "feature/try-1", "feature/try-1");
+        assert!(paths.is_namespaced());
+        assert_eq!(
+            paths.root(),
+            Path::new(".swarm-hug/alpha/runs/feature%2Ftry-1")
+        );
+        assert_eq!(
+            paths.tasks_path(),
+            PathBuf::from(".swarm-hug/alpha/runs/feature%2Ftry-1/tasks.md")
+        );
+    }
+
+    #[test]
+    fn empty_target_branch_falls_back_to_legacy_paths() {
+        let paths = RuntimeStatePaths::for_branches("alpha", "main", "");
+        assert!(!paths.is_namespaced());
+        assert_eq!(paths.root(), Path::new(".swarm-hug/alpha"));
     }
 
     #[test]

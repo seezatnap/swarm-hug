@@ -479,7 +479,7 @@ pub(crate) fn run_sprint(
     fs::write(&worktree_tasks_path, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
-    // Persist runtime-scoped planning state for this variation.
+    // Persist runtime-scoped planning state for this target branch.
     if runtime_paths.is_namespaced() {
         persist_runtime_state_files(
             &worktree_tasks_path,
@@ -628,8 +628,8 @@ pub(crate) fn run_sprint(
     // Return type includes: (initial, description, success, error, duration)
     let mut handles: Vec<thread::JoinHandle<Vec<TaskResult>>> = Vec::new();
 
-    // Always pass canonical team directory to engines. In split source/target
-    // runs, files_tasks may be namespaced under runs/<target>, but prompt-derived
+    // Always pass canonical team directory to engines. Runtime tasks may be
+    // namespaced under runs/<target>, but prompt-derived
     // team-state/worktree paths should resolve from .swarm-hug/<team>.
     let team_dir = Some(engine_team_dir(&team_name, &config.files_tasks));
 
@@ -1593,9 +1593,9 @@ fn sync_target_branch_state(
     config: &Config,
     runtime_paths: &team::RuntimeStatePaths,
 ) -> Result<(), String> {
-    // Split source/target variations keep runtime-scoped state under
-    // `.swarm-hug/<team>/runs/<target>/`. Bootstrap tasks from target branch
-    // (variation-specific), and bootstrap history/state from source once.
+    // Runtime state is scoped under `.swarm-hug/<team>/runs/<target>/`.
+    // Bootstrap tasks from target branch and bootstrap history/state from
+    // source once.
     if runtime_paths.is_namespaced() {
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
@@ -2302,7 +2302,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_target_branch_state_refreshes_tasks_and_history() {
+    fn test_sync_target_branch_state_refreshes_namespaced_runtime_from_target() {
         let temp = tempfile::TempDir::new().expect("temp repo");
         let repo_root = temp.path().to_path_buf();
         init_repo(&repo_root);
@@ -2360,10 +2360,111 @@ mod tests {
         )
             .expect("sync target branch state");
 
-        let after = fs::read_to_string(&tasks_path).expect("read tasks after");
-        assert!(after.contains("[x]"));
-        let history = team::SprintHistory::load_from(&history_path).expect("load history");
-        assert_eq!(history.total_sprints, 1);
+        let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
+        let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
+
+        let after_runtime = fs::read_to_string(&runtime_tasks).expect("read runtime tasks after");
+        assert!(after_runtime.contains("[x]"));
+        let runtime_history_loaded =
+            team::SprintHistory::load_from(&runtime_history).expect("load runtime history");
+        assert_eq!(runtime_history_loaded.total_sprints, 1);
+
+        let shared_after = fs::read_to_string(&tasks_path).expect("read shared tasks after");
+        assert!(
+            shared_after.contains("[ ]"),
+            "shared template tasks should remain unchanged in namespaced mode"
+        );
+        let shared_history = team::SprintHistory::load_from(&history_path).expect("load shared history");
+        assert_eq!(shared_history.total_sprints, 0);
+    }
+
+    #[test]
+    fn test_sync_target_branch_state_namespaces_when_source_equals_target() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let team_name = "greenfield";
+        let team_dir = repo_root.join(".swarm-hug").join(team_name);
+        fs::create_dir_all(&team_dir).expect("create team dir");
+        let tasks_path = team_dir.join("tasks.md");
+        let history_path = team_dir.join("sprint-history.json");
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Shared template task\n")
+            .expect("write main tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 0}"#,
+        )
+        .expect("write main history");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "seed main state"]);
+
+        run_git_in(&repo_root, &["checkout", "-b", "feature-branch"]);
+        fs::write(
+            &tasks_path,
+            "# Tasks\n\n- [ ] Feature branch task A\n- [ ] Feature branch task B\n",
+        )
+        .expect("write feature tasks");
+        fs::write(
+            &history_path,
+            r#"{"team": "greenfield", "total_sprints": 3}"#,
+        )
+        .expect("write feature history");
+        fs::write(
+            team_dir.join("team-state.json"),
+            r#"{"team": "greenfield", "feature_branch": "feature-sprint-3"}"#,
+        )
+        .expect("write feature state");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "seed feature branch state"]);
+        run_git_in(&repo_root, &["checkout", "main"]);
+
+        let mut config = Config::default();
+        config.project = Some(team_name.to_string());
+        config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
+
+        let runtime_paths = team::RuntimeStatePaths::for_branches(
+            team_name,
+            "feature-branch",
+            "feature-branch",
+        );
+        assert!(
+            runtime_paths.is_namespaced(),
+            "runtime state should be namespaced by target branch even when source == target"
+        );
+
+        sync_target_branch_state(
+            &repo_root,
+            "feature-branch",
+            "feature-branch",
+            team_name,
+            &config,
+            &runtime_paths,
+        )
+        .expect("sync namespaced runtime");
+
+        let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
+        let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
+        let runtime_state = repo_root.join(runtime_paths.team_state_path());
+
+        let runtime_tasks_content = fs::read_to_string(&runtime_tasks).expect("read runtime tasks");
+        assert!(
+            runtime_tasks_content.contains("Feature branch task A"),
+            "runtime tasks should come from target/source branch"
+        );
+        let runtime_history_loaded =
+            team::SprintHistory::load_from(&runtime_history).expect("load runtime history");
+        assert_eq!(
+            runtime_history_loaded.total_sprints, 3,
+            "runtime history should come from source branch when bootstrapping"
+        );
+        assert!(runtime_state.exists(), "runtime team-state should be bootstrapped");
+
+        let shared_tasks_after = fs::read_to_string(&tasks_path).expect("read shared tasks");
+        assert!(
+            shared_tasks_after.contains("Shared template task"),
+            "shared project tasks should remain template state in namespaced mode"
+        );
     }
 
     #[test]
