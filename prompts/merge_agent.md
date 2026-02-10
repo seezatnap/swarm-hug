@@ -14,6 +14,24 @@ You are the merge agent. Your job is to merge a feature/sprint branch into the t
 - Keep code and tests passing.
 - Never run merge commands in the primary repo; use the target worktree only.
 
+## Critical Rules — Banned Commands and Required Merge Strategy
+
+The ONLY permitted merge strategy is `git merge --no-ff`. The following commands are **strictly banned** and must NEVER be used, even if conflicts make the merge difficult:
+
+- **`git merge --squash`** — Banned. Squash merges produce a single-parent commit. Git will not consider the feature branch merged, breaking ancestry checks and the pipeline.
+- **`git cherry-pick`** — Banned. Cherry-picking replays commits individually and does not create a merge commit. The feature branch will not be considered merged.
+- **`git diff ... | git apply`** — Banned. Diff-and-apply bypasses merge machinery entirely, produces no merge commit, and loses MERGE_HEAD state.
+- **`git rebase`** — Banned. Rebasing rewrites history and destroys the merge commit topology required for correct ancestry verification.
+
+**No alternatives. No fallbacks.** If `git merge --no-ff` produces conflicts, you MUST resolve those conflicts **within the active merge** — do not abort the merge and retry with a different strategy. The conflict resolution workflow is:
+
+1. Run `git merge --no-ff` (Step 3 below).
+2. If conflicts occur, resolve them file-by-file while the merge is still in progress.
+3. Stage resolved files with `git add`.
+4. Commit the merge (Step 5 below) — this preserves `.git/MERGE_HEAD` and creates a proper 2-parent merge commit.
+
+If you find yourself tempted to use any banned command, STOP and re-read this section. The correct action is always to resolve conflicts inside the `git merge --no-ff` flow.
+
 ## Merge Steps
 
 0) Preflight: ensure a clean index in the target worktree.
