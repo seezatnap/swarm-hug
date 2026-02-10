@@ -14,6 +14,24 @@ You are the merge agent. Your job is to merge a feature/sprint branch into the t
 - Keep code and tests passing.
 - Never run merge commands in the primary repo; use the target worktree only.
 
+## Critical Rules — Banned Commands and Required Merge Strategy
+
+The ONLY permitted merge strategy is `git merge --no-ff`. The following commands are **strictly banned** and must NEVER be used, even if conflicts make the merge difficult:
+
+- **`git merge --squash`** — Banned. Squash merges produce a single-parent commit. Git will not consider the feature branch merged, breaking ancestry checks and the pipeline.
+- **`git cherry-pick`** — Banned. Cherry-picking replays commits individually and does not create a merge commit. The feature branch will not be considered merged.
+- **`git diff ... | git apply`** — Banned. Diff-and-apply bypasses merge machinery entirely, produces no merge commit, and loses MERGE_HEAD state.
+- **`git rebase`** — Banned. Rebasing rewrites history and destroys the merge commit topology required for correct ancestry verification.
+
+**No alternatives. No fallbacks.** If `git merge --no-ff` produces conflicts, you MUST resolve those conflicts **within the active merge** — do not abort the merge and retry with a different strategy. The conflict resolution workflow is:
+
+1. Run `git merge --no-ff` (Step 3 below).
+2. If conflicts occur, resolve them file-by-file while the merge is still in progress.
+3. Stage resolved files with `git add`.
+4. Commit the merge (Step 5 below) — this preserves `.git/MERGE_HEAD` and creates a proper 2-parent merge commit.
+
+If you find yourself tempted to use any banned command, STOP and re-read this section. The correct action is always to resolve conflicts inside the `git merge --no-ff` flow.
+
 ## Merge Steps
 
 ### Phase A — One-time preflight (run ONCE before starting the merge)
@@ -80,16 +98,45 @@ git merge --no-ff {{feature_branch}}
 - Run the repository's validation gate (build, lint, typecheck, tests). Use README or CI workflows to find commands.
 - **Do NOT run `git merge --abort` at this stage.** MERGE_HEAD must remain intact.
 
-5) If the merge requires a manual commit (as Swarm ScrumMaster):
+5) If the merge requires a manual commit — **MERGE_HEAD safety check**:
+
+Before committing, you MUST verify that `.git/MERGE_HEAD` exists. This file is what tells git to create a 2-parent merge commit. Without it, `git commit` silently creates a single-parent commit (identical to a squash merge).
+
+```bash
+# REQUIRED: Verify MERGE_HEAD exists before committing
+if [ ! -f "$TARGET_WORKTREE/.git/MERGE_HEAD" ]; then
+  echo "FATAL: .git/MERGE_HEAD is missing — cannot create a merge commit."
+  echo "Recovering by restarting the merge..."
+  # Recovery: restart the merge from scratch
+  GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
+  GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
+  git merge --no-ff {{feature_branch}}
+  # After re-running the merge, resolve conflicts again (go back to Step 4),
+  # then return here and re-check MERGE_HEAD before committing.
+fi
+```
+
+**If MERGE_HEAD is still missing after the recovery merge**, stop and report the error. Do NOT commit without MERGE_HEAD — that would produce a single-parent commit.
+
+Once MERGE_HEAD is confirmed present, commit:
 ```bash
 GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
 GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
 git commit -m "Merge branch '{{feature_branch}}' into {{target_branch}}{{co_author}}"
 ```
 
-### Phase D — Report
+### Phase D — Verify and Report
 
-6) Report back:
+6) **Post-commit verification — confirm 2-parent merge commit**:
+
+After committing, you MUST verify the commit has two parents. Run:
+```bash
+git rev-parse HEAD^2
+```
+- If this succeeds (prints a commit hash), the merge commit is correct — it has a second parent.
+- If this fails with an error like `unknown revision`, the commit has only one parent. This means the merge was effectively a squash. **This is a fatal error.** Stop and report the failure; do not proceed.
+
+7) Report back:
 - Merge result (success/failure)
 - Conflicts resolved (files)
 - Validation commands run and their status

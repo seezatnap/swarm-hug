@@ -1589,31 +1589,14 @@ pub(crate) fn run_sprint(
             }
         }
         if merge_result.success {
-            if let Err(first_err) = merge_agent::ensure_feature_merged(
+            if let Err(e) = merge_agent::run_merge_agent_with_retry(
                 engine.as_ref(),
                 &sprint_branch,
                 target_branch,
                 &feature_worktree_path,
             ) {
-                let _ = merge_logger.log(&format!(
-                    "Merge verification failed (attempt 1): {}",
-                    first_err
-                ));
-                println!(
-                    "  Merge agent: verification failed (attempt 1), retrying: {}",
-                    first_err
-                );
-
-                retry_merge_agent(
-                    engine.as_ref(),
-                    &sprint_branch,
-                    target_branch,
-                    &feature_worktree_path,
-                    &merge_cleanup_paths,
-                    &first_err,
-                    &merge_logger,
-                )?;
-                println!("  Merge agent: verification succeeded on retry");
+                let _ = merge_logger.log(&format!("Merge verification failed (with retry): {}", e));
+                return Err(format!("merge agent failed: {}", e));
             }
             println!("  Merge agent: completed");
             if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
