@@ -243,6 +243,99 @@ impl SprintResult {
     }
 }
 
+/// Retry the merge agent once after an initial `ensure_feature_merged` failure.
+///
+/// Re-prepares the workspace, re-runs the merge agent, and re-checks merge status.
+/// Returns `Ok(())` if the retry succeeds, or an error combining both attempts' context.
+fn retry_merge_agent(
+    engine: &dyn swarm::engine::Engine,
+    sprint_branch: &str,
+    target_branch: &str,
+    feature_worktree_path: &Path,
+    merge_cleanup_paths: &[PathBuf],
+    first_err: &str,
+    merge_logger: &log::NamedLogger,
+) -> Result<(), String> {
+    // Re-prepare workspace for the retry attempt.
+    if let Err(e) = merge_agent::prepare_merge_workspace(feature_worktree_path, merge_cleanup_paths) {
+        let _ = merge_logger.log(&format!("Retry prepare workspace failed: {}", e));
+        return Err(format!(
+            "merge agent failed: attempt 1: {}; retry prepare failed: {}",
+            first_err, e
+        ));
+    }
+    let _ = merge_logger.log("Retry: workspace re-prepared");
+
+    let retry_result = merge_agent::run_merge_agent(
+        engine,
+        sprint_branch,
+        target_branch,
+        feature_worktree_path,
+    )
+    .map_err(|e| {
+        let _ = merge_logger.log(&format!("Retry merge agent execution failed: {}", e));
+        format!(
+            "merge agent failed: attempt 1: {}; retry execution failed: {}",
+            first_err, e
+        )
+    })?;
+
+    if !retry_result.output.is_empty() {
+        let output_preview = if retry_result.output.len() > 1000 {
+            format!(
+                "{}... [truncated, {} bytes total]",
+                &retry_result.output[..1000],
+                retry_result.output.len()
+            )
+        } else {
+            retry_result.output.clone()
+        };
+        let _ = merge_logger.log(&format!("Retry engine output:\n{}", output_preview));
+    }
+    let _ = merge_logger.log(&format!(
+        "Retry engine result: {} (exit_code={})",
+        if retry_result.success {
+            "success"
+        } else {
+            "failure"
+        },
+        retry_result.exit_code
+    ));
+    if let Some(err) = retry_result.error.as_deref() {
+        let _ = merge_logger.log(&format!("Retry engine error: {}", err));
+    }
+
+    if !retry_result.success {
+        let detail = retry_result
+            .error
+            .unwrap_or_else(|| "unknown error".to_string());
+        let _ = merge_logger.log(&format!("Retry merge agent not successful: {}", detail));
+        return Err(format!(
+            "merge agent failed: attempt 1: {}; retry failed: {}",
+            first_err, detail
+        ));
+    }
+
+    // Re-check merge status after retry.
+    if let Err(retry_err) = merge_agent::ensure_feature_merged(
+        engine,
+        sprint_branch,
+        target_branch,
+        feature_worktree_path,
+    ) {
+        let _ = merge_logger.log(&format!(
+            "Merge verification failed (attempt 2): {}",
+            retry_err
+        ));
+        return Err(format!(
+            "merge agent failed after retry: attempt 1: {}; attempt 2: {}",
+            first_err, retry_err
+        ));
+    }
+    let _ = merge_logger.log("Merge verification succeeded on retry (attempt 2)");
+    Ok(())
+}
+
 /// Run a single sprint.
 ///
 /// The `session_sprint_number` is the sprint number within this run session (1, 2, 3...).
@@ -1496,14 +1589,31 @@ pub(crate) fn run_sprint(
             }
         }
         if merge_result.success {
-            if let Err(e) = merge_agent::ensure_feature_merged(
+            if let Err(first_err) = merge_agent::ensure_feature_merged(
                 engine.as_ref(),
                 &sprint_branch,
                 target_branch,
                 &feature_worktree_path,
             ) {
-                let _ = merge_logger.log(&format!("Merge verification failed: {}", e));
-                return Err(format!("merge agent failed: {}", e));
+                let _ = merge_logger.log(&format!(
+                    "Merge verification failed (attempt 1): {}",
+                    first_err
+                ));
+                println!(
+                    "  Merge agent: verification failed (attempt 1), retrying: {}",
+                    first_err
+                );
+
+                retry_merge_agent(
+                    engine.as_ref(),
+                    &sprint_branch,
+                    target_branch,
+                    &feature_worktree_path,
+                    &merge_cleanup_paths,
+                    &first_err,
+                    &merge_logger,
+                )?;
+                println!("  Merge agent: verification succeeded on retry");
             }
             println!("  Merge agent: completed");
             if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
@@ -1975,8 +2085,8 @@ fn commit_agent_work(
 mod tests {
     use super::{
         chat, create_branch_at_commit, create_sprint_worktree_in, engine_team_dir,
-        ensure_branch_exists, preserve_failed_worktree, split_cleanup_initials,
-        sync_target_branch_state, write_merge_failure_chat,
+        ensure_branch_exists, preserve_failed_worktree, retry_merge_agent,
+        split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
         MergeFailureInfo, SprintResult,
     };
     use std::fs;
@@ -1986,6 +2096,7 @@ mod tests {
 
     use crate::testutil::with_temp_cwd;
     use swarm::config::Config;
+    use swarm::engine::{Engine, EngineResult};
     use swarm::{team, worktree};
 
     fn run_git_in(dir: &Path, args: &[&str]) {
@@ -2671,5 +2782,179 @@ mod tests {
             "error should mention branch name, got: {}",
             err
         );
+    }
+
+    /// A no-op engine that claims to be Claude but does nothing.
+    /// `ensure_feature_merged` with this engine skips the stub merge path,
+    /// so the branch must be actually merged for verification to pass.
+    struct NoopEngine;
+
+    impl Engine for NoopEngine {
+        fn execute(
+            &self,
+            _agent_name: &str,
+            _task_description: &str,
+            _working_dir: &Path,
+            _turn_number: usize,
+            _team_dir: Option<&str>,
+        ) -> EngineResult {
+            EngineResult::success("noop")
+        }
+
+        fn engine_type(&self) -> swarm::config::EngineType {
+            swarm::config::EngineType::Claude
+        }
+    }
+
+    #[test]
+    fn test_retry_merge_agent_succeeds_on_retry_with_stub() {
+        use swarm::engine::StubEngine;
+        use swarm::log::NamedLogger;
+
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+
+            // Create a feature branch with a diverging commit.
+            run_git_in(&repo_root, &["checkout", "-b", "feature-retry"]);
+            fs::write(repo_root.join("feature.txt"), "feature content")
+                .expect("write feature file");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "feature commit"]);
+            run_git_in(&repo_root, &["checkout", "main"]);
+
+            let log_dir = repo_root.join("logs");
+            fs::create_dir_all(&log_dir).expect("create log dir");
+            let merge_logger =
+                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+            // StubEngine ensure_feature_merged will perform a real git merge.
+            let engine = StubEngine::new(
+                repo_root.join("loop").to_string_lossy().to_string(),
+            );
+
+            let result = retry_merge_agent(
+                &engine,
+                "feature-retry",
+                "main",
+                &repo_root,
+                &[],
+                "first attempt failed: not merged",
+                &merge_logger,
+            );
+
+            assert!(
+                result.is_ok(),
+                "retry should succeed with stub engine, got: {:?}",
+                result
+            );
+
+            // Verify the log contains attempt 2 success.
+            let log_content = fs::read_to_string(merge_logger.path).unwrap_or_default();
+            assert!(
+                log_content.contains("succeeded on retry (attempt 2)"),
+                "log should record retry success, got: {}",
+                log_content
+            );
+        });
+    }
+
+    #[test]
+    fn test_retry_merge_agent_fails_on_both_attempts() {
+        use swarm::log::NamedLogger;
+
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+
+            // Create a feature branch with a diverging commit.
+            run_git_in(&repo_root, &["checkout", "-b", "feature-fail"]);
+            fs::write(repo_root.join("fail.txt"), "fail content")
+                .expect("write fail file");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "feature-fail commit"]);
+            run_git_in(&repo_root, &["checkout", "main"]);
+
+            let log_dir = repo_root.join("logs");
+            fs::create_dir_all(&log_dir).expect("create log dir");
+            let merge_logger =
+                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+            // NoopEngine does not actually merge, so ensure_feature_merged fails.
+            let engine = NoopEngine;
+
+            let result = retry_merge_agent(
+                &engine,
+                "feature-fail",
+                "main",
+                &repo_root,
+                &[],
+                "first attempt: branch not merged",
+                &merge_logger,
+            );
+
+            assert!(result.is_err(), "retry should fail with noop engine");
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("attempt 1"),
+                "error should contain attempt 1 context, got: {}",
+                err
+            );
+            assert!(
+                err.contains("attempt 2"),
+                "error should contain attempt 2 context, got: {}",
+                err
+            );
+
+            // Verify log contains both attempt failures.
+            let log_content = fs::read_to_string(merge_logger.path).unwrap_or_default();
+            assert!(
+                log_content.contains("Merge verification failed (attempt 2)"),
+                "log should record attempt 2 failure, got: {}",
+                log_content
+            );
+        });
+    }
+
+    #[test]
+    fn test_retry_merge_agent_preserves_first_error_context() {
+        use swarm::log::NamedLogger;
+
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+
+            run_git_in(&repo_root, &["checkout", "-b", "feature-ctx"]);
+            fs::write(repo_root.join("ctx.txt"), "ctx").expect("write ctx file");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "ctx commit"]);
+            run_git_in(&repo_root, &["checkout", "main"]);
+
+            let log_dir = repo_root.join("logs");
+            fs::create_dir_all(&log_dir).expect("create log dir");
+            let merge_logger =
+                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+            let engine = NoopEngine;
+            let first_err_msg = "squash-merge detected: single-parent commit";
+
+            let result = retry_merge_agent(
+                &engine,
+                "feature-ctx",
+                "main",
+                &repo_root,
+                &[],
+                first_err_msg,
+                &merge_logger,
+            );
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(
+                err.contains(first_err_msg),
+                "error should preserve the original first_err message, got: {}",
+                err
+            );
+        });
     }
 }
