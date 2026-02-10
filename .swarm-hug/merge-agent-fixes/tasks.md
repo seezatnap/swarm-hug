@@ -15,7 +15,7 @@
 
 - [x] (#6) Add or update tests for runner retry behavior to cover: one retry on initial verification failure, success on second attempt, and fatal exit after second failure with no extra retries [5 pts] (blocked by #4) (B)
 - [x] (#7) Add or update tests for `ensure_feature_merged` parent-count enforcement and error messaging, including single-parent squash detection, valid two-parent merge acceptance, and unchanged behavior when feature and target are the same branch [5 pts] (blocked by #5) (B)
-- [A] (#8) Execute the existing test suite plus new targeted tests for prompt and runner changes, then update any affected fixtures/expected messages so the full suite passes cleanly [5 pts] (blocked by #2, #3, #6, #7)
+- [x] (#8) Execute the existing test suite plus new targeted tests for prompt and runner changes, then update any affected fixtures/expected messages so the full suite passes cleanly [5 pts] (blocked by #2, #3, #6, #7) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#9) Mark tasks #6 and #7 as complete in TASKS.md — the tests required by #6 (runner retry: success on retry, failure on both attempts, error context preservation) were delivered inline with #4, and the tests required by #7 (parent-count: squash detection, two-parent acceptance, same-branch skip) were delivered inline with #5 (C)
