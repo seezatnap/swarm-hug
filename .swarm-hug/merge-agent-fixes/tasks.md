@@ -13,8 +13,8 @@
 
 ## Testing & Verification
 
-- [B] (#6) Add or update tests for runner retry behavior to cover: one retry on initial verification failure, success on second attempt, and fatal exit after second failure with no extra retries [5 pts] (blocked by #4)
-- [B] (#7) Add or update tests for `ensure_feature_merged` parent-count enforcement and error messaging, including single-parent squash detection, valid two-parent merge acceptance, and unchanged behavior when feature and target are the same branch [5 pts] (blocked by #5)
+- [x] (#6) Add or update tests for runner retry behavior to cover: one retry on initial verification failure, success on second attempt, and fatal exit after second failure with no extra retries [5 pts] (blocked by #4) — delivered inline with #4
+- [x] (#7) Add or update tests for `ensure_feature_merged` parent-count enforcement and error messaging, including single-parent squash detection, valid two-parent merge acceptance, and unchanged behavior when feature and target are the same branch [5 pts] (blocked by #5) — delivered inline with #5
 - [ ] (#8) Execute the existing test suite plus new targeted tests for prompt and runner changes, then update any affected fixtures/expected messages so the full suite passes cleanly [5 pts] (blocked by #2, #3, #6, #7)
 
 ## Follow-up tasks (from sprint review)
