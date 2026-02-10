@@ -72,14 +72,43 @@ git merge --no-ff {{feature_branch}}
 - Resolve by preserving upstream intent; keep both changes when possible.
 - Run the repository's validation gate (build, lint, typecheck, tests). Use README or CI workflows to find commands.
 
-5) If the merge requires a manual commit (as Swarm ScrumMaster):
+5) If the merge requires a manual commit — **MERGE_HEAD safety check**:
+
+Before committing, you MUST verify that `.git/MERGE_HEAD` exists. This file is what tells git to create a 2-parent merge commit. Without it, `git commit` silently creates a single-parent commit (identical to a squash merge).
+
+```bash
+# REQUIRED: Verify MERGE_HEAD exists before committing
+if [ ! -f "$TARGET_WORKTREE/.git/MERGE_HEAD" ]; then
+  echo "FATAL: .git/MERGE_HEAD is missing — cannot create a merge commit."
+  echo "Recovering by restarting the merge..."
+  # Recovery: restart the merge from scratch
+  GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
+  GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
+  git merge --no-ff {{feature_branch}}
+  # After re-running the merge, resolve conflicts again (go back to Step 4),
+  # then return here and re-check MERGE_HEAD before committing.
+fi
+```
+
+**If MERGE_HEAD is still missing after the recovery merge**, stop and report the error. Do NOT commit without MERGE_HEAD — that would produce a single-parent commit.
+
+Once MERGE_HEAD is confirmed present, commit:
 ```bash
 GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
 GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
 git commit -m "Merge branch '{{feature_branch}}' into {{target_branch}}{{co_author}}"
 ```
 
-6) Report back:
+6) **Post-commit verification — confirm 2-parent merge commit**:
+
+After committing, you MUST verify the commit has two parents. Run:
+```bash
+git rev-parse HEAD^2
+```
+- If this succeeds (prints a commit hash), the merge commit is correct — it has a second parent.
+- If this fails with an error like `unknown revision`, the commit has only one parent. This means the merge was effectively a squash. **This is a fatal error.** Stop and report the failure; do not proceed.
+
+7) Report back:
 - Merge result (success/failure)
 - Conflicts resolved (files)
 - Validation commands run and their status
