@@ -90,6 +90,9 @@ pub fn run_merge_agent_in_worktree(
 /// Ensure the feature branch is merged into the target branch after merge agent runs.
 ///
 /// In stub mode, performs a deterministic git merge so tests can validate behavior.
+/// When feature and target are different branches, also verifies the target branch tip
+/// has 2 parents (true merge commit), returning a specific squash-merge diagnostic
+/// when a single-parent commit is detected.
 pub fn ensure_feature_merged(
     engine: &dyn Engine,
     feature_branch: &str,
@@ -105,6 +108,16 @@ pub fn ensure_feature_merged(
     }
 
     if is_branch_merged(&main_repo, &feature, &target)? {
+        // When feature and target are different branches, verify 2-parent merge commit
+        if feature != target {
+            let parent_count = commit_parent_count(&main_repo, &target)?;
+            if parent_count < 2 {
+                return Err(format!(
+                    "squash-merge detected: tip of '{}' has {} parent(s), expected 2-parent merge commit",
+                    target, parent_count
+                ));
+            }
+        }
         Ok(())
     } else {
         Err(format!(
@@ -197,6 +210,26 @@ fn main_worktree_root(repo_root: &Path) -> Result<PathBuf, String> {
     }
 
     Err("no worktree entries found".to_string())
+}
+
+fn commit_parent_count(repo_root: &Path, branch: &str) -> Result<usize, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-list", "--parents", "-1", branch])
+        .output()
+        .map_err(|e| format!("failed to run git rev-list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git rev-list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Output format: "commit_hash parent1 parent2 ..."
+    // Number of parents = number of space-separated tokens - 1
+    let count = stdout.trim().split_whitespace().count();
+    Ok(if count > 0 { count - 1 } else { 0 })
 }
 
 fn is_branch_merged(repo_root: &Path, feature: &str, target: &str) -> Result<bool, String> {
@@ -492,6 +525,177 @@ mod tests {
             assert_eq!(tasks, "task one\n");
             assert!(!Path::new(".swarm-hug/alpha/team-state.json").exists());
             assert!(!Path::new(".swarm-hug/alpha/sprint-history.json").exists());
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_stub_creates_two_parent_commit() {
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-pc", "feature_pc.txt");
+
+            let engine = StubEngine::new("loop");
+            ensure_feature_merged(&engine, "feature-pc", "master", Path::new("."))
+                .expect("ensure merge with parent-count check");
+
+            // Verify the merge commit on master has 2 parents
+            let output = Command::new("git")
+                .args(["rev-list", "--parents", "-1", "master"])
+                .output()
+                .expect("git rev-list");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let parent_count = stdout.trim().split_whitespace().count() - 1;
+            assert_eq!(parent_count, 2, "merge commit should have 2 parents");
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_detects_single_parent_tip() {
+        with_temp_cwd(|| {
+            init_repo();
+            // Create a feature branch, then fast-forward master to it.
+            // The feature IS an ancestor of master (ancestry passes), but
+            // the tip of master has only 1 parent (no merge commit).
+            commit_on_branch("feature-ff", "feature_ff.txt");
+            // Fast-forward master to feature-ff tip
+            run_git(&["checkout", "master"]);
+            run_git(&["merge", "--ff-only", "feature-ff"]);
+
+            // Now master tip == feature-ff tip, 1 parent commit.
+            // ensure_feature_merged should detect this as squash-merge.
+            let engine = NoopEngine;
+            let err = ensure_feature_merged(&engine, "feature-ff", "master", Path::new("."))
+                .expect_err("should detect single-parent tip");
+            assert!(
+                err.contains("squash-merge detected"),
+                "expected squash-merge error, got: {}",
+                err
+            );
+            assert!(
+                err.contains("1 parent"),
+                "expected parent count in error, got: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_squash_detection_with_noop_engine() {
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-sq2", "feature_sq2.txt");
+
+            // Manually merge with --squash then commit, so content is included
+            // but there's only 1 parent. However, with --squash, git merge-base
+            // --is-ancestor will NOT consider feature-sq2 as ancestor of master.
+            // So the "not merged" error fires first, not the squash detection.
+            run_git(&["checkout", "master"]);
+            run_git(&["merge", "--squash", "feature-sq2"]);
+            run_git(&["commit", "-m", "squash"]);
+
+            let engine = NoopEngine;
+            let err = ensure_feature_merged(&engine, "feature-sq2", "master", Path::new("."))
+                .expect_err("should fail");
+            // The ancestry check fails first for actual squash merges
+            assert!(err.contains("not merged"));
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_same_branch_skips_parent_check() {
+        with_temp_cwd(|| {
+            init_repo();
+
+            // When feature and target are the same branch, parent check is skipped
+            let engine = StubEngine::new("loop");
+            ensure_feature_merged(&engine, "master", "master", Path::new("."))
+                .expect("same branch should succeed without parent check");
+        });
+    }
+
+    #[test]
+    fn test_commit_parent_count_single_parent() {
+        with_temp_cwd(|| {
+            init_repo();
+            // Initial commit on master has 0 parents (root commit), let's add one more
+            fs::write("file2.txt", "content").expect("write file");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "second commit"]);
+
+            let count = commit_parent_count(Path::new("."), "master").expect("parent count");
+            assert_eq!(count, 1, "regular commit should have 1 parent");
+        });
+    }
+
+    #[test]
+    fn test_commit_parent_count_merge_commit() {
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-cnt", "feature_cnt.txt");
+            run_git(&["checkout", "master"]);
+            run_git(&["merge", "--no-ff", "feature-cnt"]);
+
+            let count = commit_parent_count(Path::new("."), "master").expect("parent count");
+            assert_eq!(count, 2, "merge commit should have 2 parents");
+        });
+    }
+
+    #[test]
+    fn test_prompt_contains_critical_rules() {
+        with_temp_cwd(|| {
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
+
+            let prompt = generate_merge_agent_prompt(
+                "feature-1",
+                "main",
+                Path::new("/tmp/target-worktree"),
+            )
+            .unwrap();
+
+            // Verify Critical Rules section exists with banned commands
+            assert!(prompt.contains("Critical Rules"), "prompt should have Critical Rules section");
+            assert!(prompt.contains("--squash"), "prompt should ban --squash");
+            assert!(prompt.contains("cherry-pick"), "prompt should ban cherry-pick");
+            assert!(prompt.contains("git rebase"), "prompt should ban rebase");
+            assert!(prompt.contains("MERGE_HEAD"), "prompt should mention MERGE_HEAD guard");
+            assert!(prompt.contains("rev-parse HEAD^2"), "prompt should require post-commit verification");
+        });
+    }
+
+    #[test]
+    fn test_prompt_contains_merge_head_recovery() {
+        with_temp_cwd(|| {
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
+
+            let prompt = generate_merge_agent_prompt(
+                "feature-1",
+                "main",
+                Path::new("/tmp/target-worktree"),
+            )
+            .unwrap();
+
+            assert!(prompt.contains("MERGE_HEAD Recovery"), "prompt should have recovery section");
+            assert!(prompt.contains("Re-initiate the merge"), "prompt should describe recovery steps");
+        });
+    }
+
+    #[test]
+    fn test_prompt_preflight_only_aborts_stale_merges() {
+        with_temp_cwd(|| {
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
+
+            let prompt = generate_merge_agent_prompt(
+                "feature-1",
+                "main",
+                Path::new("/tmp/target-worktree"),
+            )
+            .unwrap();
+
+            assert!(prompt.contains("PRE-EXISTING stale merges"), "preflight should clarify stale-only abort");
+            assert!(prompt.contains("do NOT loop back here and abort your own merge"), "preflight should warn against self-abort");
         });
     }
 }
