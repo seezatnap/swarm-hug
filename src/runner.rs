@@ -1496,13 +1496,13 @@ pub(crate) fn run_sprint(
             }
         }
         if merge_result.success {
-            if let Err(e) = merge_agent::ensure_feature_merged(
+            if let Err(e) = merge_agent::run_merge_agent_with_retry(
                 engine.as_ref(),
                 &sprint_branch,
                 target_branch,
                 &feature_worktree_path,
             ) {
-                let _ = merge_logger.log(&format!("Merge verification failed: {}", e));
+                let _ = merge_logger.log(&format!("Merge verification failed (with retry): {}", e));
                 return Err(format!("merge agent failed: {}", e));
             }
             println!("  Merge agent: completed");
