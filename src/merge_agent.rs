@@ -464,6 +464,51 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_agent_prompt_preflight_aborts_only_stale_merges() {
+        let template = crate::prompt::get_embedded("merge_agent").unwrap();
+
+        // Step 0 must explicitly scope abort to pre-existing/stale merges
+        assert!(
+            template.contains("PRE-EXISTING stale merges"),
+            "Step 0 must label abort as for pre-existing stale merges only"
+        );
+        assert!(
+            template.contains("you have NOT yet run step 3"),
+            "Step 0 must condition abort on step 3 not having run"
+        );
+    }
+
+    #[test]
+    fn test_merge_agent_prompt_forbids_abort_after_step_3() {
+        let template = crate::prompt::get_embedded("merge_agent").unwrap();
+
+        // After step 3, the prompt must warn never to abort
+        assert!(
+            template.contains("MERGE_HEAD is YOUR merge state"),
+            "Prompt must warn that MERGE_HEAD belongs to this run after step 3"
+        );
+        assert!(
+            template.contains("Do NOT run `git merge --abort` at this stage"),
+            "Prompt must forbid abort during conflict resolution (Phase C)"
+        );
+    }
+
+    #[test]
+    fn test_merge_agent_prompt_preflight_runs_once() {
+        let template = crate::prompt::get_embedded("merge_agent").unwrap();
+
+        // Preflight must be labeled as run-once
+        assert!(
+            template.contains("run ONCE before starting the merge"),
+            "Preflight phase must be labeled as run-once"
+        );
+        assert!(
+            template.contains("you must NEVER\nreturn to this step"),
+            "Prompt must forbid returning to step 0 after step 3"
+        );
+    }
+
+    #[test]
     fn test_prepare_merge_workspace_resets_and_cleans() {
         with_temp_cwd(|| {
             init_repo();
