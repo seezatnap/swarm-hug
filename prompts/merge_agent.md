@@ -5,6 +5,28 @@ You are the merge agent. Your job is to merge a feature/sprint branch into the t
 - Target branch: `{{target_branch}}`
 - Target worktree path: `{{target_worktree_path}}`
 
+## Critical Rules
+
+**Banned commands** — you MUST NOT use any of the following:
+- `git merge --squash` — destroys merge parentage and breaks ancestry checks.
+- `git cherry-pick` — creates duplicate commits without merge parentage.
+- `git diff | git apply` or `git format-patch | git am` — bypasses merge machinery.
+- `git rebase` — rewrites history and destroys merge state.
+
+You MUST resolve all conflicts inside the original `git merge --no-ff` operation. Do NOT abort the merge and try an alternative strategy. If you cannot resolve within the merge, report failure.
+
+**MERGE_HEAD guard** — before running `git commit` after conflict resolution, always verify that `.git/MERGE_HEAD` exists:
+```bash
+test -f "$TARGET_WORKTREE/.git/MERGE_HEAD" || test -f "$(git -C "$TARGET_WORKTREE" rev-parse --git-dir)/MERGE_HEAD"
+```
+If `MERGE_HEAD` is missing, the merge state has been lost. Do NOT commit — instead go to the **MERGE_HEAD Recovery** section below.
+
+**Post-commit verification** — after every merge commit, confirm it has 2 parents:
+```bash
+git -C "$TARGET_WORKTREE" rev-parse HEAD^2
+```
+If this fails, the commit is a single-parent (squash) commit. Report failure immediately.
+
 ## Non-negotiable Rules
 - Do NOT rewrite or destroy upstream history. No `git reset --hard`, no rebases, no force-push.
 - Do NOT delete branches or worktrees.
@@ -42,7 +64,6 @@ This step cleans up leftover state from a *previous* run. Run it exactly once,
 before step 1. **After you execute step 3 (`git merge --no-ff`), you must NEVER
 return to this step.** Any MERGE_HEAD that exists after step 3 belongs to YOUR
 merge and must not be aborted.
-
 ```bash
 TARGET_WORKTREE="{{target_worktree_path}}"
 cd "$TARGET_WORKTREE"
@@ -61,6 +82,8 @@ not use destructive commands).
 > **WARNING**: Once step 3 has been executed, MERGE_HEAD is YOUR merge state.
 > Running `git merge --abort` after step 3 will destroy your merge and cause a
 > single-parent commit (squash-merge bug). Never do this.
+
+**IMPORTANT**: Once YOU start the merge in step 3, do NOT loop back here and abort your own merge. If you hit conflicts after step 3, go to step 4 to resolve them.
 
 ### Phase B — Execute the merge
 
@@ -94,9 +117,11 @@ git merge --no-ff {{feature_branch}}
 4) If conflicts occur:
 - List conflicts with `git status`.
 - Resolve each conflicted file by preserving upstream intent; keep both changes when possible.
+- **Stay inside the merge** — do NOT abort and retry with a different strategy.
 - After resolving all conflicts, stage the resolved files with `git add`.
 - Run the repository's validation gate (build, lint, typecheck, tests). Use README or CI workflows to find commands.
 - **Do NOT run `git merge --abort` at this stage.** MERGE_HEAD must remain intact.
+- Before committing, verify MERGE_HEAD exists (see Critical Rules above).
 
 5) If the merge requires a manual commit — **MERGE_HEAD safety check**:
 
@@ -120,9 +145,15 @@ fi
 
 Once MERGE_HEAD is confirmed present, commit:
 ```bash
+# First verify merge state is intact
+test -f "$(git -C "$TARGET_WORKTREE" rev-parse --git-dir)/MERGE_HEAD" || { echo "MERGE_HEAD missing — merge state lost"; exit 1; }
+
 GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
 GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
 git commit -m "Merge branch '{{feature_branch}}' into {{target_branch}}{{co_author}}"
+
+# Post-commit verification: confirm 2-parent merge commit
+git rev-parse HEAD^2 || { echo "ERROR: commit has only 1 parent (squash-merge detected)"; exit 1; }
 ```
 
 ### Phase D — Verify and Report
@@ -140,6 +171,22 @@ git rev-parse HEAD^2
 - Merge result (success/failure)
 - Conflicts resolved (files)
 - Validation commands run and their status
+- Post-commit parent verification result
 - Any remaining blockers
 
 If you cannot complete the merge safely, stop and report the blockers without forcing changes.
+
+## MERGE_HEAD Recovery
+
+If MERGE_HEAD is lost after conflicts (e.g., an accidental `git merge --abort` or other state corruption):
+
+1. Do NOT try to manually commit — it will create a 1-parent commit.
+2. Re-initiate the merge from scratch:
+```bash
+git merge --abort 2>/dev/null || true
+GIT_AUTHOR_NAME="Swarm ScrumMaster" GIT_AUTHOR_EMAIL="scrummaster@swarm.local" \
+GIT_COMMITTER_NAME="Swarm ScrumMaster" GIT_COMMITTER_EMAIL="scrummaster@swarm.local" \
+git merge --no-ff {{feature_branch}}
+```
+3. Resolve conflicts again following step 4.
+4. Verify MERGE_HEAD exists before committing.

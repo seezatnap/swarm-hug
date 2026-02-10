@@ -247,6 +247,7 @@ impl SprintResult {
 ///
 /// Re-prepares the workspace, re-runs the merge agent, and re-checks merge status.
 /// Returns `Ok(())` if the retry succeeds, or an error combining both attempts' context.
+#[cfg(test)]
 fn retry_merge_agent(
     engine: &dyn swarm::engine::Engine,
     sprint_branch: &str,

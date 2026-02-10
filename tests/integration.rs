@@ -3936,3 +3936,263 @@ fn test_two_step_followup_workflow() {
         main_log
     );
 }
+
+// ── ensure_feature_merged: parent-count enforcement tests ─────────────────
+
+/// Test that ensure_feature_merged succeeds with a valid 2-parent merge commit.
+#[test]
+fn test_ensure_feature_merged_accepts_two_parent_merge() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("base.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename = Command::new("git");
+    rename.args(["branch", "-M", "main"]).current_dir(repo_path);
+    run_success(&mut rename);
+
+    // Create feature branch with a commit
+    let mut checkout_feat = Command::new("git");
+    checkout_feat
+        .args(["checkout", "-b", "feat-2p"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feat);
+    fs::write(repo_path.join("feat.txt"), "feature\n").expect("write feature");
+    commit_all(repo_path, "feature commit");
+
+    // Back to main
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+
+    // Use StubEngine which does a real --no-ff merge
+    let engine = StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
+    merge_agent::ensure_feature_merged(&engine, "feat-2p", "main", repo_path)
+        .expect("2-parent merge should succeed");
+
+    // Verify main tip has 2 parents
+    let parents = git_stdout(repo_path, &["rev-list", "--parents", "-1", "main"]);
+    let parent_count = parents.trim().split_whitespace().count() - 1;
+    assert_eq!(parent_count, 2, "merge commit should have exactly 2 parents");
+}
+
+/// Test that ensure_feature_merged skips parent-count check when feature == target.
+#[test]
+fn test_ensure_feature_merged_same_branch_no_parent_check() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("base.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename = Command::new("git");
+    rename.args(["branch", "-M", "main"]).current_dir(repo_path);
+    run_success(&mut rename);
+
+    // Same branch as feature and target — should succeed even though tip has 1 parent
+    let engine = StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
+    merge_agent::ensure_feature_merged(&engine, "main", "main", repo_path)
+        .expect("same-branch merge should succeed without parent check");
+}
+
+/// Test that a retry of ensure_feature_merged succeeds after initial failure.
+/// Simulates the runner retry path: first attempt fails (branch not merged),
+/// then after performing the merge, second attempt succeeds.
+#[test]
+fn test_ensure_feature_merged_retry_succeeds_on_second_attempt() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("base.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename = Command::new("git");
+    rename.args(["branch", "-M", "main"]).current_dir(repo_path);
+    run_success(&mut rename);
+
+    // Create feature branch
+    let mut checkout_feat = Command::new("git");
+    checkout_feat
+        .args(["checkout", "-b", "feat-retry"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feat);
+    fs::write(repo_path.join("retry.txt"), "feature\n").expect("write feature");
+    commit_all(repo_path, "feature commit");
+
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+
+    // First attempt: verification should fail (not merged yet)
+    struct NoopEngine;
+    impl swarm::engine::Engine for NoopEngine {
+        fn execute(
+            &self,
+            _agent_name: &str,
+            _task_description: &str,
+            _working_dir: &Path,
+            _turn_number: usize,
+            _team_dir: Option<&str>,
+        ) -> swarm::engine::EngineResult {
+            swarm::engine::EngineResult::success("noop")
+        }
+        fn engine_type(&self) -> swarm::config::EngineType {
+            swarm::config::EngineType::Claude
+        }
+    }
+
+    let engine = NoopEngine;
+    let first_err = merge_agent::ensure_feature_merged(&engine, "feat-retry", "main", repo_path)
+        .expect_err("first attempt should fail");
+    assert!(first_err.contains("not merged"), "first attempt error: {}", first_err);
+
+    // Now perform the actual merge (simulating what the retry merge agent would do)
+    let mut merge_cmd = Command::new("git");
+    merge_cmd
+        .args(["merge", "--no-ff", "feat-retry"])
+        .current_dir(repo_path);
+    run_success(&mut merge_cmd);
+
+    // Second attempt: verification should succeed now
+    merge_agent::ensure_feature_merged(&engine, "feat-retry", "main", repo_path)
+        .expect("second attempt should succeed after merge");
+}
+
+/// Test that ensure_feature_merged fails permanently when the branch is never merged.
+/// Verifies that after two failures (simulating both retry attempts), the error is clear.
+#[test]
+fn test_ensure_feature_merged_fails_permanently_without_merge() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("base.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename = Command::new("git");
+    rename.args(["branch", "-M", "main"]).current_dir(repo_path);
+    run_success(&mut rename);
+
+    let mut checkout_feat = Command::new("git");
+    checkout_feat
+        .args(["checkout", "-b", "feat-perm-fail"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feat);
+    fs::write(repo_path.join("perm.txt"), "feature\n").expect("write feature");
+    commit_all(repo_path, "feature commit");
+
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+
+    struct NoopEngine;
+    impl swarm::engine::Engine for NoopEngine {
+        fn execute(
+            &self,
+            _agent_name: &str,
+            _task_description: &str,
+            _working_dir: &Path,
+            _turn_number: usize,
+            _team_dir: Option<&str>,
+        ) -> swarm::engine::EngineResult {
+            swarm::engine::EngineResult::success("noop")
+        }
+        fn engine_type(&self) -> swarm::config::EngineType {
+            swarm::config::EngineType::Claude
+        }
+    }
+
+    let engine = NoopEngine;
+
+    // First attempt fails
+    let err1 = merge_agent::ensure_feature_merged(&engine, "feat-perm-fail", "main", repo_path)
+        .expect_err("first attempt should fail");
+    assert!(err1.contains("not merged"));
+
+    // Second attempt also fails (no merge happened between attempts)
+    let err2 = merge_agent::ensure_feature_merged(&engine, "feat-perm-fail", "main", repo_path)
+        .expect_err("second attempt should also fail");
+    assert!(err2.contains("not merged"));
+
+    // No extra retries needed - both errors are clear and consistent
+    assert_eq!(err1, err2, "error messages should be consistent across retries");
+}
+
+/// Test that ensure_feature_merged detects a squash merge (1 parent) when branches differ.
+/// Note: git merge --squash doesn't actually make the feature an ancestor, so the ancestry
+/// check fires first. This test verifies the error behavior for that case.
+#[test]
+fn test_ensure_feature_merged_squash_not_ancestor() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("base.txt"), "base\n").expect("write base");
+    commit_all(repo_path, "init");
+
+    let mut rename = Command::new("git");
+    rename.args(["branch", "-M", "main"]).current_dir(repo_path);
+    run_success(&mut rename);
+
+    // Create feature branch
+    let mut checkout_feat = Command::new("git");
+    checkout_feat
+        .args(["checkout", "-b", "feat-squash"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_feat);
+    fs::write(repo_path.join("squash.txt"), "feature\n").expect("write feature");
+    commit_all(repo_path, "feature commit");
+
+    // Back to main, do a squash merge
+    let mut checkout_main = Command::new("git");
+    checkout_main
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main);
+
+    let mut squash = Command::new("git");
+    squash
+        .args(["merge", "--squash", "feat-squash"])
+        .current_dir(repo_path);
+    run_success(&mut squash);
+    commit_all(repo_path, "squash merge");
+
+    // Use a non-stub engine so it doesn't try to do its own merge
+    struct NoopEngine;
+    impl swarm::engine::Engine for NoopEngine {
+        fn execute(
+            &self,
+            _agent_name: &str,
+            _task_description: &str,
+            _working_dir: &Path,
+            _turn_number: usize,
+            _team_dir: Option<&str>,
+        ) -> swarm::engine::EngineResult {
+            swarm::engine::EngineResult::success("noop")
+        }
+        fn engine_type(&self) -> swarm::config::EngineType {
+            swarm::config::EngineType::Claude
+        }
+    }
+
+    let engine = NoopEngine;
+    let err = merge_agent::ensure_feature_merged(&engine, "feat-squash", "main", repo_path)
+        .expect_err("squash merge should fail verification");
+
+    // With a real squash, ancestry check fails first
+    assert!(
+        err.contains("not merged"),
+        "expected 'not merged' error for squash merge, got: {}",
+        err
+    );
+}
