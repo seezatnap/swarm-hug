@@ -1496,14 +1496,47 @@ pub(crate) fn run_sprint(
             }
         }
         if merge_result.success {
-            if let Err(e) = merge_agent::ensure_feature_merged(
+            if let Err(first_err) = merge_agent::ensure_feature_merged(
                 engine.as_ref(),
                 &sprint_branch,
                 target_branch,
                 &feature_worktree_path,
             ) {
-                let _ = merge_logger.log(&format!("Merge verification failed: {}", e));
-                return Err(format!("merge agent failed: {}", e));
+                let _ = merge_logger.log(&format!("Merge verification failed (attempt 1): {}", first_err));
+                println!("  Merge agent: verification failed, retrying once...");
+
+                // Retry: re-run merge agent then re-verify
+                if let Err(e) = merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths) {
+                    let _ = merge_logger.log(&format!("Retry prepare workspace failed: {}", e));
+                    return Err(format!("merge agent failed: {}", first_err));
+                }
+                match merge_agent::run_merge_agent(
+                    engine.as_ref(),
+                    &sprint_branch,
+                    target_branch,
+                    &feature_worktree_path,
+                ) {
+                    Ok(retry_result) if retry_result.success => {
+                        let _ = merge_logger.log("Retry merge agent succeeded, re-verifying...");
+                        if let Err(second_err) = merge_agent::ensure_feature_merged(
+                            engine.as_ref(),
+                            &sprint_branch,
+                            target_branch,
+                            &feature_worktree_path,
+                        ) {
+                            let _ = merge_logger.log(&format!("Merge verification failed (attempt 2): {}", second_err));
+                            return Err(format!("merge agent failed: {}", second_err));
+                        }
+                    }
+                    Ok(_) => {
+                        let _ = merge_logger.log("Retry merge agent returned failure");
+                        return Err(format!("merge agent failed: {}", first_err));
+                    }
+                    Err(e) => {
+                        let _ = merge_logger.log(&format!("Retry merge agent execution failed: {}", e));
+                        return Err(format!("merge agent failed: {}", first_err));
+                    }
+                }
             }
             println!("  Merge agent: completed");
             if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
