@@ -114,6 +114,61 @@ pub fn ensure_feature_merged(
     }
 }
 
+/// Verify the merge, retrying `run_merge_agent` once on initial verification failure.
+///
+/// 1. Calls `ensure_feature_merged` to check if the feature branch is already merged.
+/// 2. If verification fails, re-runs `run_merge_agent` exactly once.
+/// 3. Calls `ensure_feature_merged` a second time.
+/// 4. If the second verification also fails, returns a fatal error with no further retries.
+pub fn run_merge_agent_with_retry(
+    engine: &dyn Engine,
+    feature_branch: &str,
+    target_branch: &str,
+    repo_root: &Path,
+) -> Result<(), String> {
+    verify_with_retry(
+        || ensure_feature_merged(engine, feature_branch, target_branch, repo_root),
+        || run_merge_agent(engine, feature_branch, target_branch, repo_root),
+    )
+}
+
+/// Core retry loop: verify, and if verification fails, run the merge agent once
+/// then re-verify. Returns `Ok(())` on success, or a fatal error after the
+/// second verification failure.
+///
+/// Extracted for testability — the public API is `run_merge_agent_with_retry`.
+fn verify_with_retry<V, R>(mut verify: V, retry: R) -> Result<(), String>
+where
+    V: FnMut() -> Result<(), String>,
+    R: FnOnce() -> Result<EngineResult, String>,
+{
+    // First verification attempt
+    match verify() {
+        Ok(()) => return Ok(()),
+        Err(first_err) => {
+            // Retry: re-run the merge agent once
+            let retry_result = retry()?;
+            if !retry_result.success {
+                let detail = retry_result
+                    .error
+                    .unwrap_or_else(|| "merge agent retry failed".to_string());
+                return Err(format!(
+                    "merge agent retry failed after initial verification error '{}': {}",
+                    first_err, detail
+                ));
+            }
+
+            // Second verification attempt — fatal on failure
+            verify().map_err(|second_err| {
+                format!(
+                    "merge verification failed after retry (initial: '{}', retry: '{}')",
+                    first_err, second_err
+                )
+            })
+        }
+    }
+}
+
 /// Prepare the main repo working tree for a merge by cleaning known paths.
 ///
 /// This resets tracked files and removes untracked files that would block the merge.
@@ -492,6 +547,224 @@ mod tests {
             assert_eq!(tasks, "task one\n");
             assert!(!Path::new(".swarm-hug/alpha/team-state.json").exists());
             assert!(!Path::new(".swarm-hug/alpha/sprint-history.json").exists());
+        });
+    }
+
+    // --- Tests for verify_with_retry (runner retry behavior) ---
+
+    use std::cell::Cell;
+
+    #[test]
+    fn test_verify_with_retry_succeeds_on_first_verification() {
+        // When the first verification passes, no retry should occur.
+        let retry_called = Cell::new(false);
+
+        let result = verify_with_retry(
+            || Ok(()),
+            || {
+                retry_called.set(true);
+                Ok(EngineResult::success("should not run"))
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(
+            !retry_called.get(),
+            "retry should not be called when first verification succeeds"
+        );
+    }
+
+    #[test]
+    fn test_verify_with_retry_succeeds_on_second_attempt() {
+        // First verification fails, merge agent retries (succeeds),
+        // second verification passes.
+        let call_count = Cell::new(0u32);
+        let retry_called = Cell::new(false);
+
+        let result = verify_with_retry(
+            || {
+                let n = call_count.get();
+                call_count.set(n + 1);
+                if n == 0 {
+                    Err("not merged yet".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                retry_called.set(true);
+                Ok(EngineResult::success("merge agent retry output"))
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(retry_called.get(), "retry should be called after first verification failure");
+        assert_eq!(call_count.get(), 2, "verify should be called exactly twice");
+    }
+
+    #[test]
+    fn test_verify_with_retry_fatal_after_second_failure() {
+        // Both verifications fail — should return a fatal error with no extra retries.
+        let verify_count = Cell::new(0u32);
+        let retry_count = Cell::new(0u32);
+
+        let result = verify_with_retry(
+            || {
+                let n = verify_count.get();
+                verify_count.set(n + 1);
+                Err(format!("verify failed attempt {}", n + 1))
+            },
+            || {
+                let n = retry_count.get();
+                retry_count.set(n + 1);
+                Ok(EngineResult::success("retry succeeded but merge still bad"))
+            },
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("merge verification failed after retry"),
+            "error should indicate retry exhaustion, got: {}",
+            err
+        );
+        assert!(
+            err.contains("verify failed attempt 1"),
+            "error should contain initial failure detail, got: {}",
+            err
+        );
+        assert!(
+            err.contains("verify failed attempt 2"),
+            "error should contain retry failure detail, got: {}",
+            err
+        );
+        assert_eq!(verify_count.get(), 2, "verify should be called exactly twice");
+        assert_eq!(retry_count.get(), 1, "retry should be called exactly once");
+    }
+
+    #[test]
+    fn test_verify_with_retry_no_extra_retries_after_second_failure() {
+        // Ensure there are no additional retry or verification attempts beyond
+        // the one retry + one re-verification.
+        let verify_count = Cell::new(0u32);
+        let retry_count = Cell::new(0u32);
+
+        let _ = verify_with_retry(
+            || {
+                verify_count.set(verify_count.get() + 1);
+                Err("always fails".to_string())
+            },
+            || {
+                retry_count.set(retry_count.get() + 1);
+                Ok(EngineResult::success("retry ran"))
+            },
+        );
+
+        assert_eq!(
+            verify_count.get(),
+            2,
+            "verify must be called exactly 2 times (initial + after retry), not more"
+        );
+        assert_eq!(
+            retry_count.get(),
+            1,
+            "retry must be called exactly 1 time, not more"
+        );
+    }
+
+    #[test]
+    fn test_verify_with_retry_retry_engine_failure_returns_error() {
+        // If the retry merge agent itself fails (returns !success), should
+        // return an error without a second verification.
+        let verify_count = Cell::new(0u32);
+
+        let result = verify_with_retry(
+            || {
+                verify_count.set(verify_count.get() + 1);
+                Err("initial verification failed".to_string())
+            },
+            || Ok(EngineResult::failure("engine crashed", 1)),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("merge agent retry failed"),
+            "error should indicate retry failure, got: {}",
+            err
+        );
+        assert!(
+            err.contains("engine crashed"),
+            "error should contain engine failure detail, got: {}",
+            err
+        );
+        assert_eq!(
+            verify_count.get(),
+            1,
+            "verify should only be called once when retry engine fails"
+        );
+    }
+
+    #[test]
+    fn test_verify_with_retry_retry_execution_error_propagates() {
+        // If the retry function returns Err (execution error, not engine
+        // failure), it should propagate directly.
+        let verify_count = Cell::new(0u32);
+
+        let result = verify_with_retry(
+            || {
+                verify_count.set(verify_count.get() + 1);
+                Err("initial verification failed".to_string())
+            },
+            || Err("failed to spawn merge agent".to_string()),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err, "failed to spawn merge agent");
+        assert_eq!(
+            verify_count.get(),
+            1,
+            "verify should only be called once when retry execution fails"
+        );
+    }
+
+    #[test]
+    fn test_run_merge_agent_with_retry_stub_already_merged() {
+        // Integration test: when the feature is already merged, no retry
+        // should occur.
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-retry", "retry.txt");
+            run_git(&["checkout", "master"]);
+            run_git(&["merge", "--no-ff", "feature-retry"]);
+
+            assert!(is_merged("feature-retry", "master"));
+
+            let engine = StubEngine::new("loop");
+            run_merge_agent_with_retry(&engine, "feature-retry", "master", Path::new("."))
+                .expect("already merged should succeed without retry");
+        });
+    }
+
+    #[test]
+    fn test_run_merge_agent_with_retry_stub_merges_on_first_verify() {
+        // Integration test: stub engine performs the merge during
+        // ensure_feature_merged, so it succeeds on the first verification.
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-stub-retry", "stub-retry.txt");
+
+            let engine = StubEngine::new("loop");
+            run_merge_agent_with_retry(
+                &engine,
+                "feature-stub-retry",
+                "master",
+                Path::new("."),
+            )
+            .expect("stub should merge and verify on first attempt");
+
+            assert!(is_merged("feature-stub-retry", "master"));
         });
     }
 }
