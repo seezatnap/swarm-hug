@@ -90,6 +90,9 @@ pub fn run_merge_agent_in_worktree(
 /// Ensure the feature branch is merged into the target branch after merge agent runs.
 ///
 /// In stub mode, performs a deterministic git merge so tests can validate behavior.
+/// When the feature and target branches differ, additionally verifies that the
+/// target branch tip has two parents (a true merge commit). If the tip has only
+/// one parent, returns a specific squash-merge diagnostic.
 pub fn ensure_feature_merged(
     engine: &dyn Engine,
     feature_branch: &str,
@@ -104,14 +107,27 @@ pub fn ensure_feature_merged(
         stub_merge_feature_branch(&main_repo, &feature, &target)?;
     }
 
-    if is_branch_merged(&main_repo, &feature, &target)? {
-        Ok(())
-    } else {
-        Err(format!(
+    if !is_branch_merged(&main_repo, &feature, &target)? {
+        return Err(format!(
             "feature branch '{}' is not merged into '{}'",
             feature, target
-        ))
+        ));
     }
+
+    // When feature and target are different branches, verify the target tip
+    // is a true merge commit (2 parents), not a squash-merge (1 parent).
+    if feature != target {
+        let parents = commit_parent_count(&main_repo, &target)?;
+        if parents < 2 {
+            return Err(format!(
+                "squash-merge detected: tip of '{}' has {} parent(s) instead of 2; \
+                 the merge agent likely used --squash or cherry-pick instead of --no-ff",
+                target, parents
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Prepare the main repo working tree for a merge by cleaning known paths.
@@ -218,6 +234,25 @@ fn is_branch_merged(repo_root: &Path, feature: &str, target: &str) -> Result<boo
             Err(format!("git merge-base failed: {}", stderr.trim()))
         }
     }
+}
+
+fn commit_parent_count(repo_root: &Path, branch: &str) -> Result<usize, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-list", "--parents", "-n", "1", branch])
+        .output()
+        .map_err(|e| format!("failed to run git rev-list: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git rev-list failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hashes: Vec<&str> = stdout.trim().split_whitespace().collect();
+    // First hash is the commit itself; the rest are parents.
+    Ok(if hashes.is_empty() { 0 } else { hashes.len() - 1 })
 }
 
 fn is_tracked(repo_root: &Path, path: &str) -> Result<bool, String> {
@@ -537,6 +572,72 @@ mod tests {
             assert_eq!(tasks, "task one\n");
             assert!(!Path::new(".swarm-hug/alpha/team-state.json").exists());
             assert!(!Path::new(".swarm-hug/alpha/sprint-history.json").exists());
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_detects_squash_merge() {
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-squash", "feature_squash.txt");
+            run_git(&["checkout", "master"]);
+
+            // Do a proper merge first so ancestry check passes
+            run_git(&["merge", "--no-ff", "feature-squash", "-m", "real merge"]);
+            assert!(is_merged("feature-squash", "master"));
+
+            // Now simulate the squash-merge scenario: add a single-parent commit
+            // on top so the tip is not a merge commit.
+            fs::write("extra.txt", "extra").expect("write extra");
+            run_git(&["add", "."]);
+            run_git(&["commit", "-m", "squash-like commit"]);
+
+            // Ancestry still passes
+            assert!(is_merged("feature-squash", "master"));
+
+            // But ensure_feature_merged should detect the single-parent tip
+            let engine = NoopEngine;
+            let err = ensure_feature_merged(&engine, "feature-squash", "master", Path::new("."))
+                .expect_err("should detect squash-merge");
+            assert!(
+                err.contains("squash-merge detected"),
+                "error should mention squash-merge, got: {}",
+                err
+            );
+            assert!(
+                err.contains("1 parent(s)"),
+                "error should report parent count, got: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_accepts_two_parent_merge() {
+        with_temp_cwd(|| {
+            init_repo();
+            commit_on_branch("feature-proper", "feature_proper.txt");
+            run_git(&["checkout", "master"]);
+
+            // Perform a proper --no-ff merge (creates 2-parent commit)
+            run_git(&["merge", "--no-ff", "feature-proper", "-m", "proper merge"]);
+
+            let engine = NoopEngine;
+            ensure_feature_merged(&engine, "feature-proper", "master", Path::new("."))
+                .expect("two-parent merge should pass validation");
+        });
+    }
+
+    #[test]
+    fn test_ensure_feature_merged_same_branch_skips_parent_check() {
+        with_temp_cwd(|| {
+            init_repo();
+
+            // When feature == target, the parent count check should be skipped.
+            // Stub engine will attempt the merge (no-op since same branch).
+            let engine = StubEngine::new("loop");
+            ensure_feature_merged(&engine, "master", "master", Path::new("."))
+                .expect("same-branch should pass without parent check");
         });
     }
 }
