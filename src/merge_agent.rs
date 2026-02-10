@@ -464,6 +464,95 @@ mod tests {
     }
 
     #[test]
+    fn test_prompt_contains_critical_rules_section() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("## Critical Rules"),
+            "merge agent prompt must contain a Critical Rules section"
+        );
+    }
+
+    #[test]
+    fn test_prompt_bans_squash_merge() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("git merge --squash") && prompt.contains("Banned"),
+            "prompt must explicitly ban git merge --squash"
+        );
+    }
+
+    #[test]
+    fn test_prompt_bans_cherry_pick() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("git cherry-pick") && prompt.contains("Banned"),
+            "prompt must explicitly ban git cherry-pick"
+        );
+    }
+
+    #[test]
+    fn test_prompt_bans_diff_apply() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("git diff") && prompt.contains("git apply") && prompt.contains("Banned"),
+            "prompt must explicitly ban git diff | git apply"
+        );
+    }
+
+    #[test]
+    fn test_prompt_bans_rebase() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("git rebase") && prompt.contains("Banned"),
+            "prompt must explicitly ban git rebase"
+        );
+    }
+
+    #[test]
+    fn test_prompt_requires_no_ff_for_conflicts() {
+        let prompt = prompt::embedded::MERGE_AGENT;
+        assert!(
+            prompt.contains("git merge --no-ff"),
+            "prompt must require git merge --no-ff as the only permitted strategy"
+        );
+        assert!(
+            prompt.contains("ONLY permitted merge strategy"),
+            "prompt must state --no-ff is the ONLY permitted strategy"
+        );
+    }
+
+    #[test]
+    fn test_prompt_critical_rules_survive_rendering() {
+        with_temp_cwd(|| {
+            fs::create_dir_all(".swarm-hug").unwrap();
+            fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
+
+            let rendered = generate_merge_agent_prompt(
+                "feature-1",
+                "main",
+                Path::new("/tmp/target-worktree"),
+            )
+            .unwrap();
+            assert!(
+                rendered.contains("## Critical Rules"),
+                "Critical Rules section must survive template rendering"
+            );
+            assert!(
+                rendered.contains("git merge --squash"),
+                "squash ban must survive rendering"
+            );
+            assert!(
+                rendered.contains("git cherry-pick"),
+                "cherry-pick ban must survive rendering"
+            );
+            assert!(
+                rendered.contains("git rebase"),
+                "rebase ban must survive rendering"
+            );
+        });
+    }
+
+    #[test]
     fn test_prepare_merge_workspace_resets_and_cleans() {
         with_temp_cwd(|| {
             init_repo();
