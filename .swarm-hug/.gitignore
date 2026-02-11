@@ -5,6 +5,9 @@
 # Agent worktrees (recreated each sprint)
 */worktrees/
 
+# Target-branch runtime state (variation-scoped)
+*/runs/
+
 # Agent logs (local debugging)
 */loop/
 

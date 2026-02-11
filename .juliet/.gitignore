@@ -1,0 +1,5 @@
+# Managed by juliet: keep role prompt customizations, ignore runtime state.
+*
+!.gitignore
+!*/
+!*/prompt.md

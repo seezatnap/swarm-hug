@@ -3,4 +3,4 @@
 loop
 worktrees
 /.cargo*
-.juliet
+.*DS_Store
