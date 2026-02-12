@@ -34,7 +34,9 @@ pub fn cmd_customize_prompts() -> Result<(), String> {
 
 /// Set the co-author email for commits.
 pub fn cmd_set_email(cli: &config::CliArgs) -> Result<(), String> {
-    let email = cli.email_arg.as_ref()
+    let email = cli
+        .email_arg
+        .as_ref()
         .ok_or("Usage: swarm set-email <email>")?;
 
     // Validate email format (basic check)

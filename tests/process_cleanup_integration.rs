@@ -144,8 +144,15 @@ fn test_engine_timeout_no_zombie() {
     let result = engine.execute("Aaron", "timeout test", temp.path(), 0, None);
     let after = sorted_pids();
 
-    assert_eq!(before, after, "process registry should be restored after timeout");
-    assert!(!result.success, "expected timeout failure, got {:?}", result);
+    assert_eq!(
+        before, after,
+        "process registry should be restored after timeout"
+    );
+    assert!(
+        !result.success,
+        "expected timeout failure, got {:?}",
+        result
+    );
     assert_eq!(result.exit_code, 124, "unexpected result: {:?}", result);
 
     let error = result.error.as_deref().expect("expected timeout error");
@@ -190,12 +197,19 @@ fn test_shutdown_kills_subprocess() {
         "shutdown exceeded 500ms: {:?}",
         elapsed
     );
-    assert!(!result.success, "expected shutdown failure, got {:?}", result);
+    assert!(
+        !result.success,
+        "expected shutdown failure, got {:?}",
+        result
+    );
     assert_eq!(result.exit_code, 130, "unexpected result: {:?}", result);
     assert_eq!(result.error.as_deref(), Some("Shutdown requested"));
 
     let after = sorted_pids();
-    assert_eq!(before, after, "process registry should be restored after shutdown");
+    assert_eq!(
+        before, after,
+        "process registry should be restored after shutdown"
+    );
 
     assert_child_reaped(pid, "shutdown");
 }

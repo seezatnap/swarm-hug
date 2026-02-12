@@ -6,8 +6,7 @@ use std::process::Command;
 use super::cleanup::remove_worktree_by_path;
 use super::git::{
     agent_branch_name, create_feature_branch_in, ensure_head, find_worktrees_with_branch,
-    git_repo_root, prune_stale_worktree_registrations, registered_worktrees,
-    repair_worktree_links,
+    git_repo_root, prune_stale_worktree_registrations, registered_worktrees, repair_worktree_links,
 };
 use super::Worktree;
 use crate::run_context::RunContext;

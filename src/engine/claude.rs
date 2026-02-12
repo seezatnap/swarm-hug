@@ -11,8 +11,8 @@ use crate::process_group::spawn_in_new_process_group;
 use crate::process_registry::PROCESS_REGISTRY;
 use crate::shutdown;
 
-use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, output_to_result, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
+use super::{Engine, EngineResult};
 
 #[derive(Debug, Clone)]
 struct OpenRouterConfig {
@@ -62,7 +62,9 @@ impl ClaudeEngine {
 
     /// Enable OpenRouter mode with the given model.
     pub fn with_openrouter_model(mut self, model: impl Into<String>) -> Self {
-        self.openrouter = Some(OpenRouterConfig { model: model.into() });
+        self.openrouter = Some(OpenRouterConfig {
+            model: model.into(),
+        });
         self
     }
 }
@@ -95,7 +97,7 @@ impl Engine for ClaudeEngine {
         cmd.arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg("-p")
-            .arg("-")  // Read prompt from stdin
+            .arg("-") // Read prompt from stdin
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -137,19 +139,17 @@ impl Engine for ClaudeEngine {
         // Wait for completion, logging periodically
         loop {
             match child.try_wait() {
-                Ok(Some(_status)) => {
-                    match child.wait_with_output() {
-                        Ok(output) => {
-                            let result = output_to_result(output);
-                            PROCESS_REGISTRY.unregister(pid);
-                            return result;
-                        }
-                        Err(e) => {
-                            PROCESS_REGISTRY.unregister(pid);
-                            return EngineResult::failure(format!("failed to get output: {}", e), 1);
-                        }
+                Ok(Some(_status)) => match child.wait_with_output() {
+                    Ok(output) => {
+                        let result = output_to_result(output);
+                        PROCESS_REGISTRY.unregister(pid);
+                        return result;
                     }
-                }
+                    Err(e) => {
+                        PROCESS_REGISTRY.unregister(pid);
+                        return EngineResult::failure(format!("failed to get output: {}", e), 1);
+                    }
+                },
                 Ok(None) => {
                     // Process still running
                     let elapsed = start.elapsed();
@@ -179,11 +179,17 @@ impl Engine for ClaudeEngine {
                     if elapsed >= next_log {
                         let mins = elapsed.as_secs() / 60;
                         let timeout_msg = if let Some(t) = timeout {
-                            format!(", timeout in {} min", (t.as_secs() - elapsed.as_secs()) / 60)
+                            format!(
+                                ", timeout in {} min",
+                                (t.as_secs() - elapsed.as_secs()) / 60
+                            )
                         } else {
                             String::new()
                         };
-                        eprintln!("[{}] Still executing... ({} min elapsed, pid {}{})", agent_name, mins, pid, timeout_msg);
+                        eprintln!(
+                            "[{}] Still executing... ({} min elapsed, pid {}{})",
+                            agent_name, mins, pid, timeout_msg
+                        );
                         next_log += log_interval;
                     }
                     thread::sleep(Duration::from_millis(100));
@@ -199,7 +205,9 @@ impl Engine for ClaudeEngine {
 
     fn engine_type(&self) -> EngineType {
         match &self.openrouter {
-            Some(config) => EngineType::OpenRouter { model: config.model.clone() },
+            Some(config) => EngineType::OpenRouter {
+                model: config.model.clone(),
+            },
             None => EngineType::Claude,
         }
     }
@@ -277,9 +285,15 @@ mod tests {
         crate::shutdown::reset();
         let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
-        let engine = ClaudeEngine::with_path("missing-claude")
-            .with_openrouter_model("moonshotai/kimi-k2.5");
-        let result = engine.execute("ScrumMaster", "openrouter missing key", Path::new("."), 0, None);
+        let engine =
+            ClaudeEngine::with_path("missing-claude").with_openrouter_model("moonshotai/kimi-k2.5");
+        let result = engine.execute(
+            "ScrumMaster",
+            "openrouter missing key",
+            Path::new("."),
+            0,
+            None,
+        );
         assert!(!result.success, "expected failure");
         assert_eq!(
             result.error.as_deref(),
@@ -316,9 +330,14 @@ mod tests {
         writeln!(file, "#!/bin/sh").expect("write shebang");
         writeln!(file, "cat >/dev/null").expect("write stdin drain");
         writeln!(file, "echo \"ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL\"").expect("write base url");
-        writeln!(file, "echo \"ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN\"").expect("write auth token");
+        writeln!(file, "echo \"ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN\"")
+            .expect("write auth token");
         writeln!(file, "echo \"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY\"").expect("write api key");
-        writeln!(file, "echo \"ANTHROPIC_SMALL_FAST_MODEL=$ANTHROPIC_SMALL_FAST_MODEL\"").expect("write small model");
+        writeln!(
+            file,
+            "echo \"ANTHROPIC_SMALL_FAST_MODEL=$ANTHROPIC_SMALL_FAST_MODEL\""
+        )
+        .expect("write small model");
         writeln!(file, "echo \"ANTHROPIC_MODEL=$ANTHROPIC_MODEL\"").expect("write model");
         drop(file);
 
@@ -346,9 +365,14 @@ mod tests {
             env_map.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
             Some("test-openrouter-key")
         );
-        assert_eq!(env_map.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
         assert_eq!(
-            env_map.get("ANTHROPIC_SMALL_FAST_MODEL").map(String::as_str),
+            env_map.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            env_map
+                .get("ANTHROPIC_SMALL_FAST_MODEL")
+                .map(String::as_str),
             Some("moonshotai/kimi-k2.5")
         );
         assert_eq!(
@@ -359,7 +383,10 @@ mod tests {
         assert_eq!(std::env::var("ANTHROPIC_BASE_URL").ok(), before_base_url);
         assert_eq!(std::env::var("ANTHROPIC_AUTH_TOKEN").ok(), before_auth);
         assert_eq!(std::env::var("ANTHROPIC_API_KEY").ok(), before_api_key);
-        assert_eq!(std::env::var("ANTHROPIC_SMALL_FAST_MODEL").ok(), before_small);
+        assert_eq!(
+            std::env::var("ANTHROPIC_SMALL_FAST_MODEL").ok(),
+            before_small
+        );
         assert_eq!(std::env::var("ANTHROPIC_MODEL").ok(), before_model);
     }
 
@@ -373,7 +400,9 @@ mod tests {
 
         use tempfile::TempDir;
 
-        let _cwd_guard = crate::testutil::CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = crate::testutil::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::shutdown::test_lock();
         crate::shutdown::reset();
 

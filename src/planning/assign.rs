@@ -381,8 +381,16 @@ mod tests {
         assert_eq!(result.assignments.len(), 4);
 
         // Verify round-robin: A gets 1,3; B gets 2,4
-        let a_tasks: Vec<_> = result.assignments.iter().filter(|(_, c)| *c == 'A').collect();
-        let b_tasks: Vec<_> = result.assignments.iter().filter(|(_, c)| *c == 'B').collect();
+        let a_tasks: Vec<_> = result
+            .assignments
+            .iter()
+            .filter(|(_, c)| *c == 'A')
+            .collect();
+        let b_tasks: Vec<_> = result
+            .assignments
+            .iter()
+            .filter(|(_, c)| *c == 'B')
+            .collect();
         assert_eq!(a_tasks.len(), 2);
         assert_eq!(b_tasks.len(), 2);
     }

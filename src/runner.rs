@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use swarm::agent;
+use swarm::agent::INITIALS;
 use swarm::chat;
 use swarm::color::{self, emoji};
 use swarm::config::{Config, EngineType};
@@ -15,7 +16,6 @@ use swarm::lifecycle::LifecycleTracker;
 use swarm::log::{self, AgentLogger, NamedLogger};
 use swarm::merge_agent;
 use swarm::planning;
-use swarm::agent::INITIALS;
 use swarm::run_context::RunContext;
 use swarm::shutdown;
 use swarm::task::TaskList;
@@ -24,7 +24,8 @@ use swarm::worktree::{self, Worktree};
 
 use crate::git::{
     commit_files_in_worktree_on_branch, commit_sprint_completion, commit_task_assignments,
-    get_current_commit_in, get_git_log_range_in, get_short_commit_for_ref_in, git_repo_root,
+    create_pull_request, get_commit_log_between, get_current_commit_in, get_git_log_range_in,
+    get_short_commit_for_ref_in, git_repo_root, push_branch_to_remote, PullRequestCreateResult,
 };
 use crate::output::{print_sprint_start_banner, print_team_status_banner};
 use crate::project::project_name_for_config;
@@ -109,12 +110,8 @@ fn preserve_failed_worktree(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let mut preserved_path = preserved_root.join(format!(
-        "{}-preserved-{}-{}",
-        branch,
-        task_index + 1,
-        ts
-    ));
+    let mut preserved_path =
+        preserved_root.join(format!("{}-preserved-{}-{}", branch, task_index + 1, ts));
     if preserved_path.exists() {
         preserved_path = preserved_root.join(format!(
             "{}-preserved-{}-{}-{}",
@@ -210,6 +207,62 @@ fn create_sprint_worktree_in(
         .map_err(|e| format!("failed to create feature worktree: {}", e))
 }
 
+fn target_contains_source_tip(
+    repo_root: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<bool, String> {
+    let source = source_branch.trim();
+    if source.is_empty() {
+        return Err("source branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["merge-base", "--is-ancestor", source, target])
+        .output()
+        .map_err(|e| format!("failed to run git merge-base: {}", e))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else if output.status.code() == Some(1) {
+        Ok(false)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git merge-base failed: {}", stderr.trim()))
+    }
+}
+
+fn resolve_sprint_base_branch(
+    repo_root: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<String, String> {
+    let source = source_branch.trim();
+    if source.is_empty() {
+        return Err("source branch name is empty".to_string());
+    }
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch name is empty".to_string());
+    }
+
+    if source == target {
+        return Ok(source.to_string());
+    }
+
+    if target_contains_source_tip(repo_root, source, target)? {
+        Ok(target.to_string())
+    } else {
+        Ok(source.to_string())
+    }
+}
+
 fn engine_team_dir(team_name: &str, fallback_tasks_path: &str) -> String {
     let trimmed = team_name.trim();
     if trimmed.is_empty() {
@@ -258,7 +311,8 @@ fn retry_merge_agent(
     merge_logger: &log::NamedLogger,
 ) -> Result<(), String> {
     // Re-prepare workspace for the retry attempt.
-    if let Err(e) = merge_agent::prepare_merge_workspace(feature_worktree_path, merge_cleanup_paths) {
+    if let Err(e) = merge_agent::prepare_merge_workspace(feature_worktree_path, merge_cleanup_paths)
+    {
         let _ = merge_logger.log(&format!("Retry prepare workspace failed: {}", e));
         return Err(format!(
             "merge agent failed: attempt 1: {}; retry prepare failed: {}",
@@ -267,19 +321,15 @@ fn retry_merge_agent(
     }
     let _ = merge_logger.log("Retry: workspace re-prepared");
 
-    let retry_result = merge_agent::run_merge_agent(
-        engine,
-        sprint_branch,
-        target_branch,
-        feature_worktree_path,
-    )
-    .map_err(|e| {
-        let _ = merge_logger.log(&format!("Retry merge agent execution failed: {}", e));
-        format!(
-            "merge agent failed: attempt 1: {}; retry execution failed: {}",
-            first_err, e
-        )
-    })?;
+    let retry_result =
+        merge_agent::run_merge_agent(engine, sprint_branch, target_branch, feature_worktree_path)
+            .map_err(|e| {
+            let _ = merge_logger.log(&format!("Retry merge agent execution failed: {}", e));
+            format!(
+                "merge agent failed: attempt 1: {}; retry execution failed: {}",
+                first_err, e
+            )
+        })?;
 
     if !retry_result.output.is_empty() {
         let output_preview = if retry_result.output.len() > 1000 {
@@ -337,6 +387,324 @@ fn retry_merge_agent(
     Ok(())
 }
 
+const DEFAULT_PR_BODY: &str = "Auto-generated by swarm sprint.";
+
+fn default_pr_title(target_branch: &str) -> String {
+    format!("[swarm] {}", target_branch)
+}
+
+fn build_pr_metadata_prompt(source_branch: &str, target_branch: &str, commit_log: &str) -> String {
+    let commit_log = if commit_log.trim().is_empty() {
+        "(no commits found in range)".to_string()
+    } else {
+        commit_log.trim().to_string()
+    };
+
+    format!(
+        "Generate a GitHub pull request title and description.\n\
+Return only a JSON object with exactly two string keys: \"title\" and \"body\".\n\
+No markdown, no code fences, and no extra text.\n\n\
+Source branch: {}\n\
+Target branch: {}\n\n\
+Commit log (`git log --oneline {}..{}`):\n{}\n",
+        source_branch, target_branch, source_branch, target_branch, commit_log
+    )
+}
+
+fn skip_json_whitespace(input: &str, mut index: usize) -> usize {
+    while index < input.len() {
+        let Some(ch) = input[index..].chars().next() else {
+            break;
+        };
+        if ch.is_whitespace() {
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    index
+}
+
+fn parse_json_string_at(input: &str, start_index: usize) -> Option<(String, usize)> {
+    if input.as_bytes().get(start_index) != Some(&b'"') {
+        return None;
+    }
+
+    let mut decoded = String::new();
+    let mut index = start_index + 1;
+
+    while index < input.len() {
+        let ch = input[index..].chars().next()?;
+        match ch {
+            '"' => return Some((decoded, index + 1)),
+            '\\' => {
+                index += 1;
+                let escaped = input[index..].chars().next()?;
+                match escaped {
+                    '"' => decoded.push('"'),
+                    '\\' => decoded.push('\\'),
+                    '/' => decoded.push('/'),
+                    'b' => decoded.push('\u{0008}'),
+                    'f' => decoded.push('\u{000C}'),
+                    'n' => decoded.push('\n'),
+                    'r' => decoded.push('\r'),
+                    't' => decoded.push('\t'),
+                    'u' => {
+                        let hex_start = index + 1;
+                        let hex_end = hex_start + 4;
+                        if hex_end > input.len() {
+                            return None;
+                        }
+                        let codepoint = u32::from_str_radix(&input[hex_start..hex_end], 16).ok()?;
+                        let value = char::from_u32(codepoint)?;
+                        decoded.push(value);
+                        index = hex_end;
+                        continue;
+                    }
+                    _ => return None,
+                }
+                index += escaped.len_utf8();
+            }
+            _ => {
+                decoded.push(ch);
+                index += ch.len_utf8();
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_json_string_field(json: &str, key: &str) -> Option<String> {
+    let key_pattern = format!("\"{}\"", key);
+    let mut search_start = 0;
+
+    while search_start < json.len() {
+        let relative = json[search_start..].find(&key_pattern)?;
+        let key_start = search_start + relative;
+        let mut value_start = key_start + key_pattern.len();
+        value_start = skip_json_whitespace(json, value_start);
+        if json.as_bytes().get(value_start) != Some(&b':') {
+            search_start = key_start + key_pattern.len();
+            continue;
+        }
+
+        value_start += 1;
+        value_start = skip_json_whitespace(json, value_start);
+        if let Some((value, _)) = parse_json_string_at(json, value_start) {
+            return Some(value);
+        }
+
+        search_start = key_start + key_pattern.len();
+    }
+
+    None
+}
+
+fn find_matching_json_object_end(output: &str, start_index: usize) -> Option<usize> {
+    if output[start_index..].chars().next()? != '{' {
+        return None;
+    }
+
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, ch) in output[start_index..].char_indices() {
+        let index = start_index + offset;
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else {
+                match ch {
+                    '\\' => escaped = true,
+                    '"' => in_string = false,
+                    _ => {}
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn parse_pr_metadata_from_engine_output(output: &str) -> Option<(String, String)> {
+    for (start_index, ch) in output.char_indices() {
+        if ch != '{' {
+            continue;
+        }
+
+        let Some(end_index) = find_matching_json_object_end(output, start_index) else {
+            continue;
+        };
+        let candidate = &output[start_index..=end_index];
+        let Some(title) = parse_json_string_field(candidate, "title") else {
+            continue;
+        };
+        let Some(body) = parse_json_string_field(candidate, "body") else {
+            continue;
+        };
+        if !title.trim().is_empty() && !body.trim().is_empty() {
+            return Some((title, body));
+        }
+    }
+
+    None
+}
+
+fn truncate_for_log_chars(input: &str, max_chars: usize) -> String {
+    let mut preview: String = input.chars().take(max_chars).collect();
+    let total_chars = input.chars().count();
+    if total_chars > max_chars {
+        preview.push_str(&format!("... [truncated, {} chars total]", total_chars));
+    }
+    preview
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_pr_title_and_body(
+    engine: &dyn engine::Engine,
+    repo_root: &Path,
+    working_dir: &Path,
+    session_sprint_number: usize,
+    team_dir: Option<&str>,
+    source_branch: &str,
+    target_branch: &str,
+    merge_logger: &NamedLogger,
+) -> (String, String) {
+    let commit_log = match get_commit_log_between(repo_root, source_branch, target_branch) {
+        Ok(log) => log,
+        Err(e) => {
+            let _ = merge_logger.log(&format!("Failed to load commit log for PR metadata: {}", e));
+            String::new()
+        }
+    };
+    let prompt = build_pr_metadata_prompt(source_branch, target_branch, &commit_log);
+    let pr_result = engine.execute(
+        "ScrumMaster",
+        &prompt,
+        working_dir,
+        session_sprint_number,
+        team_dir,
+    );
+
+    if !pr_result.success {
+        let detail = pr_result
+            .error
+            .unwrap_or_else(|| "unknown error".to_string());
+        let _ = merge_logger.log(&format!(
+            "PR metadata generation failed; using defaults: {}",
+            detail
+        ));
+        return (default_pr_title(target_branch), DEFAULT_PR_BODY.to_string());
+    }
+
+    if let Some((title, body)) = parse_pr_metadata_from_engine_output(&pr_result.output) {
+        (title, body)
+    } else {
+        let output_preview = truncate_for_log_chars(&pr_result.output, 400);
+        let _ = merge_logger.log(&format!(
+            "PR metadata parse failed; using defaults. output_preview='{}'",
+            output_preview
+        ));
+        (default_pr_title(target_branch), DEFAULT_PR_BODY.to_string())
+    }
+}
+
+fn report_pull_request_creation(
+    result: PullRequestCreateResult,
+    merge_logger: &NamedLogger,
+    chat_file: &str,
+) {
+    match result {
+        PullRequestCreateResult::Created {
+            url,
+            stdout,
+            stderr,
+        } => {
+            let url = url.unwrap_or_else(|| "(no URL returned)".to_string());
+            println!("  PR: created {}", url);
+            let _ = merge_logger.log(&format!("PR created: {}", url));
+            if !stdout.trim().is_empty() {
+                let _ = merge_logger.log(&format!("PR create stdout: {}", stdout.trim()));
+            }
+            if !stderr.trim().is_empty() {
+                let _ = merge_logger.log(&format!("PR create stderr: {}", stderr.trim()));
+            }
+            if let Err(e) =
+                chat::write_message(chat_file, "ScrumMaster", &format!("PR: created {}", url))
+            {
+                eprintln!("  warning: failed to write PR creation to chat: {}", e);
+            }
+        }
+        PullRequestCreateResult::Skipped { reason } => {
+            eprintln!(
+                "  warning: failed to create pull request (continuing): {}",
+                reason
+            );
+            let _ = merge_logger.log(&format!("PR creation skipped: {}", reason));
+            if let Err(e) = chat::write_message(
+                chat_file,
+                "ScrumMaster",
+                &format!("PR: skipped ({})", reason),
+            ) {
+                eprintln!("  warning: failed to write PR skip to chat: {}", e);
+            }
+        }
+        PullRequestCreateResult::Failed {
+            stdout,
+            stderr,
+            exit_code,
+        } => {
+            eprintln!("  warning: failed to create pull request (continuing)");
+            let exit = exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let _ = merge_logger.log(&format!(
+                "PR creation failed: exit_code={} stdout='{}' stderr='{}'",
+                exit,
+                stdout.trim(),
+                stderr.trim()
+            ));
+            if let Err(e) = chat::write_message(
+                chat_file,
+                "ScrumMaster",
+                "PR: failed to create (continuing)",
+            ) {
+                eprintln!("  warning: failed to write PR failure to chat: {}", e);
+            }
+        }
+    }
+}
+
+fn should_push_target_branch(
+    target_branch_explicit: bool,
+    sprint_branch: &str,
+    target_branch: &str,
+    shutdown_requested: bool,
+) -> bool {
+    push_skip_reason(
+        target_branch_explicit,
+        sprint_branch,
+        target_branch,
+        shutdown_requested,
+    )
+    .is_none()
+}
+
 /// Run a single sprint.
 ///
 /// The `session_sprint_number` is the sprint number within this run session (1, 2, 3...).
@@ -357,11 +725,14 @@ pub(crate) fn run_sprint(
         .as_deref()
         .ok_or_else(|| "target branch not configured".to_string())?;
     let repo_root = git_repo_root()?;
-    let runtime_paths = team::RuntimeStatePaths::for_branches(
-        &team_name,
-        source_branch,
-        target_branch,
-    );
+    let runtime_paths =
+        team::RuntimeStatePaths::for_branches(&team_name, source_branch, target_branch);
+
+    // Start each `swarm run` invocation with a fresh runtime namespace for the
+    // target branch to avoid stale cache/state artifacts across reruns.
+    if session_sprint_number == 1 && runtime_paths.is_namespaced() {
+        reset_runtime_namespace_for_new_run(&repo_root, &runtime_paths)?;
+    }
 
     // Validate that source branch exists before proceeding.
     // This gives a clear error when a non-existent source branch is specified.
@@ -379,7 +750,7 @@ pub(crate) fn run_sprint(
     // Load tasks from runtime-scoped state.
     let runtime_tasks_path = runtime_paths.tasks_path();
     let runtime_history_path = runtime_paths.sprint_history_path();
-    let runtime_team_state_path = runtime_paths.team_state_path();
+    let runtime_state_path = runtime_paths.team_state_path();
 
     let content = fs::read_to_string(&runtime_tasks_path)
         .map_err(|e| format!("failed to read {}: {}", runtime_tasks_path.display(), e))?;
@@ -399,7 +770,11 @@ pub(crate) fn run_sprint(
     // Determine how many agents to spawn
     let assignable = task_list.assignable_count();
     if assignable == 0 {
-        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
+        return Ok(SprintResult {
+            tasks_assigned: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+        });
     }
 
     let tasks_per_agent = config.agents_tasks_per_agent;
@@ -409,7 +784,11 @@ pub(crate) fn run_sprint(
     let initials: Vec<char> = INITIALS.iter().take(agent_cap).copied().collect();
     if initials.is_empty() {
         println!("No agents available.");
-        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
+        return Ok(SprintResult {
+            tasks_assigned: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+        });
     }
     let agent_count = initials.len();
 
@@ -421,11 +800,9 @@ pub(crate) fn run_sprint(
     );
     let log_dir = Path::new(&config.files_log_dir);
 
-    if let Err(e) = chat::write_message(
-        &config.files_chat,
-        "ScrumMaster",
-        "Sprint planning started",
-    ) {
+    if let Err(e) =
+        chat::write_message(&config.files_chat, "ScrumMaster", "Sprint planning started")
+    {
         eprintln!("warning: failed to write chat: {}", e);
     }
 
@@ -458,7 +835,11 @@ pub(crate) fn run_sprint(
     };
 
     if assigned == 0 {
-        return Ok(SprintResult { tasks_assigned: 0, tasks_completed: 0, tasks_failed: 0 });
+        return Ok(SprintResult {
+            tasks_assigned: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+        });
     }
 
     // Create run context for namespaced artifacts (worktrees, branches)
@@ -482,15 +863,19 @@ pub(crate) fn run_sprint(
 
     // Compute sprint branch name using run context (includes run hash)
     let sprint_branch = run_ctx.sprint_branch();
+    let sprint_base_branch = resolve_sprint_base_branch(&repo_root, source_branch, target_branch)?;
     let worktrees_dir = Path::new(&config.files_worktrees_dir);
 
-    let base_commit = get_short_commit_for_ref_in(&repo_root, source_branch)
+    let base_commit = get_short_commit_for_ref_in(&repo_root, &sprint_base_branch)
         .or_else(|| get_short_commit_for_ref_in(&repo_root, "HEAD"))
         .unwrap_or_else(|| "unknown".to_string());
     if let Err(e) = chat::write_message(
         &config.files_chat,
         "ScrumMaster",
-        &format!("Creating worktree {} from {}", sprint_branch, base_commit),
+        &format!(
+            "Creating worktree {} from {} ({})",
+            sprint_branch, sprint_base_branch, base_commit
+        ),
     ) {
         eprintln!("warning: failed to write chat: {}", e);
     }
@@ -506,47 +891,22 @@ pub(crate) fn run_sprint(
         eprintln!("  note: pre-sprint feature worktree cleanup: {}", e);
     }
 
-    let feature_worktree_path = create_sprint_worktree_in(
-        worktrees_dir,
-        &sprint_branch,
-        source_branch,
-    )?;
+    let feature_worktree_path =
+        create_sprint_worktree_in(worktrees_dir, &sprint_branch, &sprint_base_branch)?;
 
     // Print sprint start banner (after worktree creation to ensure we have a valid sprint)
     print_sprint_start_banner(&formatted_team, historical_sprint);
 
-    // Construct the sprint worktree swarm directory path
-    // All sprint state files are written here instead of the main repo
+    // Construct the sprint worktree swarm directory path.
     let worktree_swarm_dir = feature_worktree_path
         .join(team::SWARM_HUG_DIR)
         .join(&team_name);
 
-    // Load sprint history from worktree (creates default if first sprint)
-    let worktree_history_path = worktree_swarm_dir.join(team::SPRINT_HISTORY_FILE);
-    let mut sprint_history = team::SprintHistory::load_from(&worktree_history_path)?;
-    // Set team name in case this is first sprint (load_from uses "unknown" for new files)
-    if sprint_history.team_name == "unknown" {
-        sprint_history.team_name = team_name.clone();
-    }
-    sprint_history.increment();
-    sprint_history.save()?;
-
-    // Load team state from worktree (creates default if first sprint)
-    let worktree_state_path = worktree_swarm_dir.join(team::TEAM_STATE_FILE);
-    let mut team_state = team::TeamState::load_from(&worktree_state_path)
-        .map_err(|e| format!("failed to load team state from worktree: {}", e))?;
-    team_state
-        .set_feature_branch(&sprint_branch)
-        .map_err(|e| format!("failed to set team state feature branch: {}", e))?;
-    team_state
-        .save()
-        .map_err(|e| format!("failed to save team state to worktree: {}", e))?;
-    let team_state_path = team_state.path().to_string_lossy().to_string();
-
-    // Ensure worktree swarm dir exists
+    // Ensure worktree swarm dir exists.
     let worktree_tasks_path = worktree_swarm_dir.join("tasks.md");
     fs::create_dir_all(&worktree_swarm_dir)
         .map_err(|e| format!("failed to create worktree swarm dir: {}", e))?;
+    update_runtime_feature_branch(&runtime_state_path, &team_name, Some(&sprint_branch))?;
 
     // Re-read task list from worktree to get any completions from previous sprints
     // that may have been committed to the sprint branch but not yet merged to main
@@ -573,16 +933,9 @@ pub(crate) fn run_sprint(
     fs::write(&worktree_tasks_path, task_list.to_string())
         .map_err(|e| format!("failed to write {}: {}", worktree_tasks_path.display(), e))?;
 
-    // Persist runtime-scoped planning state for this target branch.
+    // Persist runtime-scoped planning tasks for this target branch.
     if runtime_paths.is_namespaced() {
-        persist_runtime_state_files(
-            &worktree_tasks_path,
-            &runtime_tasks_path,
-            &worktree_history_path,
-            &runtime_history_path,
-            &worktree_state_path,
-            &runtime_team_state_path,
-        )?;
+        persist_runtime_tasks_file(&worktree_tasks_path, &runtime_tasks_path)?;
     }
 
     // Collect assignments
@@ -606,21 +959,16 @@ pub(crate) fn run_sprint(
     }
 
     // Write sprint plan to chat
-    let assignments_ref: Vec<(char, &str)> = assignments
-        .iter()
-        .map(|(i, d)| (*i, d.as_str()))
-        .collect();
+    let assignments_ref: Vec<(char, &str)> =
+        assignments.iter().map(|(i, d)| (*i, d.as_str())).collect();
     chat::write_sprint_plan(&config.files_chat, historical_sprint, &assignments_ref)
         .map_err(|e| format!("failed to write chat: {}", e))?;
 
-    // Commit assignment changes to git so worktrees can see them
-    // Use worktree paths for all sprint state files
+    // Commit assignment changes to git so worktrees can see them.
     commit_task_assignments(
         &feature_worktree_path,
         &sprint_branch,
         worktree_tasks_path.to_str().unwrap_or(""),
-        worktree_history_path.to_str().unwrap_or(""),
-        team_state_path.as_str(),
         &formatted_team,
         historical_sprint,
     )?;
@@ -664,12 +1012,7 @@ pub(crate) fn run_sprint(
 
     // Create worktrees for assigned agents
     let worktrees: Vec<Worktree> =
-        worktree::create_worktrees_in(
-            worktrees_dir,
-            &assignments,
-            &sprint_branch,
-            &run_ctx,
-        )
+        worktree::create_worktrees_in(worktrees_dir, &assignments, &sprint_branch, &run_ctx)
             .map_err(|e| format!("failed to create worktrees: {}", e))?;
 
     // Build a map from initial to worktree path (owned for thread safety)
@@ -793,7 +1136,10 @@ pub(crate) fn run_sprint(
                 }
 
                 // Log assignment (including engine name for visibility)
-                if let Err(e) = logger.log(&format!("Assigned task: {} [engine: {}]", description, engine_type_str)) {
+                if let Err(e) = logger.log(&format!(
+                    "Assigned task: {} [engine: {}]",
+                    description, engine_type_str
+                )) {
                     eprintln!("warning: failed to write log: {}", e);
                 }
 
@@ -807,9 +1153,11 @@ pub(crate) fn run_sprint(
                 }
 
                 // Write agent start to chat (including engine name for visibility)
-                if let Err(e) =
-                    chat::write_message(&chat_path, agent_name, &format!("Starting: {} [engine: {}]", description, engine_type_str))
-                {
+                if let Err(e) = chat::write_message(
+                    &chat_path,
+                    agent_name,
+                    &format!("Starting: {} [engine: {}]", description, engine_type_str),
+                ) {
                     eprintln!("warning: failed to write chat: {}", e);
                 }
 
@@ -851,9 +1199,10 @@ pub(crate) fn run_sprint(
                     }
                 }
                 if let Some(ref err) = result.error {
-                    if let Err(e) =
-                        logger.log(&format!("Engine error: {} (exit code: {})", err, result.exit_code))
-                    {
+                    if let Err(e) = logger.log(&format!(
+                        "Engine error: {} (exit code: {})",
+                        err, result.exit_code
+                    )) {
                         eprintln!("warning: failed to write log: {}", e);
                     }
                 }
@@ -869,13 +1218,18 @@ pub(crate) fn run_sprint(
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
-                    if let Err(e) = logger.log(&format!("Task completed: {} [engine: {}]", description, engine_type_str)) {
+                    if let Err(e) = logger.log(&format!(
+                        "Task completed: {} [engine: {}]",
+                        description, engine_type_str
+                    )) {
                         eprintln!("warning: failed to write log: {}", e);
                     }
 
-                    if let Err(e) =
-                        chat::write_message(&chat_path, agent_name, &format!("Completed: {}", description))
-                    {
+                    if let Err(e) = chat::write_message(
+                        &chat_path,
+                        agent_name,
+                        &format!("Completed: {}", description),
+                    ) {
                         eprintln!("warning: failed to write chat: {}", e);
                     }
 
@@ -932,9 +1286,8 @@ pub(crate) fn run_sprint(
                     if matches!(merge_result, worktree::MergeResult::NoBranch) {
                         let expected_branch = run_ctx.agent_branch(initial);
                         let head_commit = get_current_commit_in(&working_dir);
-                        let head_short =
-                            get_short_commit_for_ref_in(&working_dir, "HEAD")
-                                .unwrap_or_else(|| "unknown".to_string());
+                        let head_short = get_short_commit_for_ref_in(&working_dir, "HEAD")
+                            .unwrap_or_else(|| "unknown".to_string());
                         recreate_context = Some((expected_branch.clone(), head_short.clone()));
                         if let Some(commit) = head_commit {
                             if let Err(e) = logger.log(&format!(
@@ -1003,14 +1356,16 @@ pub(crate) fn run_sprint(
                             _ => "conflicts detected".to_string(),
                         };
                         let agent_branch = run_ctx.agent_branch(initial);
-                        if let Err(e) = logger.log("Merge conflict detected; invoking merge agent") {
+                        if let Err(e) = logger.log("Merge conflict detected; invoking merge agent")
+                        {
                             eprintln!("warning: failed to write log: {}", e);
                         }
                         let conflict_msg = format!(
                             "Merge conflict for {} detected. Invoking merge agent.",
                             agent_name
                         );
-                        if let Err(e) = chat::write_message(&chat_path, "ScrumMaster", &conflict_msg)
+                        if let Err(e) =
+                            chat::write_message(&chat_path, "ScrumMaster", &conflict_msg)
                         {
                             eprintln!("warning: failed to write chat: {}", e);
                         }
@@ -1037,14 +1392,16 @@ pub(crate) fn run_sprint(
                                     result.output.clone()
                                 };
                                 if !output_preview.is_empty() {
-                                    if let Err(e) =
-                                        logger.log(&format!("Merge agent output:\n{}", output_preview))
+                                    if let Err(e) = logger
+                                        .log(&format!("Merge agent output:\n{}", output_preview))
                                     {
                                         eprintln!("warning: failed to write log: {}", e);
                                     }
                                 }
                                 if let Some(err) = result.error.as_deref() {
-                                    if let Err(e) = logger.log(&format!("Merge agent error: {}", err)) {
+                                    if let Err(e) =
+                                        logger.log(&format!("Merge agent error: {}", err))
+                                    {
                                         eprintln!("warning: failed to write log: {}", e);
                                     }
                                 }
@@ -1093,11 +1450,10 @@ pub(crate) fn run_sprint(
                                 }
                             }
                             Err(e) => {
-                                merge_result =
-                                    worktree::MergeResult::Error(format!(
-                                        "merge agent failed after {}: {}",
-                                        conflict_detail, e
-                                    ));
+                                merge_result = worktree::MergeResult::Error(format!(
+                                    "merge agent failed after {}: {}",
+                                    conflict_detail, e
+                                ));
                             }
                         }
                     }
@@ -1142,7 +1498,12 @@ pub(crate) fn run_sprint(
                         }
                         let cleanup_result = {
                             let _guard = worktree_lock.lock().unwrap();
-                            worktree::cleanup_agent_worktree(&worktrees_dir, initial, true, &run_ctx)
+                            worktree::cleanup_agent_worktree(
+                                &worktrees_dir,
+                                initial,
+                                true,
+                                &run_ctx,
+                            )
                         };
                         if let Err(e) = cleanup_result {
                             let msg = format!("Worktree cleanup failed: {}", e);
@@ -1188,10 +1549,7 @@ pub(crate) fn run_sprint(
                         };
 
                         if let Some(err) = preserve_outcome.error.as_ref() {
-                            if let Err(e) = logger.log(&format!(
-                                "Preserve failed: {}",
-                                err
-                            )) {
+                            if let Err(e) = logger.log(&format!("Preserve failed: {}", err)) {
                                 eprintln!("warning: failed to write log: {}", e);
                             }
                         }
@@ -1217,7 +1575,8 @@ pub(crate) fn run_sprint(
                         if let Err(e) = logger.log(&preserve_msg) {
                             eprintln!("warning: failed to write log: {}", e);
                         }
-                        if let Err(e) = chat::write_message(&chat_path, "ScrumMaster", &preserve_msg)
+                        if let Err(e) =
+                            chat::write_message(&chat_path, "ScrumMaster", &preserve_msg)
                         {
                             eprintln!("warning: failed to write chat: {}", e);
                         }
@@ -1264,7 +1623,13 @@ pub(crate) fn run_sprint(
                             .clone()
                             .unwrap_or_else(|| "worktree recreation skipped".to_string());
                         for remaining in tasks.iter().skip(task_index + 1) {
-                            task_results.push((initial, remaining.clone(), false, Some(msg.clone()), None));
+                            task_results.push((
+                                initial,
+                                remaining.clone(),
+                                false,
+                                Some(msg.clone()),
+                                None,
+                            ));
                         }
                         break;
                     }
@@ -1339,7 +1704,10 @@ pub(crate) fn run_sprint(
     let shutdown_in_progress = shutdown::requested();
     let total_agents = handles.len();
     if shutdown_in_progress {
-        println!("Waiting for {} agent(s) to finish current work...", total_agents);
+        println!(
+            "Waiting for {} agent(s) to finish current work...",
+            total_agents
+        );
     }
     for (idx, handle) in handles.into_iter().enumerate() {
         if shutdown_in_progress && idx > 0 {
@@ -1359,27 +1727,24 @@ pub(crate) fn run_sprint(
     let task_durations: Vec<Duration> = results
         .iter()
         .filter_map(|(_, _, success, _, duration)| {
-            if *success { duration.as_ref().copied() } else { None }
+            if *success {
+                duration.as_ref().copied()
+            } else {
+                None
+            }
         })
         .collect();
 
-    // Count successes and failures for this sprint
-    let completed_this_sprint = results.iter().filter(|(_, _, s, _, _)| *s).count();
-    let failed_this_sprint = results.iter().filter(|(_, _, s, _, _)| !*s).count();
-
-    // Update task list based on results
-    for (initial, description, success, _error, _duration) in &results {
-        if *success {
-            for task in &mut task_list.tasks {
-                if let swarm::task::TaskStatus::Assigned(i) = task.status {
-                    if i == *initial && task.description == *description {
-                        task.complete(*initial);
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    let completion = reconcile_sprint_tasks_from_git(
+        &feature_worktree_path,
+        &sprint_start_commit,
+        &assignments,
+        &results,
+        engine.engine_type() == EngineType::Stub,
+        &mut task_list,
+    )?;
+    let completed_this_sprint = completion.completed;
+    let failed_this_sprint = completion.failed;
 
     // Log lifecycle summary
     let tracker_guard = tracker.lock().unwrap();
@@ -1478,16 +1843,9 @@ pub(crate) fn run_sprint(
         .map_err(|e| format!("failed to read {}: {}", worktree_tasks_path.display(), e))?;
     let final_task_list = TaskList::parse(&final_content);
 
-    // Persist final runtime-scoped state (including follow-up tasks if added).
+    // Persist final runtime-scoped planning tasks (including follow-up tasks if added).
     if runtime_paths.is_namespaced() {
-        persist_runtime_state_files(
-            &worktree_tasks_path,
-            &runtime_tasks_path,
-            &worktree_history_path,
-            &runtime_history_path,
-            &worktree_state_path,
-            &runtime_team_state_path,
-        )?;
+        persist_runtime_tasks_file(&worktree_tasks_path, &runtime_tasks_path)?;
     }
 
     let remaining_tasks = final_task_list.unassigned_count() + final_task_list.assigned_count();
@@ -1518,16 +1876,28 @@ pub(crate) fn run_sprint(
         agent_count,
     );
 
+    let mut sprint_state_committed = false;
+
     // Merge sprint branch into target branch via merge agent.
     if shutdown::requested() {
         println!("  Skipping merge agent due to shutdown.");
     } else if sprint_branch == target_branch {
         println!("  Skipping merge agent: feature branch matches target branch.");
+        sprint_state_committed = true;
     } else {
-        let merge_logger =
-            NamedLogger::new(Path::new(&config.files_log_dir), "MergeAgent", "merge-agent.log");
-        println!("  Merge agent: starting ({} -> {})", sprint_branch, target_branch);
-        let merge_msg = format!("Merge agent: starting ({} -> {})", sprint_branch, target_branch);
+        let merge_logger = NamedLogger::new(
+            Path::new(&config.files_log_dir),
+            "MergeAgent",
+            "merge-agent.log",
+        );
+        println!(
+            "  Merge agent: starting ({} -> {})",
+            sprint_branch, target_branch
+        );
+        let merge_msg = format!(
+            "Merge agent: starting ({} -> {})",
+            sprint_branch, target_branch
+        );
         if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &merge_msg) {
             eprintln!("  warning: failed to write merge start to chat: {}", e);
         }
@@ -1541,12 +1911,10 @@ pub(crate) fn run_sprint(
         if let Err(e) = merge_logger.log(&format!("Engine: {}", merge_engine)) {
             eprintln!("  warning: failed to write merge log: {}", e);
         }
-        let merge_cleanup_paths = vec![
-            worktree_tasks_path.clone(),
-            worktree_history_path.clone(),
-            PathBuf::from(&team_state_path),
-        ];
-        if let Err(e) = merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths) {
+        let merge_cleanup_paths = vec![worktree_tasks_path.clone()];
+        if let Err(e) =
+            merge_agent::prepare_merge_workspace(&feature_worktree_path, &merge_cleanup_paths)
+        {
             let _ = merge_logger.log(&format!("Prepare workspace failed: {}", e));
             return Err(format!("merge agent failed: {}", e));
         }
@@ -1579,7 +1947,11 @@ pub(crate) fn run_sprint(
         }
         if let Err(e) = merge_logger.log(&format!(
             "Engine result: {} (exit_code={})",
-            if merge_result.success { "success" } else { "failure" },
+            if merge_result.success {
+                "success"
+            } else {
+                "failure"
+            },
             merge_result.exit_code
         )) {
             eprintln!("  warning: failed to write merge log: {}", e);
@@ -1600,7 +1972,9 @@ pub(crate) fn run_sprint(
                 return Err(format!("merge agent failed: {}", e));
             }
             println!("  Merge agent: completed");
-            if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed") {
+            if let Err(e) =
+                chat::write_message(&config.files_chat, "ScrumMaster", "Merge agent: completed")
+            {
                 eprintln!("  warning: failed to write merge complete to chat: {}", e);
             }
             if let Err(e) = merge_logger.log("Merge completed") {
@@ -1649,6 +2023,79 @@ pub(crate) fn run_sprint(
             }
 
             if merged_ok {
+                let mut push_succeeded = false;
+                let skip_reason = push_skip_reason(
+                    config.target_branch_explicit,
+                    &sprint_branch,
+                    target_branch,
+                    shutdown::requested(),
+                );
+                if let Some(reason) = skip_reason {
+                    let push_msg = format!("Push: skipped ({})", reason);
+                    println!("  {}", push_msg);
+                    let _ = merge_logger.log(&push_msg);
+                    if let Err(e) = write_push_outcome_chat(&config.files_chat, &push_msg) {
+                        eprintln!("  warning: failed to write push status to chat: {}", e);
+                    }
+                } else if should_push_target_branch(
+                    config.target_branch_explicit,
+                    &sprint_branch,
+                    target_branch,
+                    shutdown::requested(),
+                ) {
+                    let push_result = push_branch_to_remote(&repo_root, target_branch);
+                    if push_result.success {
+                        push_succeeded = true;
+                        let push_msg = format!("Push: pushed '{}' to origin", target_branch);
+                        println!("  {}", push_msg);
+                        let _ = merge_logger.log(&format!("Push succeeded: {}", target_branch));
+                        if let Err(e) = write_push_outcome_chat(&config.files_chat, &push_msg) {
+                            eprintln!("  warning: failed to write push status to chat: {}", e);
+                        }
+                    } else {
+                        eprintln!(
+                            "  warning: failed to push '{}' to origin (continuing)",
+                            target_branch
+                        );
+                        let push_msg = format!(
+                            "Push: failed to push '{}' to origin (continuing)",
+                            target_branch
+                        );
+                        let error = push_result.error.as_deref().unwrap_or("unknown error");
+                        let stdout = push_result.stdout.trim();
+                        let stderr = push_result.stderr.trim();
+                        let _ = merge_logger.log(&format!(
+                            "Push failed for '{}': error='{}' exit_code={:?} stdout='{}' stderr='{}'",
+                            target_branch, error, push_result.exit_code, stdout, stderr
+                        ));
+                        if let Err(e) = write_push_outcome_chat(&config.files_chat, &push_msg) {
+                            eprintln!("  warning: failed to write push status to chat: {}", e);
+                        }
+                    }
+                }
+
+                if push_succeeded {
+                    let pr_team_dir = engine_team_dir(&team_name, &config.files_tasks);
+                    let (pr_title, pr_body) = generate_pr_title_and_body(
+                        engine.as_ref(),
+                        &repo_root,
+                        &feature_worktree_path,
+                        session_sprint_number,
+                        Some(pr_team_dir.as_str()),
+                        source_branch,
+                        target_branch,
+                        &merge_logger,
+                    );
+                    let _ = merge_logger.log(&format!(
+                        "PR metadata prepared: title='{}' body_chars={}",
+                        pr_title,
+                        pr_body.len()
+                    ));
+                    let pr_result =
+                        create_pull_request(&pr_title, &pr_body, source_branch, target_branch);
+                    report_pull_request_creation(pr_result, &merge_logger, &config.files_chat);
+                }
+
                 if let Err(e) =
                     worktree::cleanup_feature_worktree(worktrees_dir, &sprint_branch, true)
                 {
@@ -1656,15 +2103,21 @@ pub(crate) fn run_sprint(
                     let _ = merge_logger.log(&format!("Feature cleanup failed: {}", e));
                 } else {
                     println!("  Feature cleanup: removed '{}'", sprint_branch);
-                    let _ = merge_logger.log(&format!("Feature cleanup: removed '{}'", sprint_branch));
+                    let _ =
+                        merge_logger.log(&format!("Feature cleanup: removed '{}'", sprint_branch));
                 }
+                sprint_state_committed = true;
             }
         } else {
             let detail = merge_result
                 .error
                 .unwrap_or_else(|| "unknown error".to_string());
             println!("  Merge agent: failed");
-            if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", &format!("Merge agent: failed ({})", detail)) {
+            if let Err(e) = chat::write_message(
+                &config.files_chat,
+                "ScrumMaster",
+                &format!("Merge agent: failed ({})", detail),
+            ) {
                 eprintln!("  warning: failed to write merge failure to chat: {}", e);
             }
             let _ = merge_logger.log(&format!("Merge failed: {}", detail));
@@ -1672,10 +2125,40 @@ pub(crate) fn run_sprint(
         }
     }
 
+    if sprint_state_committed {
+        finalize_runtime_state_after_sprint(
+            &runtime_history_path,
+            &runtime_state_path,
+            &team_name,
+        )?;
+    }
+
     Ok(SprintResult {
         tasks_assigned: assigned,
         tasks_completed: completed_this_sprint,
         tasks_failed: failed_this_sprint,
+    })
+}
+
+fn reset_runtime_namespace_for_new_run(
+    repo_root: &Path,
+    runtime_paths: &team::RuntimeStatePaths,
+) -> Result<(), String> {
+    if !runtime_paths.is_namespaced() {
+        return Ok(());
+    }
+
+    let runtime_root = repo_root.join(runtime_paths.root());
+    if !runtime_root.exists() {
+        return Ok(());
+    }
+
+    fs::remove_dir_all(&runtime_root).map_err(|e| {
+        format!(
+            "failed to reset runtime state {}: {}",
+            runtime_root.display(),
+            e
+        )
     })
 }
 
@@ -1688,19 +2171,15 @@ fn sync_target_branch_state(
     runtime_paths: &team::RuntimeStatePaths,
 ) -> Result<(), String> {
     // Runtime state is scoped under `.swarm-hug/<team>/runs/<target>/`.
-    // Bootstrap tasks from target branch and bootstrap history/state from
-    // source once.
+    // Bootstrap tasks from target branch once; keep history/state local to
+    // runtime namespace to avoid branch-tracked state conflicts.
     if runtime_paths.is_namespaced() {
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
         let runtime_state = repo_root.join(runtime_paths.team_state_path());
-        let needs_bootstrap =
-            !runtime_tasks.exists() || !runtime_history.exists() || !runtime_state.exists();
 
-        if needs_bootstrap {
+        if !runtime_tasks.exists() {
             let branch_tasks_rel = runtime_paths.branch_tasks_path();
-            let branch_history_rel = runtime_paths.branch_sprint_history_path();
-            let branch_state_rel = runtime_paths.branch_team_state_path();
             let configured_tasks_rel = Path::new(&config.files_tasks);
 
             if branch_is_checked_out(repo_root, target_branch)? {
@@ -1723,20 +2202,6 @@ fn sync_target_branch_state(
                     remove_worktree_path(repo_root, &target_worktree)?;
                 }
             }
-
-            if branch_is_checked_out(repo_root, source_branch)? {
-                let src_history = repo_root.join(&branch_history_rel);
-                let src_state = repo_root.join(&branch_state_rel);
-                copy_if_missing(&src_history, &runtime_history)?;
-                copy_if_missing(&src_state, &runtime_state)?;
-            } else {
-                let source_worktree =
-                    worktree::create_target_branch_worktree_in(repo_root, source_branch)?;
-                let src_history = source_worktree.join(&branch_history_rel);
-                let src_state = source_worktree.join(&branch_state_rel);
-                copy_if_missing(&src_history, &runtime_history)?;
-                copy_if_missing(&src_state, &runtime_state)?;
-            }
         }
 
         if !runtime_history.exists() {
@@ -1750,6 +2215,7 @@ fn sync_target_branch_state(
         if !runtime_state.exists() {
             let mut state = team::TeamState::load_from(&runtime_state)?;
             state.team_name = team_name.to_string();
+            state.clear_feature_branch();
             state.save()?;
         }
 
@@ -1779,9 +2245,7 @@ fn sync_target_branch_state(
 
     // If source and target differ, also ensure the target branch worktree exists
     // so that later merge operations have a valid target.
-    if source_branch != target_branch
-        && !branch_is_checked_out(repo_root, target_branch)?
-    {
+    if source_branch != target_branch && !branch_is_checked_out(repo_root, target_branch)? {
         worktree::create_target_branch_worktree_in(repo_root, target_branch)?;
     }
 
@@ -1834,9 +2298,14 @@ fn copy_if_exists(src: &Path, dst: &Path) -> Result<(), String> {
             .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
     }
 
-    fs::copy(src, dst)
-        .map(|_| ())
-        .map_err(|e| format!("failed to copy {} to {}: {}", src.display(), dst.display(), e))
+    fs::copy(src, dst).map(|_| ()).map_err(|e| {
+        format!(
+            "failed to copy {} to {}: {}",
+            src.display(),
+            dst.display(),
+            e
+        )
+    })
 }
 
 fn copy_if_missing(src: &Path, dst: &Path) -> Result<(), String> {
@@ -1867,17 +2336,306 @@ fn remove_worktree_path(repo_root: &Path, worktree_path: &Path) -> Result<(), St
     }
 }
 
-fn persist_runtime_state_files(
+fn persist_runtime_tasks_file(
     worktree_tasks_path: &Path,
     runtime_tasks_path: &Path,
-    worktree_history_path: &Path,
-    runtime_history_path: &Path,
-    worktree_state_path: &Path,
-    runtime_state_path: &Path,
 ) -> Result<(), String> {
     copy_if_exists(worktree_tasks_path, runtime_tasks_path)?;
-    copy_if_exists(worktree_history_path, runtime_history_path)?;
-    copy_if_exists(worktree_state_path, runtime_state_path)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SprintCompletionSummary {
+    completed: usize,
+    failed: usize,
+}
+
+#[derive(Debug, Default)]
+struct SprintCommitEvidence {
+    subject_counts: std::collections::HashMap<String, usize>,
+    merge_counts_by_initial: std::collections::HashMap<char, usize>,
+    authored_counts_by_initial: std::collections::HashMap<char, usize>,
+    has_any_changes: bool,
+}
+
+fn parse_agent_initial_from_email(author_email: &str) -> Option<char> {
+    let normalized = author_email.trim().to_ascii_lowercase();
+    let local = normalized.strip_suffix("@swarm.local")?;
+    let suffix = local.strip_prefix("agent-")?;
+    if suffix.len() != 1 {
+        return None;
+    }
+
+    let initial = suffix.chars().next()?.to_ascii_uppercase();
+    if agent::is_valid_initial(initial) {
+        Some(initial)
+    } else {
+        None
+    }
+}
+
+fn collect_sprint_commit_evidence_in_range(
+    repo_dir: &Path,
+    from: &str,
+    to: &str,
+) -> Result<SprintCommitEvidence, String> {
+    let range = format!("{}..{}", from.trim(), to.trim());
+    let log_output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["log", "--format=%s%x1f%ae%x1f%P", &range])
+        .output()
+        .map_err(|e| format!("failed to run git log for sprint reconciliation: {}", e))?;
+
+    if !log_output.status.success() {
+        let stderr = String::from_utf8_lossy(&log_output.stderr);
+        return Err(format!(
+            "git log failed for sprint reconciliation: {}",
+            stderr.trim()
+        ));
+    }
+
+    let mut evidence = SprintCommitEvidence::default();
+    let stdout = String::from_utf8_lossy(&log_output.stdout);
+    for line in stdout.lines() {
+        let mut parts = line.splitn(3, '\x1f');
+        let subject = parts.next().unwrap_or("").trim();
+        let author_email = parts.next().unwrap_or("").trim();
+        let parents = parts.next().unwrap_or("").trim();
+
+        if subject.is_empty() {
+            continue;
+        }
+
+        *evidence
+            .subject_counts
+            .entry(subject.to_string())
+            .or_insert(0) += 1;
+
+        let Some(initial) = parse_agent_initial_from_email(author_email) else {
+            continue;
+        };
+
+        let parent_count = parents.split_whitespace().count();
+        let is_merge = parent_count > 1 || subject.starts_with("Merge ");
+        let counter = if is_merge {
+            &mut evidence.merge_counts_by_initial
+        } else {
+            &mut evidence.authored_counts_by_initial
+        };
+        *counter.entry(initial).or_insert(0) += 1;
+    }
+
+    let diff_output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["diff", "--quiet", &range])
+        .output()
+        .map_err(|e| format!("failed to run git diff for sprint reconciliation: {}", e))?;
+
+    evidence.has_any_changes = if diff_output.status.success() {
+        false
+    } else if diff_output.status.code() == Some(1) {
+        true
+    } else {
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        return Err(format!(
+            "git diff failed for sprint reconciliation: {}",
+            stderr.trim()
+        ));
+    };
+
+    Ok(evidence)
+}
+
+fn reconcile_sprint_tasks_from_git(
+    feature_worktree_path: &Path,
+    sprint_start_commit: &str,
+    assignments: &[(char, String)],
+    results: &[TaskResult],
+    allow_success_fallback: bool,
+    task_list: &mut TaskList,
+) -> Result<SprintCompletionSummary, String> {
+    if assignments.is_empty() {
+        return Ok(SprintCompletionSummary::default());
+    }
+
+    let mut evidence = collect_sprint_commit_evidence_in_range(
+        feature_worktree_path,
+        sprint_start_commit,
+        "HEAD",
+    )?;
+    let mut success_counts_by_assignment: std::collections::HashMap<(char, String), usize> =
+        std::collections::HashMap::new();
+    let mut success_counts_by_initial: std::collections::HashMap<char, usize> =
+        std::collections::HashMap::new();
+    for (initial, description, success, _error, _duration) in results {
+        if *success {
+            *success_counts_by_assignment
+                .entry((*initial, description.clone()))
+                .or_insert(0) += 1;
+            *success_counts_by_initial.entry(*initial).or_insert(0) += 1;
+        }
+    }
+
+    let mut assigned_count_by_initial: std::collections::HashMap<char, usize> =
+        std::collections::HashMap::new();
+    for (initial, _description) in assignments {
+        *assigned_count_by_initial.entry(*initial).or_insert(0) += 1;
+    }
+
+    let mut exact_match_counts_by_assignment: std::collections::HashMap<(char, String), usize> =
+        std::collections::HashMap::new();
+    let mut exact_match_counts_by_initial: std::collections::HashMap<char, usize> =
+        std::collections::HashMap::new();
+    for (initial, description) in assignments {
+        let agent_name = agent::name_from_initial(*initial).unwrap_or("Unknown");
+        let expected_subject = format!("{}: {}", agent_name, description);
+        if let Some(count) = evidence.subject_counts.get_mut(&expected_subject) {
+            if *count > 0 {
+                *count -= 1;
+                *exact_match_counts_by_assignment
+                    .entry((*initial, description.clone()))
+                    .or_insert(0) += 1;
+                *exact_match_counts_by_initial.entry(*initial).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut completion_quota_by_initial: std::collections::HashMap<char, usize> =
+        std::collections::HashMap::new();
+    for (initial, assigned_count) in &assigned_count_by_initial {
+        let exact_count = exact_match_counts_by_initial
+            .get(initial)
+            .copied()
+            .unwrap_or(0);
+        let merge_count = evidence
+            .merge_counts_by_initial
+            .get(initial)
+            .copied()
+            .unwrap_or(0);
+        let authored_count = evidence
+            .authored_counts_by_initial
+            .get(initial)
+            .copied()
+            .unwrap_or(0);
+        let mut quota = exact_count.max(merge_count).max(authored_count);
+        if quota == 0 && (allow_success_fallback || evidence.has_any_changes) {
+            quota = success_counts_by_initial.get(initial).copied().unwrap_or(0);
+        }
+        completion_quota_by_initial.insert(*initial, quota.min(*assigned_count));
+    }
+
+    let mut completion_decisions = vec![false; assignments.len()];
+
+    // First pass: exact subject matches (task commit messages preserved).
+    for (index, (initial, description)) in assignments.iter().enumerate() {
+        let Some(remaining_quota) = completion_quota_by_initial.get_mut(initial) else {
+            continue;
+        };
+        if *remaining_quota == 0 {
+            continue;
+        }
+
+        let key = (*initial, description.clone());
+        if let Some(count) = exact_match_counts_by_assignment.get_mut(&key) {
+            if *count > 0 {
+                completion_decisions[index] = true;
+                *count -= 1;
+                *remaining_quota -= 1;
+            }
+        }
+    }
+
+    // Second pass: tasks that executed successfully this sprint.
+    for (index, (initial, description)) in assignments.iter().enumerate() {
+        if completion_decisions[index] {
+            continue;
+        }
+        let Some(remaining_quota) = completion_quota_by_initial.get_mut(initial) else {
+            continue;
+        };
+        if *remaining_quota == 0 {
+            continue;
+        }
+
+        let key = (*initial, description.clone());
+        if let Some(count) = success_counts_by_assignment.get_mut(&key) {
+            if *count > 0 {
+                completion_decisions[index] = true;
+                *count -= 1;
+                *remaining_quota -= 1;
+            }
+        }
+    }
+
+    // Final pass: consume remaining git-derived quota in assignment order.
+    for (index, (initial, _description)) in assignments.iter().enumerate() {
+        if completion_decisions[index] {
+            continue;
+        }
+        let Some(remaining_quota) = completion_quota_by_initial.get_mut(initial) else {
+            continue;
+        };
+        if *remaining_quota > 0 {
+            completion_decisions[index] = true;
+            *remaining_quota -= 1;
+        }
+    }
+
+    let mut completed = 0usize;
+    for (index, (initial, description)) in assignments.iter().enumerate() {
+        let task_completed = completion_decisions[index];
+
+        for task in &mut task_list.tasks {
+            if let swarm::task::TaskStatus::Assigned(assigned_initial) = task.status {
+                if assigned_initial == *initial && task.description == *description {
+                    if task_completed {
+                        task.complete(*initial);
+                        completed += 1;
+                    } else {
+                        task.unassign();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(SprintCompletionSummary {
+        completed,
+        failed: assignments.len().saturating_sub(completed),
+    })
+}
+
+fn update_runtime_feature_branch(
+    runtime_state_path: &Path,
+    team_name: &str,
+    feature_branch: Option<&str>,
+) -> Result<(), String> {
+    let mut state = team::TeamState::load_from(runtime_state_path)?;
+    if state.team_name == "unknown" || state.team_name.trim().is_empty() {
+        state.team_name = team_name.to_string();
+    }
+    match feature_branch {
+        Some(branch) if !branch.trim().is_empty() => state.set_feature_branch(branch)?,
+        _ => state.clear_feature_branch(),
+    }
+    state.save()
+}
+
+fn finalize_runtime_state_after_sprint(
+    runtime_history_path: &Path,
+    runtime_state_path: &Path,
+    team_name: &str,
+) -> Result<(), String> {
+    let mut history = team::SprintHistory::load_from(runtime_history_path)?;
+    if history.team_name == "unknown" {
+        history.team_name = team_name.to_string();
+    }
+    history.increment();
+    history.save()?;
+    update_runtime_feature_branch(runtime_state_path, team_name, None)?;
     Ok(())
 }
 
@@ -1913,11 +2671,7 @@ fn run_post_sprint_review(
     // Get current tasks content
     let tasks_content = task_list.to_string();
 
-    if let Err(e) = chat::write_message(
-        &config.files_chat,
-        "ScrumMaster",
-        "Post-mortem started",
-    ) {
+    if let Err(e) = chat::write_message(&config.files_chat, "ScrumMaster", "Post-mortem started") {
         eprintln!("warning: failed to write chat: {}", e);
     }
 
@@ -1937,8 +2691,8 @@ fn run_post_sprint_review(
                 );
 
                 // Append follow-up tasks to TASKS.md in worktree
-                let mut current_content = fs::read_to_string(worktree_tasks_path)
-                    .unwrap_or_default();
+                let mut current_content =
+                    fs::read_to_string(worktree_tasks_path).unwrap_or_default();
 
                 // Ensure newline before appending
                 if !current_content.ends_with('\n') {
@@ -1966,8 +2720,10 @@ fn run_post_sprint_review(
                 }
 
                 // Commit follow-up tasks so next planning phase sees them
-                let commit_msg =
-                    format!("{} Sprint {}: follow-up tasks from review", team_name, sprint_number);
+                let commit_msg = format!(
+                    "{} Sprint {}: follow-up tasks from review",
+                    team_name, sprint_number
+                );
                 let tasks_path_str = worktree_tasks_path.to_str().unwrap_or("");
                 if let Ok(true) = commit_files_in_worktree_on_branch(
                     feature_worktree,
@@ -1987,9 +2743,34 @@ fn run_post_sprint_review(
     Ok(())
 }
 
-fn write_merge_failure_chat(chat_path: &str, agent_name: &str, detail: &str) -> std::io::Result<()> {
+fn write_merge_failure_chat(
+    chat_path: &str,
+    agent_name: &str,
+    detail: &str,
+) -> std::io::Result<()> {
     let msg = format!("Merge failed for {}: {}", agent_name, detail);
     chat::write_message(chat_path, "ScrumMaster", &msg)
+}
+
+fn write_push_outcome_chat(chat_path: &str, detail: &str) -> std::io::Result<()> {
+    chat::write_message(chat_path, "ScrumMaster", detail)
+}
+
+fn push_skip_reason(
+    target_branch_explicit: bool,
+    sprint_branch: &str,
+    target_branch: &str,
+    shutdown_requested: bool,
+) -> Option<&'static str> {
+    if !target_branch_explicit {
+        Some("target branch was not explicitly provided")
+    } else if shutdown_requested {
+        Some("shutdown requested")
+    } else if sprint_branch == target_branch {
+        Some("feature branch matches target branch")
+    } else {
+        None
+    }
 }
 
 /// Commit an agent's work in their worktree.
@@ -2044,7 +2825,10 @@ fn commit_agent_work(
         .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
         .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
         .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
-        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("agent-{}@swarm.local", initial),
+        )
         .output();
 
     match commit_result {
@@ -2068,16 +2852,22 @@ fn commit_agent_work(
 #[cfg(test)]
 mod tests {
     use super::{
-        chat, create_branch_at_commit, create_sprint_worktree_in, engine_team_dir,
-        ensure_branch_exists, preserve_failed_worktree, retry_merge_agent,
-        split_cleanup_initials, sync_target_branch_state, write_merge_failure_chat,
-        MergeFailureInfo, SprintResult,
+        build_pr_metadata_prompt, chat, create_branch_at_commit, create_sprint_worktree_in,
+        default_pr_title, engine_team_dir, ensure_branch_exists, generate_pr_title_and_body,
+        parse_pr_metadata_from_engine_output, preserve_failed_worktree, push_skip_reason,
+        reconcile_sprint_tasks_from_git, report_pull_request_creation,
+        reset_runtime_namespace_for_new_run, resolve_sprint_base_branch, retry_merge_agent,
+        should_push_target_branch, split_cleanup_initials, sync_target_branch_state,
+        write_merge_failure_chat, write_push_outcome_chat, MergeFailureInfo, SprintResult,
+        TaskResult, DEFAULT_PR_BODY,
     };
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::{Arc, Mutex};
     use tempfile::NamedTempFile;
 
+    use crate::git::PullRequestCreateResult;
     use crate::testutil::with_temp_cwd;
     use swarm::config::Config;
     use swarm::engine::{Engine, EngineResult};
@@ -2103,7 +2893,10 @@ mod tests {
     fn init_repo(repo_root: &Path) {
         run_git_in(repo_root, &["init"]);
         run_git_in(repo_root, &["config", "user.name", "Swarm Test"]);
-        run_git_in(repo_root, &["config", "user.email", "swarm-test@example.com"]);
+        run_git_in(
+            repo_root,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
         fs::write(repo_root.join("README.md"), "init").expect("write readme");
         run_git_in(repo_root, &["add", "."]);
         run_git_in(repo_root, &["commit", "-m", "init"]);
@@ -2163,6 +2956,323 @@ mod tests {
     }
 
     #[test]
+    fn test_should_push_target_branch_skips_when_sprint_branch_matches_target() {
+        let should_push = should_push_target_branch(true, "feature-1", "feature-1", false);
+        assert!(
+            !should_push,
+            "push should be skipped when sprint branch already matches target branch"
+        );
+    }
+
+    #[test]
+    fn test_should_push_target_branch_skips_when_shutdown_requested() {
+        let should_push =
+            should_push_target_branch(true, "alpha-sprint-1-abc123", "feature-1", true);
+        assert!(
+            !should_push,
+            "push should be skipped when shutdown has been requested"
+        );
+    }
+
+    #[test]
+    fn test_should_push_target_branch_skips_when_target_not_explicit() {
+        let should_push =
+            should_push_target_branch(false, "alpha-sprint-1-abc123", "feature-1", false);
+        assert!(
+            !should_push,
+            "push should be skipped when --target-branch was not explicitly provided"
+        );
+    }
+
+    struct CapturingEngine {
+        success: bool,
+        output: String,
+        error: Option<String>,
+        captured_prompt: Arc<Mutex<Option<String>>>,
+    }
+
+    impl CapturingEngine {
+        fn success(output: &str, captured_prompt: Arc<Mutex<Option<String>>>) -> Self {
+            Self {
+                success: true,
+                output: output.to_string(),
+                error: None,
+                captured_prompt,
+            }
+        }
+
+        fn failure(error: &str, captured_prompt: Arc<Mutex<Option<String>>>) -> Self {
+            Self {
+                success: false,
+                output: String::new(),
+                error: Some(error.to_string()),
+                captured_prompt,
+            }
+        }
+    }
+
+    impl Engine for CapturingEngine {
+        fn execute(
+            &self,
+            _agent_name: &str,
+            task_description: &str,
+            _working_dir: &Path,
+            _turn_number: usize,
+            _team_dir: Option<&str>,
+        ) -> EngineResult {
+            if let Ok(mut guard) = self.captured_prompt.lock() {
+                *guard = Some(task_description.to_string());
+            }
+            if self.success {
+                EngineResult::success(self.output.clone())
+            } else {
+                EngineResult::failure(
+                    self.error
+                        .clone()
+                        .unwrap_or_else(|| "engine failed".to_string()),
+                    1,
+                )
+            }
+        }
+
+        fn engine_type(&self) -> swarm::config::EngineType {
+            swarm::config::EngineType::Claude
+        }
+    }
+
+    #[test]
+    fn test_build_pr_metadata_prompt_includes_range_and_log() {
+        let prompt =
+            build_pr_metadata_prompt("source-branch", "target-branch", "abc123 target commit");
+        assert!(prompt.contains("source-branch"));
+        assert!(prompt.contains("target-branch"));
+        assert!(prompt.contains("git log --oneline source-branch..target-branch"));
+        assert!(prompt.contains("abc123 target commit"));
+        assert!(prompt.contains("\"title\""));
+        assert!(prompt.contains("\"body\""));
+    }
+
+    #[test]
+    fn test_parse_pr_metadata_from_engine_output_parses_plain_json() {
+        let parsed = parse_pr_metadata_from_engine_output(
+            r#"{"title":"[swarm] target-branch","body":"Autogenerated body"}"#,
+        )
+        .expect("parse PR metadata");
+        assert_eq!(parsed.0, "[swarm] target-branch");
+        assert_eq!(parsed.1, "Autogenerated body");
+    }
+
+    #[test]
+    fn test_parse_pr_metadata_from_engine_output_parses_json_with_extra_text() {
+        let output = r#"Result:
+```json
+{"title":"Release prep","body":"Includes sprint changes."}
+```"#;
+        let parsed =
+            parse_pr_metadata_from_engine_output(output).expect("parse metadata from mixed output");
+        assert_eq!(parsed.0, "Release prep");
+        assert_eq!(parsed.1, "Includes sprint changes.");
+    }
+
+    #[test]
+    fn test_generate_pr_title_and_body_falls_back_on_parse_failure() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+        run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
+
+        let captured_prompt = Arc::new(Mutex::new(None));
+        let non_ascii_output = "你".repeat(500);
+        let engine = CapturingEngine::success(&non_ascii_output, Arc::clone(&captured_prompt));
+        let log_dir = repo_root.join("logs");
+        fs::create_dir_all(&log_dir).expect("create logs dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+        let (title, body) = generate_pr_title_and_body(
+            &engine,
+            &repo_root,
+            &repo_root,
+            1,
+            None,
+            "source-branch",
+            "target-branch",
+            &merge_logger,
+        );
+        assert_eq!(title, default_pr_title("target-branch"));
+        assert_eq!(body, DEFAULT_PR_BODY);
+
+        let log_content = fs::read_to_string(merge_logger.path).expect("read merge log");
+        assert!(log_content.contains("PR metadata parse failed; using defaults. output_preview='"));
+        assert!(log_content.contains("[truncated, 500 chars total]"));
+    }
+
+    #[test]
+    fn test_generate_pr_title_and_body_prompt_contains_commit_log_between_branches() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+        fs::write(repo_root.join("source.txt"), "source").expect("write source file");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "source commit"]);
+
+        run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
+        fs::write(repo_root.join("target.txt"), "target").expect("write target file");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "target commit"]);
+
+        let captured_prompt = Arc::new(Mutex::new(None));
+        let engine = CapturingEngine::success(
+            r#"{"title":"PR title","body":"PR body"}"#,
+            Arc::clone(&captured_prompt),
+        );
+        let log_dir = repo_root.join("logs");
+        fs::create_dir_all(&log_dir).expect("create logs dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+        let (title, body) = generate_pr_title_and_body(
+            &engine,
+            &repo_root,
+            &repo_root,
+            2,
+            Some(".swarm-hug/alpha"),
+            "source-branch",
+            "target-branch",
+            &merge_logger,
+        );
+        assert_eq!(title, "PR title");
+        assert_eq!(body, "PR body");
+
+        let prompt = captured_prompt
+            .lock()
+            .expect("prompt mutex")
+            .clone()
+            .expect("captured prompt");
+        assert!(
+            prompt.contains("git log --oneline source-branch..target-branch"),
+            "prompt should include commit range, got: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("target commit"),
+            "prompt should include oneline commit log output, got: {}",
+            prompt
+        );
+        assert!(
+            !prompt.contains("source commit"),
+            "prompt should use source..target range and exclude source-only commits, got: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn test_generate_pr_title_and_body_falls_back_on_engine_failure() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
+        run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
+
+        let captured_prompt = Arc::new(Mutex::new(None));
+        let engine = CapturingEngine::failure("engine unavailable", Arc::clone(&captured_prompt));
+        let log_dir = repo_root.join("logs");
+        fs::create_dir_all(&log_dir).expect("create logs dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+
+        let (title, body) = generate_pr_title_and_body(
+            &engine,
+            &repo_root,
+            &repo_root,
+            3,
+            None,
+            "source-branch",
+            "target-branch",
+            &merge_logger,
+        );
+        assert_eq!(title, default_pr_title("target-branch"));
+        assert_eq!(body, DEFAULT_PR_BODY);
+    }
+
+    #[test]
+    fn test_report_pull_request_creation_logs_success_url() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let log_dir = temp.path().join("logs");
+        fs::create_dir_all(&log_dir).expect("create log dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+        let chat_file = temp.path().join("chat.md");
+
+        report_pull_request_creation(
+            PullRequestCreateResult::Created {
+                url: Some("https://github.com/example/repo/pull/42".to_string()),
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            &merge_logger,
+            chat_file.to_str().expect("chat path"),
+        );
+
+        let log_content = fs::read_to_string(merge_logger.path).expect("read merge log");
+        assert!(log_content.contains("PR created: https://github.com/example/repo/pull/42"));
+
+        let chat_content = fs::read_to_string(&chat_file).expect("read chat file");
+        assert!(chat_content.contains("PR: created https://github.com/example/repo/pull/42"));
+    }
+
+    #[test]
+    fn test_report_pull_request_creation_logs_skip_warning() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let log_dir = temp.path().join("logs");
+        fs::create_dir_all(&log_dir).expect("create log dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+        let chat_file = temp.path().join("chat.md");
+
+        report_pull_request_creation(
+            PullRequestCreateResult::Skipped {
+                reason: "skipping PR creation: 'gh' was not found on PATH".to_string(),
+            },
+            &merge_logger,
+            chat_file.to_str().expect("chat path"),
+        );
+
+        let log_content = fs::read_to_string(merge_logger.path).expect("read merge log");
+        assert!(log_content.contains("PR creation skipped"));
+        assert!(log_content.contains("gh"));
+
+        let chat_content = fs::read_to_string(&chat_file).expect("read chat file");
+        assert!(chat_content.contains("PR: skipped"));
+    }
+
+    #[test]
+    fn test_report_pull_request_creation_logs_failure_and_continues() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let log_dir = temp.path().join("logs");
+        fs::create_dir_all(&log_dir).expect("create log dir");
+        let merge_logger = swarm::log::NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+        let chat_file = temp.path().join("chat.md");
+
+        report_pull_request_creation(
+            PullRequestCreateResult::Failed {
+                stdout: String::new(),
+                stderr: "authentication failed".to_string(),
+                exit_code: Some(1),
+            },
+            &merge_logger,
+            chat_file.to_str().expect("chat path"),
+        );
+
+        let log_content = fs::read_to_string(merge_logger.path).expect("read merge log");
+        assert!(log_content.contains("PR creation failed: exit_code=1"));
+        assert!(log_content.contains("authentication failed"));
+
+        let chat_content = fs::read_to_string(&chat_file).expect("read chat file");
+        assert!(chat_content.contains("PR: failed to create (continuing)"));
+    }
+
+    #[test]
     fn test_write_merge_failure_chat() {
         let temp = NamedTempFile::new().expect("temp chat file");
         write_merge_failure_chat(
@@ -2177,6 +3287,46 @@ mod tests {
         let (_, agent, message) = chat::parse_line(line).expect("parse chat line");
         assert_eq!(agent, "ScrumMaster");
         assert_eq!(message, "Merge failed for Aaron: conflicts in file.txt");
+    }
+
+    #[test]
+    fn test_write_push_outcome_chat() {
+        let temp = NamedTempFile::new().expect("temp chat file");
+        write_push_outcome_chat(
+            temp.path().to_str().expect("temp path"),
+            "Push: pushed 'release' to origin",
+        )
+        .expect("write push chat");
+
+        let content = fs::read_to_string(temp.path()).expect("read chat");
+        let line = content.lines().next().expect("chat line");
+        let (_, agent, message) = chat::parse_line(line).expect("parse chat line");
+        assert_eq!(agent, "ScrumMaster");
+        assert_eq!(message, "Push: pushed 'release' to origin");
+    }
+
+    #[test]
+    fn test_push_skip_reason_when_target_not_explicit() {
+        let reason = push_skip_reason(false, "sprint-1", "main", false);
+        assert_eq!(reason, Some("target branch was not explicitly provided"));
+    }
+
+    #[test]
+    fn test_push_skip_reason_when_shutdown_requested() {
+        let reason = push_skip_reason(true, "sprint-1", "release", true);
+        assert_eq!(reason, Some("shutdown requested"));
+    }
+
+    #[test]
+    fn test_push_skip_reason_when_feature_matches_target() {
+        let reason = push_skip_reason(true, "release", "release", false);
+        assert_eq!(reason, Some("feature branch matches target branch"));
+    }
+
+    #[test]
+    fn test_push_skip_reason_none_when_push_is_applicable() {
+        let reason = push_skip_reason(true, "sprint-1", "release", false);
+        assert_eq!(reason, None);
     }
 
     #[test]
@@ -2232,7 +3382,10 @@ mod tests {
         ];
         run_git_in(&repo_root, &args);
 
-        assert!(worktree_path.exists(), "worktree should exist before preserve");
+        assert!(
+            worktree_path.exists(),
+            "worktree should exist before preserve"
+        );
 
         let outcome = preserve_failed_worktree(
             &repo_root,
@@ -2244,7 +3397,10 @@ mod tests {
 
         assert!(outcome.error.is_none(), "preserve should not error");
         assert!(outcome.allow_recreate, "preserve should allow recreate");
-        assert!(!worktree_path.exists(), "original worktree path should be moved");
+        assert!(
+            !worktree_path.exists(),
+            "original worktree path should be moved"
+        );
         assert!(outcome.path.exists(), "preserved worktree should exist");
         assert!(
             outcome
@@ -2279,8 +3435,14 @@ mod tests {
             0,
         );
 
-        assert!(outcome.error.is_some(), "preserve should error on missing path");
-        assert!(!outcome.allow_recreate, "missing path should not allow recreate");
+        assert!(
+            outcome.error.is_some(),
+            "preserve should error on missing path"
+        );
+        assert!(
+            !outcome.allow_recreate,
+            "missing path should not allow recreate"
+        );
     }
 
     #[test]
@@ -2298,8 +3460,7 @@ mod tests {
         assert!(output.status.success());
         let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-        create_branch_at_commit(&repo_root, "agent-branch", &head)
-            .expect("create branch");
+        create_branch_at_commit(&repo_root, "agent-branch", &head).expect("create branch");
 
         let verify = Command::new("git")
             .arg("-C")
@@ -2358,12 +3519,9 @@ mod tests {
 
             run_git_in(&repo_root, &["checkout", "main"]);
             let worktrees_dir = repo_root.join("worktrees");
-            let worktree_path = create_sprint_worktree_in(
-                &worktrees_dir,
-                "alpha-sprint-1",
-                "source-branch",
-            )
-            .expect("create sprint worktree");
+            let worktree_path =
+                create_sprint_worktree_in(&worktrees_dir, "alpha-sprint-1", "source-branch")
+                    .expect("create sprint worktree");
 
             let sprint_commit = String::from_utf8_lossy(
                 &Command::new("git")
@@ -2397,6 +3555,66 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_sprint_base_branch_uses_source_when_target_lags_source() {
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+            run_git_in(&repo_root, &["checkout", "-b", "feature-1"]);
+            run_git_in(&repo_root, &["checkout", "main"]);
+
+            fs::write(repo_root.join("main-only.txt"), "main-only").expect("write main-only");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "main-only commit"]);
+
+            let base = resolve_sprint_base_branch(&repo_root, "main", "feature-1")
+                .expect("resolve base branch");
+            assert_eq!(
+                base, "main",
+                "target lacks source tip, so sprint should fork from source"
+            );
+        });
+    }
+
+    #[test]
+    fn test_resolve_sprint_base_branch_uses_target_after_target_catches_source() {
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+            run_git_in(&repo_root, &["checkout", "-b", "feature-1"]);
+            run_git_in(&repo_root, &["checkout", "main"]);
+
+            fs::write(repo_root.join("main-only.txt"), "main-only").expect("write main-only");
+            run_git_in(&repo_root, &["add", "."]);
+            run_git_in(&repo_root, &["commit", "-m", "main-only commit"]);
+
+            run_git_in(&repo_root, &["checkout", "feature-1"]);
+            run_git_in(
+                &repo_root,
+                &["merge", "--no-ff", "main", "-m", "sync source to target"],
+            );
+
+            let base = resolve_sprint_base_branch(&repo_root, "main", "feature-1")
+                .expect("resolve base branch");
+            assert_eq!(
+                base, "feature-1",
+                "once target contains source tip, sprint should fork from target"
+            );
+        });
+    }
+
+    #[test]
+    fn test_resolve_sprint_base_branch_uses_source_when_source_equals_target() {
+        with_temp_cwd(|| {
+            let repo_root = std::env::current_dir().expect("current dir");
+            init_repo(&repo_root);
+
+            let base = resolve_sprint_base_branch(&repo_root, "main", "main")
+                .expect("resolve base branch");
+            assert_eq!(base, "main");
+        });
+    }
+
+    #[test]
     fn test_sync_target_branch_state_refreshes_namespaced_runtime_from_target() {
         let temp = tempfile::TempDir::new().expect("temp repo");
         let repo_root = temp.path().to_path_buf();
@@ -2417,9 +3635,8 @@ mod tests {
         run_git_in(&repo_root, &["commit", "-m", "init state"]);
         run_git_in(&repo_root, &["checkout", "-b", "dev"]);
 
-        let target_worktree =
-            worktree::create_target_branch_worktree_in(&repo_root, "main")
-                .expect("create target worktree");
+        let target_worktree = worktree::create_target_branch_worktree_in(&repo_root, "main")
+            .expect("create target worktree");
         let target_team_dir = target_worktree.join(".swarm-hug").join(team_name);
         fs::create_dir_all(&target_team_dir).expect("create target team dir");
         fs::write(
@@ -2442,8 +3659,7 @@ mod tests {
         config.project = Some(team_name.to_string());
         config.target_branch = Some("main".to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
-        let runtime_paths =
-            team::RuntimeStatePaths::for_branches(team_name, "main", "main");
+        let runtime_paths = team::RuntimeStatePaths::for_branches(team_name, "main", "main");
 
         sync_target_branch_state(
             &repo_root,
@@ -2453,7 +3669,7 @@ mod tests {
             &config,
             &runtime_paths,
         )
-            .expect("sync target branch state");
+        .expect("sync target branch state");
 
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
@@ -2462,14 +3678,18 @@ mod tests {
         assert!(after_runtime.contains("[x]"));
         let runtime_history_loaded =
             team::SprintHistory::load_from(&runtime_history).expect("load runtime history");
-        assert_eq!(runtime_history_loaded.total_sprints, 1);
+        assert_eq!(
+            runtime_history_loaded.total_sprints, 0,
+            "runtime history should initialize locally instead of copying branch state"
+        );
 
         let shared_after = fs::read_to_string(&tasks_path).expect("read shared tasks after");
         assert!(
             shared_after.contains("[ ]"),
             "shared template tasks should remain unchanged in namespaced mode"
         );
-        let shared_history = team::SprintHistory::load_from(&history_path).expect("load shared history");
+        let shared_history =
+            team::SprintHistory::load_from(&history_path).expect("load shared history");
         assert_eq!(shared_history.total_sprints, 0);
     }
 
@@ -2518,11 +3738,8 @@ mod tests {
         config.project = Some(team_name.to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
 
-        let runtime_paths = team::RuntimeStatePaths::for_branches(
-            team_name,
-            "feature-branch",
-            "feature-branch",
-        );
+        let runtime_paths =
+            team::RuntimeStatePaths::for_branches(team_name, "feature-branch", "feature-branch");
         assert!(
             runtime_paths.is_namespaced(),
             "runtime state should be namespaced by target branch even when source == target"
@@ -2550,10 +3767,13 @@ mod tests {
         let runtime_history_loaded =
             team::SprintHistory::load_from(&runtime_history).expect("load runtime history");
         assert_eq!(
-            runtime_history_loaded.total_sprints, 3,
-            "runtime history should come from source branch when bootstrapping"
+            runtime_history_loaded.total_sprints, 0,
+            "runtime history should initialize locally in namespaced mode"
         );
-        assert!(runtime_state.exists(), "runtime team-state should be bootstrapped");
+        assert!(
+            runtime_state.exists(),
+            "runtime team-state should be bootstrapped"
+        );
 
         let shared_tasks_after = fs::read_to_string(&tasks_path).expect("read shared tasks");
         assert!(
@@ -2584,8 +3804,11 @@ mod tests {
 
         // Create a source branch with different tasks than target
         run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
-        fs::write(&tasks_path, "# Tasks\n\n- [x] Original task\n- [ ] Source task\n")
-            .expect("write source tasks");
+        fs::write(
+            &tasks_path,
+            "# Tasks\n\n- [x] Original task\n- [ ] Source task\n",
+        )
+        .expect("write source tasks");
         fs::write(
             &history_path,
             r#"{"team": "greenfield", "total_sprints": 2}"#,
@@ -2597,8 +3820,7 @@ mod tests {
         // Create a target branch from main with different data
         run_git_in(&repo_root, &["checkout", "main"]);
         run_git_in(&repo_root, &["checkout", "-b", "target-branch"]);
-        fs::write(&tasks_path, "# Tasks\n\n- [ ] Target task\n")
-            .expect("write target tasks");
+        fs::write(&tasks_path, "# Tasks\n\n- [ ] Target task\n").expect("write target tasks");
         fs::write(
             &history_path,
             r#"{"team": "greenfield", "total_sprints": 1}"#,
@@ -2622,11 +3844,8 @@ mod tests {
         let mut config = Config::default();
         config.project = Some(team_name.to_string());
         config.files_tasks = format!(".swarm-hug/{}/tasks.md", team_name);
-        let runtime_paths = team::RuntimeStatePaths::for_branches(
-            team_name,
-            "source-branch",
-            "target-branch",
-        );
+        let runtime_paths =
+            team::RuntimeStatePaths::for_branches(team_name, "source-branch", "target-branch");
 
         // Sync from source-branch, with target-branch as the target
         sync_target_branch_state(
@@ -2651,8 +3870,14 @@ mod tests {
             after
         );
         let history = team::SprintHistory::load_from(&runtime_history).expect("load history");
-        assert_eq!(history.total_sprints, 2, "history should come from source branch");
-        assert!(runtime_state.exists(), "team-state should also be bootstrapped");
+        assert_eq!(
+            history.total_sprints, 0,
+            "runtime history should initialize locally instead of copying source branch"
+        );
+        assert!(
+            runtime_state.exists(),
+            "team-state should also be bootstrapped"
+        );
 
         // Shared team path must remain untouched in namespaced mode.
         let shared_after = fs::read_to_string(&tasks_path).expect("read shared tasks after");
@@ -2689,11 +3914,8 @@ mod tests {
         run_git_in(&repo_root, &["commit", "-m", "init state"]);
         run_git_in(&repo_root, &["checkout", "-b", "source-branch"]);
 
-        let runtime_paths = team::RuntimeStatePaths::for_branches(
-            team_name,
-            "source-branch",
-            "target-branch",
-        );
+        let runtime_paths =
+            team::RuntimeStatePaths::for_branches(team_name, "source-branch", "target-branch");
         let runtime_tasks = repo_root.join(runtime_paths.tasks_path());
         let runtime_history = repo_root.join(runtime_paths.sprint_history_path());
         let runtime_state = repo_root.join(runtime_paths.team_state_path());
@@ -2726,8 +3948,8 @@ mod tests {
         .expect("sync namespaced runtime");
 
         let tasks_after = fs::read_to_string(&runtime_tasks).expect("read runtime tasks");
-        let history_after = team::SprintHistory::load_from(&runtime_history)
-            .expect("load runtime history");
+        let history_after =
+            team::SprintHistory::load_from(&runtime_history).expect("load runtime history");
         let state_after = fs::read_to_string(&runtime_state).expect("read runtime state");
 
         assert!(
@@ -2741,6 +3963,169 @@ mod tests {
         assert!(
             state_after.contains("runtime-sprint"),
             "runtime team-state should not be overwritten"
+        );
+    }
+
+    #[test]
+    fn test_reconcile_sprint_tasks_from_git_uses_merge_commit_evidence() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let mut task_list =
+            swarm::task::TaskList::parse("# Tasks\n\n- [A] (#1) Task one\n- [A] (#2) Task two\n");
+        let assignments = vec![
+            ('A', "(#1) Task one".to_string()),
+            ('A', "(#2) Task two".to_string()),
+        ];
+
+        let sprint_start = String::from_utf8_lossy(
+            &Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("rev-parse")
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        for idx in 1..=2 {
+            fs::write(repo_root.join(format!("work-{}.txt", idx)), "done").expect("write change");
+            run_git_in(&repo_root, &["add", "."]);
+            let commit_output = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args([
+                    "commit",
+                    "-m",
+                    &format!("Merge greenfield-agent-aaron-abc{:02}", idx),
+                ])
+                .env("GIT_AUTHOR_NAME", "Agent Aaron")
+                .env("GIT_AUTHOR_EMAIL", "agent-a@swarm.local")
+                .env("GIT_COMMITTER_NAME", "Agent Aaron")
+                .env("GIT_COMMITTER_EMAIL", "agent-a@swarm.local")
+                .output()
+                .expect("commit as agent");
+            assert!(
+                commit_output.status.success(),
+                "agent commit should succeed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&commit_output.stdout),
+                String::from_utf8_lossy(&commit_output.stderr)
+            );
+        }
+
+        let summary = reconcile_sprint_tasks_from_git(
+            &repo_root,
+            &sprint_start,
+            &assignments,
+            &[],
+            false,
+            &mut task_list,
+        )
+        .expect("reconcile from merge evidence");
+        assert_eq!(summary.completed, 2);
+        assert_eq!(summary.failed, 0);
+        assert!(matches!(
+            task_list.tasks[0].status,
+            swarm::task::TaskStatus::Completed('A')
+        ));
+        assert!(matches!(
+            task_list.tasks[1].status,
+            swarm::task::TaskStatus::Completed('A')
+        ));
+    }
+
+    #[test]
+    fn test_reconcile_sprint_tasks_from_git_falls_back_to_success_when_diff_exists() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        init_repo(&repo_root);
+
+        let mut task_list =
+            swarm::task::TaskList::parse("# Tasks\n\n- [A] (#1) Task one\n- [B] (#2) Task two\n");
+        let assignments = vec![
+            ('A', "(#1) Task one".to_string()),
+            ('B', "(#2) Task two".to_string()),
+        ];
+        let results: Vec<TaskResult> = vec![
+            ('A', "(#1) Task one".to_string(), true, None, None),
+            ('B', "(#2) Task two".to_string(), true, None, None),
+        ];
+
+        let sprint_start = String::from_utf8_lossy(
+            &Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("rev-parse")
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        fs::write(repo_root.join("changed.txt"), "changed").expect("write change");
+        run_git_in(&repo_root, &["add", "."]);
+        run_git_in(&repo_root, &["commit", "-m", "non-agent change"]);
+
+        let summary = reconcile_sprint_tasks_from_git(
+            &repo_root,
+            &sprint_start,
+            &assignments,
+            &results,
+            false,
+            &mut task_list,
+        )
+        .expect("reconcile from diff and success fallback");
+        assert_eq!(summary.completed, 2);
+        assert_eq!(summary.failed, 0);
+        assert!(matches!(
+            task_list.tasks[0].status,
+            swarm::task::TaskStatus::Completed('A')
+        ));
+        assert!(matches!(
+            task_list.tasks[1].status,
+            swarm::task::TaskStatus::Completed('B')
+        ));
+    }
+
+    #[test]
+    fn test_reset_runtime_namespace_for_new_run_clears_namespaced_runtime_dir() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        let runtime_paths = team::RuntimeStatePaths::for_branches("greenfield", "main", "main");
+        let runtime_root = repo_root.join(runtime_paths.root());
+        fs::create_dir_all(&runtime_root).expect("create runtime root");
+        fs::write(runtime_root.join("tasks.md"), "# Tasks\n\n- [ ] stale\n")
+            .expect("write runtime tasks");
+
+        reset_runtime_namespace_for_new_run(&repo_root, &runtime_paths)
+            .expect("reset namespaced runtime");
+
+        assert!(
+            !runtime_root.exists(),
+            "namespaced runtime directory should be removed on new run"
+        );
+    }
+
+    #[test]
+    fn test_reset_runtime_namespace_for_new_run_is_noop_for_legacy_paths() {
+        let temp = tempfile::TempDir::new().expect("temp repo");
+        let repo_root = temp.path().to_path_buf();
+        let runtime_paths = team::RuntimeStatePaths::for_branches("greenfield", "main", "");
+        let legacy_root = repo_root.join(runtime_paths.root());
+        fs::create_dir_all(&legacy_root).expect("create legacy root");
+        let legacy_file = legacy_root.join("tasks.md");
+        fs::write(&legacy_file, "# Tasks\n\n- [ ] keep\n").expect("write legacy tasks");
+
+        reset_runtime_namespace_for_new_run(&repo_root, &runtime_paths)
+            .expect("legacy reset should be noop");
+
+        assert!(
+            legacy_file.exists(),
+            "legacy non-namespaced state should not be removed"
         );
     }
 
@@ -2809,13 +4194,10 @@ mod tests {
 
             let log_dir = repo_root.join("logs");
             fs::create_dir_all(&log_dir).expect("create log dir");
-            let merge_logger =
-                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+            let merge_logger = NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
 
             // StubEngine ensure_feature_merged will perform a real git merge.
-            let engine = StubEngine::new(
-                repo_root.join("loop").to_string_lossy().to_string(),
-            );
+            let engine = StubEngine::new(repo_root.join("loop").to_string_lossy().to_string());
 
             let result = retry_merge_agent(
                 &engine,
@@ -2853,16 +4235,14 @@ mod tests {
 
             // Create a feature branch with a diverging commit.
             run_git_in(&repo_root, &["checkout", "-b", "feature-fail"]);
-            fs::write(repo_root.join("fail.txt"), "fail content")
-                .expect("write fail file");
+            fs::write(repo_root.join("fail.txt"), "fail content").expect("write fail file");
             run_git_in(&repo_root, &["add", "."]);
             run_git_in(&repo_root, &["commit", "-m", "feature-fail commit"]);
             run_git_in(&repo_root, &["checkout", "main"]);
 
             let log_dir = repo_root.join("logs");
             fs::create_dir_all(&log_dir).expect("create log dir");
-            let merge_logger =
-                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+            let merge_logger = NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
 
             // NoopEngine does not actually merge, so ensure_feature_merged fails.
             let engine = NoopEngine;
@@ -2916,8 +4296,7 @@ mod tests {
 
             let log_dir = repo_root.join("logs");
             fs::create_dir_all(&log_dir).expect("create log dir");
-            let merge_logger =
-                NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
+            let merge_logger = NamedLogger::new(&log_dir, "MergeAgent", "merge-agent.log");
 
             let engine = NoopEngine;
             let first_err_msg = "squash-merge detected: single-parent commit";

@@ -31,10 +31,12 @@ pub struct CliArgs {
     pub version: bool,
     /// Project name for multi-project mode.
     pub project: Option<String>,
-    /// Source branch to fork/branch from (defaults to auto-detected main/master).
+    /// Source branch to fork/branch from.
     pub source_branch: Option<String>,
-    /// Target branch for base/merge operations (defaults to auto-detected main/master).
+    /// Target branch for base/merge operations.
     pub target_branch: Option<String>,
+    /// Whether `--target-branch` was explicitly provided on CLI.
+    pub target_branch_explicit: bool,
     /// Project name for project-specific subcommands (positional arg).
     pub project_arg: Option<String>,
     /// Email for set-email command (positional arg).
@@ -43,6 +45,8 @@ pub struct CliArgs {
     pub prd_file_arg: Option<String>,
     /// Unrecognized command, if provided.
     pub unknown_command: Option<String>,
+    /// Parse-time validation error from malformed CLI flags.
+    pub parse_error: Option<String>,
 }
 
 /// Swarm subcommands.
@@ -100,8 +104,13 @@ where
             "-V" | "--version" => cli.version = true,
             "-c" | "--config" => cli.config = args.next(),
             "-p" | "--project" => cli.project = args.next(),
-            "--source-branch" => cli.source_branch = args.next(),
-            "--target-branch" => cli.target_branch = args.next(),
+            "--source-branch" => {
+                cli.source_branch = take_flag_value(&mut args, &mut cli, "--source-branch");
+            }
+            "--target-branch" => {
+                cli.target_branch = take_flag_value(&mut args, &mut cli, "--target-branch");
+                cli.target_branch_explicit = cli.target_branch.is_some();
+            }
             "--max-agents" => cli.max_agents = args.next().and_then(|s| s.parse().ok()),
             "--tasks-per-agent" => cli.tasks_per_agent = args.next().and_then(|s| s.parse().ok()),
             "--agent-timeout" => cli.agent_timeout = args.next().and_then(|s| s.parse().ok()),
@@ -113,7 +122,10 @@ where
             "--max-sprints" => cli.max_sprints = args.next().and_then(|s| s.parse().ok()),
             "--no-tui" => cli.no_tui = true,
             "--with-prd" => cli.prd_file_arg = args.next(),
-            _ if !arg.starts_with('-') && cli.command.is_none() && cli.unknown_command.is_none() => {
+            _ if !arg.starts_with('-')
+                && cli.command.is_none()
+                && cli.unknown_command.is_none() =>
+            {
                 if let Some(command) = Command::parse(&arg) {
                     cli.command = Some(command);
                     // For "project init <name>", capture the next arg as project_arg
@@ -146,4 +158,35 @@ where
     }
 
     cli
+}
+
+fn take_flag_value<I>(
+    args: &mut std::iter::Peekable<I>,
+    cli: &mut CliArgs,
+    flag_name: &str,
+) -> Option<String>
+where
+    I: Iterator<Item = String>,
+{
+    match args.peek() {
+        Some(next) if next.starts_with('-') => {
+            if cli.parse_error.is_none() {
+                cli.parse_error = Some(format!(
+                    "{} requires a value, but got another flag: '{}'.\n  Example: swarm run --source-branch main --target-branch feature-1",
+                    flag_name, next
+                ));
+            }
+            None
+        }
+        Some(_) => args.next(),
+        None => {
+            if cli.parse_error.is_none() {
+                cli.parse_error = Some(format!(
+                    "{} requires a value.\n  Example: swarm run --source-branch main --target-branch feature-1",
+                    flag_name
+                ));
+            }
+            None
+        }
+    }
 }

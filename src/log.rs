@@ -242,9 +242,7 @@ pub fn rotate_log(path: &Path) -> io::Result<()> {
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
     let backup_name = format!(
         "{}.{}.bak",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("log"),
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("log"),
         timestamp
     );
     let backup_path = path.with_file_name(backup_name);
@@ -289,11 +287,8 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "swarm-log-test-{}-{}",
-            std::process::id(),
-            id
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("swarm-log-test-{}-{}", std::process::id(), id));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -302,8 +297,14 @@ mod tests {
     #[test]
     fn test_log_file_path() {
         let dir = Path::new("/tmp/loop");
-        assert_eq!(log_file_path(dir, 'A'), PathBuf::from("/tmp/loop/agent-A.log"));
-        assert_eq!(log_file_path(dir, 'B'), PathBuf::from("/tmp/loop/agent-B.log"));
+        assert_eq!(
+            log_file_path(dir, 'A'),
+            PathBuf::from("/tmp/loop/agent-A.log")
+        );
+        assert_eq!(
+            log_file_path(dir, 'B'),
+            PathBuf::from("/tmp/loop/agent-B.log")
+        );
     }
 
     #[test]
@@ -500,8 +501,10 @@ mod tests {
         let backups: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().to_string_lossy().contains("agent-A.log") &&
-                       e.path().to_string_lossy().contains(".bak"))
+            .filter(|e| {
+                e.path().to_string_lossy().contains("agent-A.log")
+                    && e.path().to_string_lossy().contains(".bak")
+            })
             .collect();
         assert_eq!(backups.len(), 1);
 

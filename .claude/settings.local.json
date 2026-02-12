@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(cargo test:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(done)"
     ]
   }
 }

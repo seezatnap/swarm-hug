@@ -91,7 +91,9 @@ fn draw_content(f: &mut Frame, area: Rect, app: &TuiApp) -> usize {
     // Calculate inner area accounting for borders (1 cell each side) and padding
     let border_size: u16 = 2; // 1 for each side
     let inner_width = area.width.saturating_sub(border_size + CONTENT_PADDING * 2) as usize;
-    let inner_height = area.height.saturating_sub(border_size + CONTENT_PADDING * 2) as usize;
+    let inner_height = area
+        .height
+        .saturating_sub(border_size + CONTENT_PADDING * 2) as usize;
 
     if inner_height == 0 || inner_width == 0 {
         // Not enough space to render
@@ -214,14 +216,13 @@ fn draw_search_bar(f: &mut Frame, area: Rect, app: &TuiApp) {
         Span::styled(match_info, Style::default().fg(Color::DarkGray)),
     ]);
 
-    let search_bar = Paragraph::new(search_line)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color))
-                .title(title)
-                .title_style(Style::default().fg(border_color)),
-        );
+    let search_bar = Paragraph::new(search_line).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(title)
+            .title_style(Style::default().fg(border_color)),
+    );
 
     f.render_widget(search_bar, area);
 }
@@ -232,7 +233,12 @@ fn draw_quit_modal(f: &mut Frame, area: Rect) {
     let modal_height = 7u16;
     let x = (area.width.saturating_sub(modal_width)) / 2;
     let y = (area.height.saturating_sub(modal_height)) / 2;
-    let modal_area = Rect::new(x, y, modal_width.min(area.width), modal_height.min(area.height));
+    let modal_area = Rect::new(
+        x,
+        y,
+        modal_width.min(area.width),
+        modal_height.min(area.height),
+    );
 
     f.render_widget(Clear, modal_area);
 
@@ -246,7 +252,10 @@ fn draw_quit_modal(f: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from("Are you sure you want to quit?"),
-        Line::from(Span::styled("[Y]es  [N]o", Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(
+            "[Y]es  [N]o",
+            Style::default().fg(Color::Cyan),
+        )),
     ];
 
     let modal = Paragraph::new(modal_text)

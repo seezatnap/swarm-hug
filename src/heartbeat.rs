@@ -133,12 +133,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let interval = Duration::from_millis(100);
 
-        let guard = HeartbeatGuard::start(
-            tmp.path(),
-            "Aaron",
-            "Test task",
-            interval,
-        );
+        let guard = HeartbeatGuard::start(tmp.path(), "Aaron", "Test task", interval);
 
         thread::sleep(interval * 4);
         drop(guard);

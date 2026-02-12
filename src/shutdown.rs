@@ -64,11 +64,17 @@ pub fn register_handler() -> Result<(), String> {
         if count == 1 {
             eprintln!("\n");
             eprintln!("Interrupt received. Gracefully ending sprint...");
-            eprintln!("(Press Ctrl+C {} more time(s) to force quit)", MAX_INTERRUPTS - count);
+            eprintln!(
+                "(Press Ctrl+C {} more time(s) to force quit)",
+                MAX_INTERRUPTS - count
+            );
             SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
             PROCESS_REGISTRY.kill_all();
         } else {
-            eprintln!("(Press Ctrl+C {} more time(s) to force quit)", MAX_INTERRUPTS - count);
+            eprintln!(
+                "(Press Ctrl+C {} more time(s) to force quit)",
+                MAX_INTERRUPTS - count
+            );
         }
     })
     .map_err(|e| format!("failed to register Ctrl+C handler: {}", e))

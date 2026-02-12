@@ -69,8 +69,13 @@ impl Team {
     /// Initialize this team's directory structure.
     pub fn init(&self) -> Result<(), String> {
         // Create root directory
-        fs::create_dir_all(&self.root)
-            .map_err(|e| format!("failed to create team directory {}: {}", self.root.display(), e))?;
+        fs::create_dir_all(&self.root).map_err(|e| {
+            format!(
+                "failed to create team directory {}: {}",
+                self.root.display(),
+                e
+            )
+        })?;
 
         // Create subdirectories
         fs::create_dir_all(self.loop_dir())
@@ -91,13 +96,19 @@ impl Team {
         }
 
         if !self.specs_path().exists() {
-            let default_specs = format!("# Specifications: {}\n\nAdd your specifications here.\n", self.name);
+            let default_specs = format!(
+                "# Specifications: {}\n\nAdd your specifications here.\n",
+                self.name
+            );
             fs::write(self.specs_path(), default_specs)
                 .map_err(|e| format!("failed to create specs.md: {}", e))?;
         }
 
         if !self.prompt_path().exists() {
-            let default_prompt = format!("# Prompt: {}\n\nDescribe what this team should accomplish.\n", self.name);
+            let default_prompt = format!(
+                "# Prompt: {}\n\nDescribe what this team should accomplish.\n",
+                self.name
+            );
             fs::write(self.prompt_path(), default_prompt)
                 .map_err(|e| format!("failed to create prompt.md: {}", e))?;
         }
@@ -116,10 +127,22 @@ mod tests {
         let team = Team::new("authentication");
         assert_eq!(team.name, "authentication");
         assert_eq!(team.root, PathBuf::from(".swarm-hug/authentication"));
-        assert_eq!(team.tasks_path(), PathBuf::from(".swarm-hug/authentication/tasks.md"));
-        assert_eq!(team.chat_path(), PathBuf::from(".swarm-hug/authentication/chat.md"));
-        assert_eq!(team.loop_dir(), PathBuf::from(".swarm-hug/authentication/loop"));
-        assert_eq!(team.worktrees_dir(), PathBuf::from(".swarm-hug/authentication/worktrees"));
+        assert_eq!(
+            team.tasks_path(),
+            PathBuf::from(".swarm-hug/authentication/tasks.md")
+        );
+        assert_eq!(
+            team.chat_path(),
+            PathBuf::from(".swarm-hug/authentication/chat.md")
+        );
+        assert_eq!(
+            team.loop_dir(),
+            PathBuf::from(".swarm-hug/authentication/loop")
+        );
+        assert_eq!(
+            team.worktrees_dir(),
+            PathBuf::from(".swarm-hug/authentication/worktrees")
+        );
         assert_eq!(
             team.team_state_path(),
             PathBuf::from(".swarm-hug/authentication/team-state.json")

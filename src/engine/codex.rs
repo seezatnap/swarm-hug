@@ -11,8 +11,8 @@ use crate::process_group::spawn_in_new_process_group;
 use crate::process_registry::PROCESS_REGISTRY;
 use crate::shutdown;
 
-use super::{Engine, EngineResult};
 use super::util::{build_agent_prompt, resolve_cli_path, WAIT_LOG_INTERVAL_SECS};
+use super::{Engine, EngineResult};
 
 /// Codex CLI engine.
 pub struct CodexEngine {
@@ -27,7 +27,10 @@ impl CodexEngine {
     /// Resolves the full path to codex using `which` for better portability.
     pub fn new() -> Self {
         let cli_path = resolve_cli_path("codex").unwrap_or_else(|| "codex".to_string());
-        Self { cli_path, timeout_secs: 0 }
+        Self {
+            cli_path,
+            timeout_secs: 0,
+        }
     }
 
     /// Create with custom CLI path.
@@ -41,7 +44,10 @@ impl CodexEngine {
     /// Create with timeout.
     pub fn with_timeout(timeout_secs: u64) -> Self {
         let cli_path = resolve_cli_path("codex").unwrap_or_else(|| "codex".to_string());
-        Self { cli_path, timeout_secs }
+        Self {
+            cli_path,
+            timeout_secs,
+        }
     }
 }
 
@@ -69,14 +75,21 @@ impl Engine for CodexEngine {
 
         // Create debug file for streaming JSONL output
         let debug_file = team_dir.and_then(|dir| {
-            let debug_path = Path::new(dir).join("loop").join(format!("codex-debug-{}.jsonl", agent_name));
+            let debug_path = Path::new(dir)
+                .join("loop")
+                .join(format!("codex-debug-{}.jsonl", agent_name));
             match File::create(&debug_path) {
                 Ok(f) => {
                     eprintln!("[{}] Debug output: {}", agent_name, debug_path.display());
                     Some(f)
                 }
                 Err(e) => {
-                    eprintln!("[{}] Warning: could not create debug file {}: {}", agent_name, debug_path.display(), e);
+                    eprintln!(
+                        "[{}] Warning: could not create debug file {}: {}",
+                        agent_name,
+                        debug_path.display(),
+                        e
+                    );
                     None
                 }
             }
@@ -87,10 +100,10 @@ impl Engine for CodexEngine {
         let mut cmd = Command::new(&self.cli_path);
         cmd.arg("exec");
         if debug_file.is_some() {
-            cmd.arg("--json");  // Stream JSONL events for debugging
+            cmd.arg("--json"); // Stream JSONL events for debugging
         }
         cmd.arg("--dangerously-bypass-approvals-and-sandbox")
-            .arg("-")  // Read prompt from stdin
+            .arg("-") // Read prompt from stdin
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -215,11 +228,17 @@ impl Engine for CodexEngine {
                     if elapsed >= next_log {
                         let mins = elapsed.as_secs() / 60;
                         let timeout_msg = if let Some(t) = timeout {
-                            format!(", timeout in {} min", (t.as_secs() - elapsed.as_secs()) / 60)
+                            format!(
+                                ", timeout in {} min",
+                                (t.as_secs() - elapsed.as_secs()) / 60
+                            )
                         } else {
                             String::new()
                         };
-                        eprintln!("[{}] Still executing... ({} min elapsed, pid {}{})", agent_name, mins, pid, timeout_msg);
+                        eprintln!(
+                            "[{}] Still executing... ({} min elapsed, pid {}{})",
+                            agent_name, mins, pid, timeout_msg
+                        );
                         next_log += log_interval;
                     }
                     thread::sleep(Duration::from_millis(100));
@@ -265,7 +284,9 @@ mod tests {
 
         use tempfile::TempDir;
 
-        let _cwd_guard = crate::testutil::CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = crate::testutil::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::shutdown::test_lock();
         crate::shutdown::reset();
 

@@ -68,7 +68,7 @@ pub fn timestamp(ts: &str) -> String {
 
 /// Color "Completed" status (green + bold).
 pub fn completed(text: &str) -> String {
-    format!("{}{}{}{}",BOLD, GREEN, text, RESET)
+    format!("{}{}{}{}", BOLD, GREEN, text, RESET)
 }
 
 /// Color "Failed" status (red + bold).
@@ -123,7 +123,10 @@ pub fn chat_line(line: &str) -> String {
 
     // Color the message, highlighting Completed/Failed/Starting
     let colored_message = if message.contains("Completed:") {
-        message.replace("Completed:", &format!("{}{}Completed:{}", BOLD, GREEN, RESET))
+        message.replace(
+            "Completed:",
+            &format!("{}{}Completed:{}", BOLD, GREEN, RESET),
+        )
     } else if message.contains("Failed:") {
         message.replace("Failed:", &format!("{}{}Failed:{}", BOLD, RED, RESET))
     } else if message.contains("Starting:") {

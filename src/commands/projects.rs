@@ -16,7 +16,12 @@ fn count_tasks(team: &Team) -> TaskCounts {
     let tasks_path = team.tasks_path();
     let content = match fs::read_to_string(&tasks_path) {
         Ok(c) => c,
-        Err(_) => return TaskCounts { completed: 0, total: 0 },
+        Err(_) => {
+            return TaskCounts {
+                completed: 0,
+                total: 0,
+            }
+        }
     };
 
     let mut completed = 0;
@@ -73,7 +78,10 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
         let task_status = if counts.total == 0 {
             String::new()
         } else if counts.completed == counts.total {
-            format!(" [{}/{} Tasks Complete \u{2713}]", counts.completed, counts.total)
+            format!(
+                " [{}/{} Tasks Complete \u{2713}]",
+                counts.completed, counts.total
+            )
         } else {
             format!(" [{}/{} Tasks Complete]", counts.completed, counts.total)
         };
@@ -86,12 +94,19 @@ pub fn cmd_projects(_config: &Config) -> Result<(), String> {
 
 /// Initialize a new project.
 pub fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), String> {
-    let project_name = cli.project_arg.as_ref()
+    let project_name = cli
+        .project_arg
+        .as_ref()
         .ok_or("Usage: swarm project init <name>")?;
 
     // Validate project name (alphanumeric and hyphens only)
-    if !project_name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Err("Project name must contain only letters, numbers, hyphens, and underscores".to_string());
+    if !project_name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(
+            "Project name must contain only letters, numbers, hyphens, and underscores".to_string(),
+        );
     }
 
     // Initialize root if needed
@@ -116,20 +131,23 @@ pub fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), St
             .map_err(|e| format!("Failed to read PRD file '{}': {}", prd_path, e))?;
 
         // Write the PRD content to specs.md
-        let specs_content = format!(
-            "# Specifications: {}\n\n{}\n",
-            project_name,
-            prd_content
-        );
+        let specs_content = format!("# Specifications: {}\n\n{}\n", project_name, prd_content);
         fs::write(project.specs_path(), &specs_content)
             .map_err(|e| format!("Failed to write specs.md: {}", e))?;
         println!("  Specs:     {} (from PRD)", project.specs_path().display());
 
         // Convert PRD to tasks using the engine
         let log_dir = project.loop_dir();
-        let engine = engine::create_engine(config.effective_engine(), log_dir.to_str().unwrap_or(""), config.agent_timeout_secs);
+        let engine = engine::create_engine(
+            config.effective_engine(),
+            log_dir.to_str().unwrap_or(""),
+            config.agent_timeout_secs,
+        );
 
-        println!("  Converting PRD to tasks (engine={})...", config.effective_engine().as_str());
+        println!(
+            "  Converting PRD to tasks (engine={})...",
+            config.effective_engine().as_str()
+        );
         let result = planning::convert_prd_to_tasks(engine.as_ref(), &prd_content, &log_dir);
 
         if result.success {
@@ -140,7 +158,11 @@ pub fn cmd_project_init(config: &Config, cli: &config::CliArgs) -> Result<(), St
 
             // Count tasks generated
             let task_count = result.tasks_markdown.matches("- [ ]").count();
-            println!("  Tasks:     {} ({} tasks generated)", project.tasks_path().display(), task_count);
+            println!(
+                "  Tasks:     {} ({} tasks generated)",
+                project.tasks_path().display(),
+                task_count
+            );
         } else {
             let error = result.error.unwrap_or_else(|| "Unknown error".to_string());
             eprintln!("  Warning: PRD conversion failed: {}", error);
@@ -195,7 +217,11 @@ mod tests {
         with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
-            fs::write(team.tasks_path(), "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n").unwrap();
+            fs::write(
+                team.tasks_path(),
+                "# Tasks\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n",
+            )
+            .unwrap();
 
             let counts = count_tasks(&team);
             assert_eq!(counts.completed, 0);
@@ -221,7 +247,11 @@ mod tests {
         with_temp_cwd(|| {
             let team = Team::new("test-project");
             team.init().unwrap();
-            fs::write(team.tasks_path(), "# Tasks\n\n- [x] Done 1\n- [ ] Pending\n- [x] Done 2\n- [ ] Another pending\n").unwrap();
+            fs::write(
+                team.tasks_path(),
+                "# Tasks\n\n- [x] Done 1\n- [ ] Pending\n- [x] Done 2\n- [ ] Another pending\n",
+            )
+            .unwrap();
 
             let counts = count_tasks(&team);
             assert_eq!(counts.completed, 2);
@@ -235,7 +265,11 @@ mod tests {
             let team = Team::new("test-project");
             team.init().unwrap();
             // Agent-assigned tasks like "- [A]" count as total but not completed
-            fs::write(team.tasks_path(), "# Tasks\n\n- [x] Done\n- [A] Assigned to A\n- [B] Assigned to B\n- [ ] Pending\n").unwrap();
+            fs::write(
+                team.tasks_path(),
+                "# Tasks\n\n- [x] Done\n- [A] Assigned to A\n- [B] Assigned to B\n- [ ] Pending\n",
+            )
+            .unwrap();
 
             let counts = count_tasks(&team);
             assert_eq!(counts.completed, 1);

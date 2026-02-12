@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
@@ -43,13 +45,15 @@ fn chat_contains_message(chat_content: &str, agent: &str, message: &str) -> bool
 
 fn chat_contains_worktree_creation(chat_content: &str, team_name: &str, base_short: &str) -> bool {
     let prefix = format!("Creating worktree {}-sprint-1-", team_name);
-    let suffix = format!("from {}", base_short);
+    let legacy_suffix = format!("from {}", base_short);
+    let branch_suffix = format!("({})", base_short);
     chat_content.lines().any(|line| {
         chat::parse_line(line)
             .map(|(_, line_agent, line_message)| {
                 line_agent == "ScrumMaster"
                     && line_message.starts_with(&prefix)
-                    && line_message.contains(&suffix)
+                    && (line_message.contains(&legacy_suffix)
+                        || line_message.contains(&branch_suffix))
             })
             .unwrap_or(false)
     })
@@ -148,6 +152,318 @@ fn write_team_tasks_multi_sprint(team_root: &Path) -> PathBuf {
     tasks_path
 }
 
+#[cfg(unix)]
+fn resolve_binary_path(binary: &str) -> String {
+    let mut cmd = Command::new("which");
+    cmd.arg(binary);
+    let output = run_success(&mut cmd);
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(
+        !path.is_empty(),
+        "expected non-empty binary path for '{}'",
+        binary
+    );
+    path
+}
+
+#[cfg(unix)]
+fn write_executable_script(path: &Path, content: &str) {
+    fs::write(path, content).expect("write script");
+    let mut perms = fs::metadata(path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+#[cfg(unix)]
+fn parse_logged_args(log_content: &str) -> Vec<Vec<String>> {
+    let mut calls = Vec::new();
+    let mut current: Option<Vec<String>> = None;
+
+    for line in log_content.lines() {
+        match line {
+            "CALL_START" => current = Some(Vec::new()),
+            "CALL_END" => {
+                if let Some(args) = current.take() {
+                    calls.push(args);
+                }
+            }
+            _ => {
+                if let Some(arg) = line.strip_prefix("ARG:") {
+                    if let Some(args) = current.as_mut() {
+                        args.push(arg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    calls
+}
+
+#[cfg(unix)]
+fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()) == Some(file_name) {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(unix)]
+fn install_fake_git_and_gh(repo_path: &Path) -> (String, PathBuf, PathBuf) {
+    let fake_bin = repo_path.join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake-bin");
+
+    let push_log_path = repo_path.join("push-commands.log");
+    let gh_log_path = repo_path.join("gh-commands.log");
+    let real_git = resolve_binary_path("git");
+
+    let git_script = format!(
+        r#"#!/bin/sh
+set -eu
+PUSH_LOG='{}'
+REAL_GIT='{}'
+
+is_push=0
+for arg in "$@"; do
+  if [ "$arg" = "push" ]; then
+    is_push=1
+    break
+  fi
+done
+
+if [ "$is_push" -eq 1 ]; then
+  {{
+    echo "CALL_START"
+    for arg in "$@"; do
+      printf 'ARG:%s\n' "$arg"
+    done
+    echo "CALL_END"
+  }} >> "$PUSH_LOG"
+  exit 0
+fi
+
+exec "$REAL_GIT" "$@"
+"#,
+        push_log_path.display(),
+        real_git
+    );
+    write_executable_script(&fake_bin.join("git"), &git_script);
+
+    let gh_script = format!(
+        r#"#!/bin/sh
+set -eu
+GH_LOG='{}'
+{{
+  echo "CALL_START"
+  for arg in "$@"; do
+    printf 'ARG:%s\n' "$arg"
+  done
+  echo "CALL_END"
+}} >> "$GH_LOG"
+echo "https://github.com/example/repo/pull/999"
+"#,
+        gh_log_path.display()
+    );
+    write_executable_script(&fake_bin.join("gh"), &gh_script);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_override = format!("{}:{}", fake_bin.display(), original_path);
+    (path_override, push_log_path, gh_log_path)
+}
+
+#[cfg(unix)]
+fn install_fake_git_failing_push_and_gh(repo_path: &Path) -> (String, PathBuf, PathBuf) {
+    let fake_bin = repo_path.join("fake-bin");
+    fs::create_dir_all(&fake_bin).expect("create fake-bin");
+
+    let push_log_path = repo_path.join("push-commands.log");
+    let gh_log_path = repo_path.join("gh-commands.log");
+    let real_git = resolve_binary_path("git");
+
+    let git_script = format!(
+        r#"#!/bin/sh
+set -eu
+PUSH_LOG='{}'
+REAL_GIT='{}'
+
+is_push=0
+for arg in "$@"; do
+  if [ "$arg" = "push" ]; then
+    is_push=1
+    break
+  fi
+done
+
+if [ "$is_push" -eq 1 ]; then
+  {{
+    echo "CALL_START"
+    for arg in "$@"; do
+      printf 'ARG:%s\n' "$arg"
+    done
+    echo "CALL_END"
+  }} >> "$PUSH_LOG"
+  echo "simulated push stdout"
+  echo "simulated push stderr" >&2
+  exit 1
+fi
+
+exec "$REAL_GIT" "$@"
+"#,
+        push_log_path.display(),
+        real_git
+    );
+    write_executable_script(&fake_bin.join("git"), &git_script);
+
+    let gh_script = format!(
+        r#"#!/bin/sh
+set -eu
+GH_LOG='{}'
+{{
+  echo "CALL_START"
+  for arg in "$@"; do
+    printf 'ARG:%s\n' "$arg"
+  done
+  echo "CALL_END"
+}} >> "$GH_LOG"
+echo "https://github.com/example/repo/pull/999"
+"#,
+        gh_log_path.display()
+    );
+    write_executable_script(&fake_bin.join("gh"), &gh_script);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_override = format!("{}:{}", fake_bin.display(), original_path);
+    (path_override, push_log_path, gh_log_path)
+}
+
+#[cfg(unix)]
+fn assert_post_merge_flow_with_expected_pr_metadata(
+    repo_path: &Path,
+    team_name: &str,
+    expected_title: &str,
+    expected_body: &str,
+    expected_prompt_snippet: &str,
+) {
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let (path_override, push_log_path, gh_log_path) = install_fake_git_and_gh(repo_path);
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "feature-1",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .env("PATH", path_override)
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+
+    assert!(
+        stdout.contains("Push: pushed 'feature-1' to origin"),
+        "expected push success message. stdout:\n{}",
+        stdout
+    );
+
+    let push_log = fs::read_to_string(&push_log_path).expect("read push command log");
+    let push_calls = parse_logged_args(&push_log);
+    assert_eq!(
+        push_calls.len(),
+        1,
+        "expected exactly one git push call. log:\n{}",
+        push_log
+    );
+    let push_args = &push_calls[0];
+    assert!(
+        push_args.len() >= 3,
+        "expected git push args to include command and branches. args: {:?}",
+        push_args
+    );
+    let push_tail = &push_args[push_args.len() - 3..];
+    assert_eq!(
+        push_tail,
+        ["push", "origin", "feature-1"],
+        "expected git push origin feature-1. full args: {:?}",
+        push_args
+    );
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let pr_prompt_path = find_file_named(&team_root, "turn1-agent?.md").unwrap_or_else(|| {
+        panic!(
+            "expected stub output file turn1-agent?.md under {}",
+            team_root.display()
+        )
+    });
+    let pr_prompt = fs::read_to_string(&pr_prompt_path).expect("read PR metadata prompt output");
+    assert!(
+        pr_prompt.contains("Generate a GitHub pull request title and description."),
+        "expected PR metadata generation prompt in engine output. content:\n{}",
+        pr_prompt
+    );
+    assert!(
+        pr_prompt.contains(expected_prompt_snippet),
+        "expected PR metadata prompt snippet '{}'. content:\n{}",
+        expected_prompt_snippet,
+        pr_prompt
+    );
+
+    let gh_log = fs::read_to_string(&gh_log_path).expect("read gh command log");
+    let gh_calls = parse_logged_args(&gh_log);
+    assert_eq!(
+        gh_calls.len(),
+        1,
+        "expected exactly one gh invocation. log:\n{}",
+        gh_log
+    );
+    let gh_args = &gh_calls[0];
+    let expected_gh_args = vec![
+        "pr".to_string(),
+        "create".to_string(),
+        "--title".to_string(),
+        expected_title.to_string(),
+        "--body".to_string(),
+        expected_body.to_string(),
+        "--base".to_string(),
+        "main".to_string(),
+        "--head".to_string(),
+        "feature-1".to_string(),
+    ];
+    assert_eq!(
+        gh_args, &expected_gh_args,
+        "expected gh pr create args with derived/default metadata. got: {:?}",
+        gh_args
+    );
+
+    let chat_path = repo_path.join(".swarm-hug").join(team_name).join("chat.md");
+    let chat_content = fs::read_to_string(&chat_path).expect("read chat");
+    assert!(
+        chat_content.contains("PR: created https://github.com/example/repo/pull/999"),
+        "expected PR creation message in chat. chat:\n{}",
+        chat_content
+    );
+}
+
 #[test]
 fn test_removed_commands_return_error() {
     let temp = TempDir::new().expect("temp dir");
@@ -204,12 +520,17 @@ fn test_swarm_run_stub_integration() {
     let chat_path = team_root.join("chat.md");
     commit_all(repo_path, "init");
     let base_short = git_stdout(repo_path, &["rev-parse", "--short", "HEAD"]);
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -267,9 +588,9 @@ fn test_swarm_run_stub_integration() {
     assert!(chat_content.contains("Completed: Task one"));
     assert!(chat_content.contains("Completed: Task two"));
     let chat_lines: Vec<&str> = chat_content.lines().collect();
-    assert!(chat_lines.len() >= 7, "expected at least 7 chat lines");
+    assert!(chat_lines.len() >= 8, "expected at least 8 chat lines");
     // Merge agent messages come after sprint status
-    let mut tail: Vec<&str> = chat_lines.iter().rev().take(7).copied().collect();
+    let mut tail: Vec<&str> = chat_lines.iter().rev().take(8).copied().collect();
     tail.reverse();
     assert!(tail[0].contains("SPRINT STATUS: Alpha Sprint 1 complete"));
     assert!(tail[1].contains("SPRINT STATUS: Completed this sprint: 2"));
@@ -278,6 +599,7 @@ fn test_swarm_run_stub_integration() {
     assert!(tail[4].contains("SPRINT STATUS: Total tasks: 2"));
     assert!(tail[5].contains("Merge agent: starting"));
     assert!(tail[6].contains("Merge agent: completed"));
+    assert!(tail[7].contains("Push:"));
 
     let output_dir = team_root.join("loop");
     assert!(output_dir.join("turn1-agentA.md").exists());
@@ -335,7 +657,9 @@ fn test_swarm_run_stub_integration() {
     );
 
     let mut main_log_cmd = Command::new("git");
-    main_log_cmd.args(["log", "--oneline", "-10"]).current_dir(repo_path);
+    main_log_cmd
+        .args(["log", "--oneline", "-10"])
+        .current_dir(repo_path);
     let main_log_output = run_success(&mut main_log_cmd);
     let main_log = String::from_utf8_lossy(&main_log_output.stdout);
     assert!(
@@ -382,13 +706,8 @@ fn test_merge_agent_conflict_surfaces_files() {
     commit_all(repo_path, "target change");
 
     let engine = StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
-    let err = merge_agent::ensure_feature_merged(
-        &engine,
-        "alpha-sprint-1",
-        "main",
-        repo_path,
-    )
-    .expect_err("expected merge conflict");
+    let err = merge_agent::ensure_feature_merged(&engine, "alpha-sprint-1", "main", repo_path)
+        .expect_err("expected merge conflict");
 
     assert!(
         err.contains("merge conflicts"),
@@ -453,14 +772,11 @@ fn test_merge_agent_conflict_in_run_reports_error() {
     commit_all(repo_path, "target change");
 
     // Use the merge_agent directly to test conflict detection
-    let engine = swarm::engine::StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
-    let err = swarm::merge_agent::ensure_feature_merged(
-        &engine,
-        "test-sprint-1",
-        "main",
-        repo_path,
-    )
-    .expect_err("expected merge conflict");
+    let engine =
+        swarm::engine::StubEngine::new(repo_path.join("loop").to_string_lossy().to_string());
+    let err =
+        swarm::merge_agent::ensure_feature_merged(&engine, "test-sprint-1", "main", repo_path)
+            .expect_err("expected merge conflict");
 
     assert!(
         err.contains("merge conflicts"),
@@ -511,22 +827,15 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
             .join("worktrees");
         let feature_branch = format!("{}-sprint-1", team_name);
 
-        let feature_worktree = worktree::create_feature_worktree_in(
-            &worktrees_dir,
-            &feature_branch,
-            "main",
-        )
-        .expect("create feature worktree");
+        let feature_worktree =
+            worktree::create_feature_worktree_in(&worktrees_dir, &feature_branch, "main")
+                .expect("create feature worktree");
 
         let run_ctx = RunContext::new(team_name, 1);
         let assignments = vec![('A', "Task one".to_string())];
-        let worktrees = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            &feature_branch,
-            &run_ctx,
-        )
-        .expect("create agent worktree");
+        let worktrees =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, &feature_branch, &run_ctx)
+                .expect("create agent worktree");
         assert_eq!(worktrees.len(), 1);
         let agent_worktree = worktrees[0].path.clone();
 
@@ -547,17 +856,25 @@ fn test_worktree_lifecycle_feature_agent_merge_cleanup() {
         assert!(
             agent_branch.starts_with(&expected_branch_prefix),
             "agent branch '{}' should start with '{}'",
-            agent_branch, expected_branch_prefix
+            agent_branch,
+            expected_branch_prefix
         );
 
         fs::write(agent_worktree.join("agent.txt"), "agent change").expect("write agent file");
         commit_all(&agent_worktree, "Agent commit");
 
-        let merge_result =
-            worktree::merge_agent_branch_in_with_ctx(&feature_worktree, &run_ctx, 'A', Some(&feature_branch));
+        let merge_result = worktree::merge_agent_branch_in_with_ctx(
+            &feature_worktree,
+            &run_ctx,
+            'A',
+            Some(&feature_branch),
+        );
         assert!(matches!(merge_result, worktree::MergeResult::Success));
 
-        let merge_parents = git_stdout(&feature_worktree, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        let merge_parents = git_stdout(
+            &feature_worktree,
+            &["rev-list", "--parents", "-n", "1", "HEAD"],
+        );
         let parent_count = merge_parents.split_whitespace().count();
         assert_eq!(parent_count, 3, "expected merge commit with two parents");
 
@@ -850,7 +1167,10 @@ fn test_target_branch_worktree_dirty_mismatch_preserves_work() {
         "expected dirty-worktree safety error, got: {}",
         err
     );
-    assert!(reserved_path.exists(), "dirty worktree path should be preserved");
+    assert!(
+        reserved_path.exists(),
+        "dirty worktree path should be preserved"
+    );
     assert!(dirty_file.exists(), "dirty file should be preserved");
 
     let head = git_stdout(&reserved_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -907,6 +1227,10 @@ fn test_single_variation_run_succeeds_with_shared_mismatch_present() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_target.as_str(),
+            "--target-branch",
+            default_target.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -920,13 +1244,20 @@ fn test_single_variation_run_succeeds_with_shared_mismatch_present() {
 
     let tasks_content = fs::read_to_string(&tasks_path).expect("read tasks");
     let task_list = TaskList::parse(&tasks_content);
-    assert_eq!(task_list.completed_count(), 2, "single variation run should complete tasks");
+    assert_eq!(
+        task_list.completed_count(),
+        2,
+        "single variation run should complete tasks"
+    );
 
     assert!(
         reserved_path.exists(),
         "shared mismatch path should not break single variation run"
     );
-    assert!(keep_file.exists(), "existing work under mismatch path should remain");
+    assert!(
+        keep_file.exists(),
+        "existing work under mismatch path should remain"
+    );
 
     let head = git_stdout(&reserved_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
     assert_eq!(head, "other");
@@ -957,6 +1288,7 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
     let tasks_path = write_team_tasks_multi_sprint(&team_root);
     let chat_path = team_root.join("chat.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Run 3 sprints
     let mut run_cmd = Command::new(swarm_bin);
@@ -964,6 +1296,10 @@ fn test_swarm_run_multiple_sprints_reassigns_agents() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "3",
@@ -1062,6 +1398,7 @@ fn test_per_task_engine_selection_mechanism() {
     let tasks_content = "# Tasks\n\n- [ ] Task one\n- [ ] Task two\n- [ ] Task three\n";
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Run with stub mode and single agent with 3 tasks
     // This ensures one agent handles multiple tasks sequentially
@@ -1070,6 +1407,10 @@ fn test_per_task_engine_selection_mechanism() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -1162,6 +1503,7 @@ fn test_multi_engine_configuration() {
     let tasks_content = "# Tasks\n\n- [ ] Task A\n- [ ] Task B\n";
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Run with --engine claude,codex AND --stub
     // The --stub flag overrides engine selection to use stub engine,
@@ -1171,6 +1513,10 @@ fn test_multi_engine_configuration() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--engine",
             "claude,codex",
             "--stub",
@@ -1245,6 +1591,7 @@ fn test_stub_mode_uses_stub_engine_exclusively() {
     let tasks_content = "# Tasks\n\n- [ ] Task Alpha\n- [ ] Task Beta\n- [ ] Task Gamma\n";
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Run with --engine claude,codex AND --stub
     // The --stub flag should OVERRIDE the engine selection to always use stub
@@ -1253,6 +1600,10 @@ fn test_stub_mode_uses_stub_engine_exclusively() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--engine",
             "claude,codex",
             "--stub",
@@ -1365,6 +1716,7 @@ fn test_single_engine_configuration_works_unchanged() {
     let tasks_content = "# Tasks\n\n- [ ] First task\n- [ ] Second task\n- [ ] Third task\n";
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Run with --stub (single engine configuration)
     // This simulates a single-engine config where all tasks should use the same engine
@@ -1373,6 +1725,10 @@ fn test_single_engine_configuration_works_unchanged() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -1457,12 +1813,17 @@ fn test_chat_history_persists_across_sprints_in_single_run() {
     fs::write(&tasks_path, tasks_content).expect("write TASKS.md");
     let chat_path = team_root.join("chat.md");
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "2",
@@ -1516,6 +1877,7 @@ fn test_agent_merges_go_to_sprint_branch_not_target() {
     let team_root = repo_path.join(".swarm-hug").join(team_name);
     write_team_tasks(&team_root);
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Get the initial commit on master before the sprint
     let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
@@ -1525,6 +1887,10 @@ fn test_agent_merges_go_to_sprint_branch_not_target() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -1539,7 +1905,12 @@ fn test_agent_merges_go_to_sprint_branch_not_target() {
     // Get the merge commits on main since the initial commit
     let merge_log = git_stdout(
         repo_path,
-        &["log", "--oneline", "--merges", &format!("{}..HEAD", initial_commit)],
+        &[
+            "log",
+            "--oneline",
+            "--merges",
+            &format!("{}..HEAD", initial_commit),
+        ],
     );
 
     // Should NOT have individual agent merge commits on the target branch
@@ -1591,6 +1962,7 @@ fn test_sprint_merge_authored_by_scrummaster() {
     let team_root = repo_path.join(".swarm-hug").join(team_name);
     write_team_tasks(&team_root);
     commit_all(repo_path, "init");
+    let default_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Get the initial commit before the sprint
     let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
@@ -1600,6 +1972,10 @@ fn test_sprint_merge_authored_by_scrummaster() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            default_branch.as_str(),
+            "--target-branch",
+            default_branch.as_str(),
             "--stub",
             "--max-sprints",
             "1",
@@ -1665,12 +2041,9 @@ fn test_failed_sprint_worktree_cleanup_on_restart() {
         // Create a "leftover" feature worktree to simulate a failed sprint
         // This simulates what would happen if a previous sprint crashed mid-way
         let leftover_branch = format!("{}-sprint-1", team_name);
-        let leftover_worktree = worktree::create_feature_worktree_in(
-            &worktrees_dir,
-            &leftover_branch,
-            &target_branch,
-        )
-        .expect("create leftover worktree");
+        let leftover_worktree =
+            worktree::create_feature_worktree_in(&worktrees_dir, &leftover_branch, &target_branch)
+                .expect("create leftover worktree");
 
         // Add a file to the leftover worktree to make it "dirty"
         fs::write(leftover_worktree.join("leftover.txt"), "leftover content")
@@ -1689,6 +2062,10 @@ fn test_failed_sprint_worktree_cleanup_on_restart() {
             .args([
                 "--project",
                 team_name,
+                "--source-branch",
+                target_branch.as_str(),
+                "--target-branch",
+                target_branch.as_str(),
                 "--stub",
                 "--max-sprints",
                 "1",
@@ -1723,8 +2100,8 @@ fn test_failed_sprint_worktree_cleanup_on_restart() {
 
 /// Test that sprint initialization keeps the target branch clean.
 /// The sprint branch is created BEFORE any sprint files are written, ensuring
-/// all sprint-specific state (sprint-history.json, team-state.json, task assignments)
-/// goes to the sprint branch, not the target branch.
+/// sprint planning state (task assignments) goes to the sprint branch while
+/// runtime history/team-state stay local under `.swarm-hug/<team>/runs/<target>/`.
 #[test]
 fn test_sprint_init_keeps_target_branch_clean() {
     let temp = TempDir::new().expect("temp dir");
@@ -1772,6 +2149,10 @@ fn test_sprint_init_keeps_target_branch_clean() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "main",
             "--stub",
             "--max-sprints",
             "1",
@@ -1821,9 +2202,9 @@ fn test_sprint_init_keeps_target_branch_clean() {
     let untracked_stdout = String::from_utf8_lossy(&untracked_output.stdout);
 
     // Filter for sprint-specific state files
-    let has_untracked_sprint_files = untracked_stdout.lines().any(|line| {
-        line.contains("sprint-history.json") || line.contains("team-state.json")
-    });
+    let has_untracked_sprint_files = untracked_stdout
+        .lines()
+        .any(|line| line.contains("sprint-history.json") || line.contains("team-state.json"));
     assert!(
         !has_untracked_sprint_files,
         "Sprint state files should not be untracked on main branch.\n\
@@ -1835,8 +2216,8 @@ fn test_sprint_init_keeps_target_branch_clean() {
     // This confirms the sprint branch was properly created and merged
     let main_log = git_stdout(repo_path, &["log", "--oneline", "-10"]);
     assert!(
-        main_log.contains("Alpha Sprint 1: task assignments") ||
-        main_log.contains("alpha-sprint-1"),
+        main_log.contains("Alpha Sprint 1: task assignments")
+            || main_log.contains("alpha-sprint-1"),
         "Target branch should contain sprint commits after merge.\n\
          Git log:\n{}",
         main_log
@@ -1890,6 +2271,10 @@ fn test_unassign_does_not_dirty_target_branch() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "main",
             "--stub",
             "--max-sprints",
             "1",
@@ -1915,15 +2300,15 @@ fn test_unassign_does_not_dirty_target_branch() {
     );
 }
 
-/// Test that the first sprint creates state files only in the sprint branch.
+/// Test that the first sprint keeps branch-tracked state files absent.
 /// When a repo has no existing sprint-history.json or team-state.json,
-/// the first sprint should create these files in the sprint branch (not main).
+/// sprint metadata should stay in runtime-local `runs/<target>/` state.
 ///
 /// This is a specific case of the sprint branch ordering fix, where we verify:
 /// 1. No sprint state files exist before the sprint starts
-/// 2. After sprint initialization, these files are created in the sprint branch
+/// 2. After sprint completion, these files are still absent from branch-tracked team root
 /// 3. The target branch remains clean (no uncommitted changes)
-/// 4. After the sprint completes and merges, the files are in committed history
+/// 4. Runtime namespaced state exists under `.swarm-hug/<team>/runs/<target>/`
 #[test]
 fn test_first_sprint_creates_files_in_sprint_branch() {
     let temp = TempDir::new().expect("temp dir");
@@ -1970,6 +2355,10 @@ fn test_first_sprint_creates_files_in_sprint_branch() {
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "main",
             "--stub",
             "--max-sprints",
             "1",
@@ -2015,9 +2404,9 @@ fn test_first_sprint_creates_files_in_sprint_branch() {
     let untracked_output = run_success(&mut status_untracked_cmd);
     let untracked_stdout = String::from_utf8_lossy(&untracked_output.stdout);
 
-    let has_untracked_sprint_files = untracked_stdout.lines().any(|line| {
-        line.contains("sprint-history.json") || line.contains("team-state.json")
-    });
+    let has_untracked_sprint_files = untracked_stdout
+        .lines()
+        .any(|line| line.contains("sprint-history.json") || line.contains("team-state.json"));
     assert!(
         !has_untracked_sprint_files,
         "Sprint state files should NOT be untracked on main after first sprint.\n\
@@ -2026,49 +2415,66 @@ fn test_first_sprint_creates_files_in_sprint_branch() {
         untracked_stdout
     );
 
-    // KEY ASSERTION 3: The sprint state files should now exist (from merged sprint branch)
-    // After the sprint completes and is merged, the files should be in committed history
+    // KEY ASSERTION 3: Team-root sprint state files stay absent.
     assert!(
-        main_sprint_history.exists(),
-        "sprint-history.json should exist after sprint completes (from merged sprint branch)"
+        !main_sprint_history.exists(),
+        "sprint-history.json should remain runtime-local and absent from team root"
     );
     assert!(
-        main_team_state.exists(),
-        "team-state.json should exist after sprint completes (from merged sprint branch)"
+        !main_team_state.exists(),
+        "team-state.json should remain runtime-local and absent from team root"
     );
 
-    // KEY ASSERTION 4: Verify these files are tracked (committed), not untracked
+    // KEY ASSERTION 4: Verify these files are not tracked in git.
     let mut ls_files_cmd = Command::new("git");
     ls_files_cmd
-        .args(["ls-files", "--error-unmatch", ".swarm-hug/beta/sprint-history.json"])
+        .args([
+            "ls-files",
+            "--error-unmatch",
+            ".swarm-hug/beta/sprint-history.json",
+        ])
         .current_dir(repo_path);
     let ls_files_result = ls_files_cmd.output().expect("git ls-files failed");
     assert!(
-        ls_files_result.status.success(),
-        "sprint-history.json should be tracked in git (committed via sprint branch)"
+        !ls_files_result.status.success(),
+        "sprint-history.json should not be tracked in git"
     );
 
     let mut ls_files_team_cmd = Command::new("git");
     ls_files_team_cmd
-        .args(["ls-files", "--error-unmatch", ".swarm-hug/beta/team-state.json"])
+        .args([
+            "ls-files",
+            "--error-unmatch",
+            ".swarm-hug/beta/team-state.json",
+        ])
         .current_dir(repo_path);
     let ls_files_team_result = ls_files_team_cmd.output().expect("git ls-files failed");
     assert!(
-        ls_files_team_result.status.success(),
-        "team-state.json should be tracked in git (committed via sprint branch)"
+        !ls_files_team_result.status.success(),
+        "team-state.json should not be tracked in git"
     );
 
-    // KEY ASSERTION 5: Verify the git log shows the sprint was properly created and merged
+    // KEY ASSERTION 5: Runtime namespaced state should exist.
+    let runtime_root = team_root.join("runs").join("main");
+    assert!(
+        runtime_root.join("sprint-history.json").exists(),
+        "runtime sprint-history.json should exist under runs/main"
+    );
+    assert!(
+        runtime_root.join("team-state.json").exists(),
+        "runtime team-state.json should exist under runs/main"
+    );
+
+    // KEY ASSERTION 6: Verify the git log shows the sprint was properly created and merged
     let main_log = git_stdout(repo_path, &["log", "--oneline", "-10"]);
     assert!(
-        main_log.contains("Beta Sprint 1: task assignments") ||
-        main_log.contains("beta-sprint-1"),
+        main_log.contains("Beta Sprint 1: task assignments") || main_log.contains("beta-sprint-1"),
         "Target branch should contain sprint commits after merge.\n\
          Git log:\n{}",
         main_log
     );
 
-    // KEY ASSERTION 6: Verify tasks were completed (proves sprint actually ran)
+    // KEY ASSERTION 7: Verify tasks were completed (proves sprint actually ran)
     let tasks_content = fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
     let task_list = TaskList::parse(&tasks_content);
     assert!(
@@ -2103,7 +2509,8 @@ fn test_followup_tasks_written_to_worktree() {
         // Initialize git repo
         init_git_repo(&repo_path);
         fs::write(repo_path.join("README.md"), "init").expect("write README");
-        fs::write(repo_path.join(".gitignore"), ".swarm-hug/*/worktrees/\n").expect("write gitignore");
+        fs::write(repo_path.join(".gitignore"), ".swarm-hug/*/worktrees/\n")
+            .expect("write gitignore");
         commit_all(&repo_path, "init");
 
         // Rename to 'main' for consistent testing
@@ -2132,17 +2539,15 @@ fn test_followup_tasks_written_to_worktree() {
         commit_all(&repo_path, "initial team state");
 
         // Record the content of main repo files BEFORE any sprint work
-        let main_tasks_before = fs::read_to_string(&main_tasks_path).expect("read main tasks before");
+        let main_tasks_before =
+            fs::read_to_string(&main_tasks_path).expect("read main tasks before");
         let main_chat_before = fs::read_to_string(&main_chat_path).expect("read main chat before");
 
         // Create sprint worktree (simulating sprint start)
         let worktrees_dir = main_team_root.join("worktrees");
-        let feature_worktree = worktree::create_feature_worktree_in(
-            &worktrees_dir,
-            &sprint_branch,
-            "main",
-        )
-        .expect("create feature worktree");
+        let feature_worktree =
+            worktree::create_feature_worktree_in(&worktrees_dir, &sprint_branch, "main")
+                .expect("create feature worktree");
 
         // Verify worktree was created
         assert!(feature_worktree.exists(), "feature worktree should exist");
@@ -2166,8 +2571,8 @@ fn test_followup_tasks_written_to_worktree() {
 
         // SIMULATE: Follow-up tasks being identified and written to worktree's tasks.md
         // This mimics what run_post_sprint_review() does after the path fix
-        let mut worktree_tasks_content = fs::read_to_string(&worktree_tasks_path)
-            .expect("read worktree tasks");
+        let mut worktree_tasks_content =
+            fs::read_to_string(&worktree_tasks_path).expect("read worktree tasks");
 
         // Ensure newline before appending
         if !worktree_tasks_content.ends_with('\n') {
@@ -2184,19 +2589,20 @@ fn test_followup_tasks_written_to_worktree() {
             .expect("write follow-up tasks to worktree");
 
         // SIMULATE: Chat message about follow-up tasks being written to worktree
-        let mut worktree_chat_content = fs::read_to_string(&worktree_chat_path)
-            .expect("read worktree chat");
-        worktree_chat_content.push_str("13:00:00 | ScrumMaster | Sprint review added 2 follow-up task(s)\n");
-        fs::write(&worktree_chat_path, &worktree_chat_content)
-            .expect("write chat to worktree");
+        let mut worktree_chat_content =
+            fs::read_to_string(&worktree_chat_path).expect("read worktree chat");
+        worktree_chat_content
+            .push_str("13:00:00 | ScrumMaster | Sprint review added 2 follow-up task(s)\n");
+        fs::write(&worktree_chat_path, &worktree_chat_content).expect("write chat to worktree");
 
         // SIMULATE: Commit the follow-up tasks in the worktree on the sprint branch
         let commit_msg = format!("{} Sprint 1: follow-up tasks from review", team_name);
         let mut add_cmd = Command::new("git");
-        add_cmd
-            .arg("-C")
-            .arg(&feature_worktree)
-            .args(["add", worktree_tasks_path.to_str().unwrap(), worktree_chat_path.to_str().unwrap()]);
+        add_cmd.arg("-C").arg(&feature_worktree).args([
+            "add",
+            worktree_tasks_path.to_str().unwrap(),
+            worktree_chat_path.to_str().unwrap(),
+        ]);
         run_success(&mut add_cmd);
 
         let mut commit_cmd = Command::new("git");
@@ -2209,8 +2615,8 @@ fn test_followup_tasks_written_to_worktree() {
         // ========== ASSERTIONS ==========
 
         // (a) ASSERT: Follow-up tasks appear in sprint worktree's tasks.md
-        let worktree_tasks_after = fs::read_to_string(&worktree_tasks_path)
-            .expect("read worktree tasks after");
+        let worktree_tasks_after =
+            fs::read_to_string(&worktree_tasks_path).expect("read worktree tasks after");
         assert!(
             worktree_tasks_after.contains("## Follow-up tasks (from sprint review)"),
             "Worktree tasks.md should contain follow-up tasks section.\n\
@@ -2231,8 +2637,7 @@ fn test_followup_tasks_written_to_worktree() {
         );
 
         // (b) ASSERT: Main repo tasks.md is unchanged
-        let main_tasks_after = fs::read_to_string(&main_tasks_path)
-            .expect("read main tasks after");
+        let main_tasks_after = fs::read_to_string(&main_tasks_path).expect("read main tasks after");
         assert_eq!(
             main_tasks_before, main_tasks_after,
             "Main repo tasks.md should be UNCHANGED.\n\
@@ -2248,8 +2653,7 @@ fn test_followup_tasks_written_to_worktree() {
         );
 
         // (c) ASSERT: Main repo chat.md is unchanged
-        let main_chat_after = fs::read_to_string(&main_chat_path)
-            .expect("read main chat after");
+        let main_chat_after = fs::read_to_string(&main_chat_path).expect("read main chat after");
         assert_eq!(
             main_chat_before, main_chat_after,
             "Main repo chat.md should be UNCHANGED.\n\
@@ -2292,9 +2696,9 @@ fn test_followup_tasks_written_to_worktree() {
         let status_output = run_success(&mut status_cmd);
         let status_stdout = String::from_utf8_lossy(&status_output.stdout);
         // Filter for team-related uncommitted files
-        let has_uncommitted_team_files = status_stdout.lines().any(|line| {
-            line.contains("tasks.md") || line.contains("chat.md")
-        });
+        let has_uncommitted_team_files = status_stdout
+            .lines()
+            .any(|line| line.contains("tasks.md") || line.contains("chat.md"));
         assert!(
             !has_uncommitted_team_files,
             "Main repo should have NO uncommitted tasks.md or chat.md changes.\n\
@@ -2349,23 +2753,15 @@ fn test_parallel_projects_no_worktree_conflict() {
         let assignments = vec![('A', "Task one".to_string())];
 
         // Create worktrees for greenfield project
-        let worktrees_greenfield = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_greenfield,
-        )
-        .expect("create greenfield worktrees");
+        let worktrees_greenfield =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_greenfield)
+                .expect("create greenfield worktrees");
         assert_eq!(worktrees_greenfield.len(), 1);
 
         // Create worktrees for payments project (same agent - should NOT conflict)
-        let worktrees_payments = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_payments,
-        )
-        .expect("create payments worktrees");
+        let worktrees_payments =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_payments)
+                .expect("create payments worktrees");
         assert_eq!(worktrees_payments.len(), 1);
 
         // Verify both worktrees exist simultaneously
@@ -2484,36 +2880,38 @@ fn test_parallel_projects_multiple_agents_isolated() {
         ];
 
         // Create worktrees for both projects
-        let worktrees_proj1 = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_proj1,
-        )
-        .expect("create project1 worktrees");
+        let worktrees_proj1 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_proj1)
+                .expect("create project1 worktrees");
 
-        let worktrees_proj2 = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_proj2,
-        )
-        .expect("create project2 worktrees");
+        let worktrees_proj2 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_proj2)
+                .expect("create project2 worktrees");
 
         assert_eq!(worktrees_proj1.len(), 3);
         assert_eq!(worktrees_proj2.len(), 3);
 
         // Verify all 6 worktrees exist (3 per project)
         for wt in &worktrees_proj1 {
-            assert!(wt.path.exists(), "project1 worktree should exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "project1 worktree should exist: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees_proj2 {
-            assert!(wt.path.exists(), "project2 worktree should exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "project2 worktree should exist: {:?}",
+                wt.path
+            );
         }
 
         // Verify no path collisions
-        let proj1_paths: std::collections::HashSet<_> = worktrees_proj1.iter().map(|w| &w.path).collect();
-        let proj2_paths: std::collections::HashSet<_> = worktrees_proj2.iter().map(|w| &w.path).collect();
+        let proj1_paths: std::collections::HashSet<_> =
+            worktrees_proj1.iter().map(|w| &w.path).collect();
+        let proj2_paths: std::collections::HashSet<_> =
+            worktrees_proj2.iter().map(|w| &w.path).collect();
         assert!(
             proj1_paths.is_disjoint(&proj2_paths),
             "worktree paths should not overlap"
@@ -2521,16 +2919,25 @@ fn test_parallel_projects_multiple_agents_isolated() {
 
         // Clean up project1 completely
         let proj1_initials: Vec<char> = worktrees_proj1.iter().map(|w| w.initial).collect();
-        let summary = worktree::cleanup_agent_worktrees(&worktrees_dir, &proj1_initials, true, &ctx_proj1);
+        let summary =
+            worktree::cleanup_agent_worktrees(&worktrees_dir, &proj1_initials, true, &ctx_proj1);
         assert_eq!(summary.cleaned_count(), 3);
         assert!(!summary.has_errors());
 
         // Verify project1 worktrees are gone but project2 worktrees remain
         for wt in &worktrees_proj1 {
-            assert!(!wt.path.exists(), "project1 worktree should be removed: {:?}", wt.path);
+            assert!(
+                !wt.path.exists(),
+                "project1 worktree should be removed: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees_proj2 {
-            assert!(wt.path.exists(), "project2 worktree should still exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "project2 worktree should still exist: {:?}",
+                wt.path
+            );
         }
 
         // Clean up project2
@@ -2571,13 +2978,9 @@ fn test_restart_isolation_new_hash_old_artifacts_remain() {
         let ctx_run1 = RunContext::new("greenfield", 1);
         let run1_hash = ctx_run1.hash().to_string();
 
-        let worktrees_run1 = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_run1,
-        )
-        .expect("create run1 worktrees");
+        let worktrees_run1 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_run1)
+                .expect("create run1 worktrees");
 
         let wt_run1 = worktrees_run1[0].path.clone();
         assert!(wt_run1.exists(), "run1 worktree should exist");
@@ -2609,21 +3012,23 @@ fn test_restart_isolation_new_hash_old_artifacts_remain() {
         );
 
         // Create worktrees for run2
-        let worktrees_run2 = worktree::create_worktrees_in(
-            &worktrees_dir,
-            &assignments,
-            "main",
-            &ctx_run2,
-        )
-        .expect("create run2 worktrees");
+        let worktrees_run2 =
+            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx_run2)
+                .expect("create run2 worktrees");
 
         let wt_run2 = worktrees_run2[0].path.clone();
         assert!(wt_run2.exists(), "run2 worktree should exist");
 
         // KEY ASSERTION: Both worktrees should exist simultaneously
-        assert!(wt_run1.exists(), "run1 worktree should still exist after run2 creation");
+        assert!(
+            wt_run1.exists(),
+            "run1 worktree should still exist after run2 creation"
+        );
         assert!(wt_run2.exists(), "run2 worktree should exist");
-        assert_ne!(wt_run1, wt_run2, "run1 and run2 worktrees should be different paths");
+        assert_ne!(
+            wt_run1, wt_run2,
+            "run1 and run2 worktrees should be different paths"
+        );
 
         // Verify run1's work is still there
         assert!(
@@ -2642,13 +3047,19 @@ fn test_restart_isolation_new_hash_old_artifacts_remain() {
             .expect("cleanup run2");
 
         assert!(!wt_run2.exists(), "run2 worktree should be removed");
-        assert!(wt_run1.exists(), "run1 worktree should still exist after run2 cleanup");
+        assert!(
+            wt_run1.exists(),
+            "run1 worktree should still exist after run2 cleanup"
+        );
 
         // Now clean up run1
         worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx_run1)
             .expect("cleanup run1");
 
-        assert!(!wt_run1.exists(), "run1 worktree should be removed after explicit cleanup");
+        assert!(
+            !wt_run1.exists(),
+            "run1 worktree should be removed after explicit cleanup"
+        );
     });
 }
 
@@ -2673,10 +3084,7 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
         run_success(&mut rename_cmd);
 
         let worktrees_dir = repo_path.join(".swarm-hug").join("worktrees");
-        let assignments = vec![
-            ('A', "Task A".to_string()),
-            ('B', "Task B".to_string()),
-        ];
+        let assignments = vec![('A', "Task A".to_string()), ('B', "Task B".to_string())];
 
         // Create 3 runs with different hashes
         let ctx1 = RunContext::new("project", 1);
@@ -2692,15 +3100,12 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
         assert_ne!(hash2, hash3);
 
         // Create worktrees for all 3 runs
-        let worktrees1 =
-            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
-                .expect("create worktrees1");
-        let worktrees2 =
-            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
-                .expect("create worktrees2");
-        let worktrees3 =
-            worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx3)
-                .expect("create worktrees3");
+        let worktrees1 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx1)
+            .expect("create worktrees1");
+        let worktrees2 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx2)
+            .expect("create worktrees2");
+        let worktrees3 = worktree::create_worktrees_in(&worktrees_dir, &assignments, "main", &ctx3)
+            .expect("create worktrees3");
 
         // Verify all worktrees exist (6 total: 2 per run)
         assert_eq!(worktrees1.len(), 2);
@@ -2708,13 +3113,25 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
         assert_eq!(worktrees3.len(), 2);
 
         for wt in &worktrees1 {
-            assert!(wt.path.exists(), "ctx1 worktree should exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx1 worktree should exist: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees2 {
-            assert!(wt.path.exists(), "ctx2 worktree should exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx2 worktree should exist: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees3 {
-            assert!(wt.path.exists(), "ctx3 worktree should exist: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx3 worktree should exist: {:?}",
+                wt.path
+            );
         }
 
         // Cleanup ctx1 - should ONLY affect ctx1's worktrees
@@ -2724,13 +3141,25 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
 
         // Verify ctx1 worktrees are removed, others remain
         for wt in &worktrees1 {
-            assert!(!wt.path.exists(), "ctx1 worktree should be removed: {:?}", wt.path);
+            assert!(
+                !wt.path.exists(),
+                "ctx1 worktree should be removed: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees2 {
-            assert!(wt.path.exists(), "ctx2 worktree should still exist after ctx1 cleanup: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx2 worktree should still exist after ctx1 cleanup: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees3 {
-            assert!(wt.path.exists(), "ctx3 worktree should still exist after ctx1 cleanup: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx3 worktree should still exist after ctx1 cleanup: {:?}",
+                wt.path
+            );
         }
 
         // Cleanup ctx3 - should ONLY affect ctx3's worktrees
@@ -2739,10 +3168,18 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
 
         // Verify ctx3 worktrees are removed, ctx2 still remains
         for wt in &worktrees3 {
-            assert!(!wt.path.exists(), "ctx3 worktree should be removed: {:?}", wt.path);
+            assert!(
+                !wt.path.exists(),
+                "ctx3 worktree should be removed: {:?}",
+                wt.path
+            );
         }
         for wt in &worktrees2 {
-            assert!(wt.path.exists(), "ctx2 worktree should still exist after ctx3 cleanup: {:?}", wt.path);
+            assert!(
+                wt.path.exists(),
+                "ctx2 worktree should still exist after ctx3 cleanup: {:?}",
+                wt.path
+            );
         }
 
         // Finally cleanup ctx2
@@ -2750,7 +3187,11 @@ fn test_cleanup_scope_only_affects_current_run_hash() {
         assert_eq!(summary2.cleaned_count(), 2);
 
         for wt in &worktrees2 {
-            assert!(!wt.path.exists(), "ctx2 worktree should be removed: {:?}", wt.path);
+            assert!(
+                !wt.path.exists(),
+                "ctx2 worktree should be removed: {:?}",
+                wt.path
+            );
         }
     });
 }
@@ -2796,7 +3237,12 @@ fn test_branch_cleanup_scoped_by_hash() {
             Command::new("git")
                 .arg("-C")
                 .arg(&repo_path)
-                .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{}", branch)])
+                .args([
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{}", branch),
+                ])
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false)
@@ -2807,19 +3253,26 @@ fn test_branch_cleanup_scoped_by_hash() {
         assert!(branch_exists(&branch2), "branch2 should exist");
 
         // Cleanup ctx1 with branch deletion
-        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx1)
-            .expect("cleanup ctx1");
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx1).expect("cleanup ctx1");
 
         // branch1 should be deleted, branch2 should remain
-        assert!(!branch_exists(&branch1), "branch1 should be deleted after ctx1 cleanup");
-        assert!(branch_exists(&branch2), "branch2 should still exist after ctx1 cleanup");
+        assert!(
+            !branch_exists(&branch1),
+            "branch1 should be deleted after ctx1 cleanup"
+        );
+        assert!(
+            branch_exists(&branch2),
+            "branch2 should still exist after ctx1 cleanup"
+        );
 
         // Cleanup ctx2 with branch deletion
-        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx2)
-            .expect("cleanup ctx2");
+        worktree::cleanup_agent_worktree(&worktrees_dir, 'A', true, &ctx2).expect("cleanup ctx2");
 
         // Now both branches should be deleted
-        assert!(!branch_exists(&branch2), "branch2 should be deleted after ctx2 cleanup");
+        assert!(
+            !branch_exists(&branch2),
+            "branch2 should be deleted after ctx2 cleanup"
+        );
     });
 }
 
@@ -2862,7 +3315,8 @@ fn test_run_hash_consistency_across_artifacts() {
 
     // Verify hash is alphanumeric lowercase
     assert!(
-        hash.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+        hash.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
         "hash '{}' should be lowercase alphanumeric",
         hash
     );
@@ -2903,7 +3357,7 @@ fn test_different_projects_same_sprint_different_hashes() {
     assert!(ctx_beta.sprint_branch().starts_with("beta-sprint-1-"));
 }
 
-/// Test that providing --target-branch without --source-branch produces the exact error message.
+/// Test that providing only --target-branch fails with the required-branches message.
 #[test]
 fn test_target_branch_only_flag_returns_error() {
     let temp = TempDir::new().expect("temp dir");
@@ -2928,8 +3382,8 @@ fn test_target_branch_only_flag_returns_error() {
     let stderr = strip_ansi(&stderr_raw);
 
     assert!(
-        stderr.contains("--target-branch requires --source-branch. Specify both flags explicitly."),
-        "expected exact error message about --target-branch requiring --source-branch, got stderr:\n{}",
+        stderr.contains("swarm run requires both --source-branch and --target-branch."),
+        "expected required-branches error, got stderr:\n{}",
         stderr
     );
     assert!(
@@ -2939,135 +3393,162 @@ fn test_target_branch_only_flag_returns_error() {
     );
 }
 
-/// Test that --source-branch alone sets both source and target to the same branch.
-/// Verifies the sprint forks from and merges into the specified branch.
+/// Test that --target-branch without a value does not consume the next flag and returns a clear validation error.
 #[test]
-fn test_source_branch_only_sets_both_source_and_target() {
+fn test_target_branch_missing_value_before_next_flag_returns_error() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();
-    let team_name = "alpha";
 
     init_git_repo(repo_path);
-    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
-
-    // Rename default branch to "main" and create a separate branch "dev"
-    let mut rename_cmd = Command::new("git");
-    rename_cmd
-        .args(["branch", "-M", "main"])
-        .current_dir(repo_path);
-    run_success(&mut rename_cmd);
-
     fs::write(repo_path.join("README.md"), "init").expect("write README");
-    commit_all(repo_path, "base commit");
+    commit_all(repo_path, "init");
 
-    // Create "dev" branch from main
-    let mut branch_cmd = Command::new("git");
-    branch_cmd
-        .args(["checkout", "-b", "dev"])
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let mut cmd = Command::new(swarm_bin);
+    cmd.args(["--target-branch", "--no-tui", "run"])
         .current_dir(repo_path);
-    run_success(&mut branch_cmd);
 
-    fs::write(repo_path.join("dev.txt"), "dev content").expect("write dev.txt");
-    commit_all(repo_path, "dev commit");
-
-    // Go back to main for the swarm run
-    let mut checkout_main = Command::new("git");
-    checkout_main
-        .args(["checkout", "main"])
-        .current_dir(repo_path);
-    run_success(&mut checkout_main);
-
-    // Initialize project
-    let mut team_init_cmd = Command::new(swarm_bin);
-    team_init_cmd
-        .args(["project", "init", team_name])
-        .current_dir(repo_path);
-    run_success(&mut team_init_cmd);
-
-    let team_root = repo_path.join(".swarm-hug").join(team_name);
-    write_team_tasks(&team_root);
-    commit_all(repo_path, "init project");
-
-    // Also commit the project setup to the dev branch so it has tasks
-    let mut checkout_dev = Command::new("git");
-    checkout_dev
-        .args(["checkout", "dev"])
-        .current_dir(repo_path);
-    run_success(&mut checkout_dev);
-    let dev_team_root = repo_path.join(".swarm-hug").join(team_name);
-    fs::create_dir_all(&dev_team_root).ok();
-    write_team_tasks(&dev_team_root);
-    commit_all(repo_path, "init project on dev");
-
-    // Stay on dev; run with --source-branch dev (no --target-branch)
-    // This should set both source and target to "dev"
-    let mut run_cmd = Command::new(swarm_bin);
-    run_cmd
-        .args([
-            "--project",
-            team_name,
-            "--source-branch",
-            "dev",
-            "--stub",
-            "--max-sprints",
-            "1",
-            "--tasks-per-agent",
-            "1",
-            "--no-tui",
-            "run",
-        ])
-        .current_dir(repo_path);
-    let output = run_success(&mut run_cmd);
-    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
-
-    // Verify sprint ran
+    let output = cmd.output().expect("failed to run command");
     assert!(
-        stdout.contains("Sprint 1: assigned"),
-        "Sprint should have run. Output:\n{}",
-        stdout
+        !output.status.success(),
+        "should fail when --target-branch has no value"
     );
 
-    // Verify tasks completed
-    let tasks_content =
-        fs::read_to_string(dev_team_root.join("tasks.md")).expect("read tasks");
-    let task_list = TaskList::parse(&tasks_content);
-    assert!(
-        task_list.completed_count() >= 2,
-        "Tasks should be completed"
-    );
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
 
-    // Verify the sprint was merged into "dev" (the target), not "main"
-    let dev_log = git_stdout(repo_path, &["log", "--oneline", "-10", "dev"]);
     assert!(
-        dev_log.contains("Alpha Sprint 1: completed"),
-        "dev branch should have sprint completion commit. Got:\n{}",
-        dev_log
+        stderr.contains("--target-branch requires a value"),
+        "expected missing-value validation message, got stderr:\n{}",
+        stderr
     );
-
-    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
     assert!(
-        !main_log.contains("Alpha Sprint 1: completed"),
-        "main branch should NOT have sprint completion commit (target is dev). Got:\n{}",
-        main_log
-    );
-
-    // Verify chat mentions the correct base (should fork from dev, not main)
-    let chat_content =
-        fs::read_to_string(dev_team_root.join("chat.md")).expect("read chat");
-    assert!(
-        chat_content.contains("Creating worktree"),
-        "chat should contain worktree creation message. Chat:\n{}",
-        chat_content
+        stderr.contains("'--no-tui'"),
+        "expected message to mention the unexpected next flag, got stderr:\n{}",
+        stderr
     );
 }
 
-/// Test that providing neither --source-branch nor --target-branch auto-detects main/master.
-/// This is the backwards-compatible default behavior.
+#[cfg(unix)]
 #[test]
-fn test_neither_branch_flag_auto_detects() {
+fn test_target_branch_missing_value_before_next_flag_does_not_attempt_push_or_pr() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+
+    init_git_repo(repo_path);
+    fs::write(repo_path.join("README.md"), "init").expect("write README");
+    commit_all(repo_path, "init");
+
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let (path_override, push_log_path, gh_log_path) = install_fake_git_and_gh(repo_path);
+    let mut cmd = Command::new(swarm_bin);
+    cmd.args(["--target-branch", "--no-tui", "run"])
+        .env("PATH", path_override)
+        .current_dir(repo_path);
+
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        !output.status.success(),
+        "should fail when --target-branch has no value"
+    );
+
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+    assert!(
+        stderr.contains("--target-branch requires a value"),
+        "expected missing-value validation message, got stderr:\n{}",
+        stderr
+    );
+
+    if push_log_path.exists() {
+        let push_log = fs::read_to_string(&push_log_path).expect("read push command log");
+        let push_calls = parse_logged_args(&push_log);
+        assert!(
+            push_calls.is_empty(),
+            "push should not be attempted for malformed --target-branch input. log:\n{}",
+            push_log
+        );
+    }
+
+    if gh_log_path.exists() {
+        let gh_log = fs::read_to_string(&gh_log_path).expect("read gh command log");
+        let gh_calls = parse_logged_args(&gh_log);
+        assert!(
+            gh_calls.is_empty(),
+            "gh pr create should not be attempted for malformed --target-branch input. log:\n{}",
+            gh_log
+        );
+    }
+}
+
+/// Test that providing only --source-branch fails with the required-branches message.
+#[test]
+fn test_source_branch_only_flag_returns_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let mut cmd = Command::new(swarm_bin);
+    cmd.args(["--source-branch", "dev", "--no-tui", "run"])
+        .current_dir(repo_path);
+
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        !output.status.success(),
+        "should fail when --source-branch is provided without --target-branch"
+    );
+
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+    assert!(
+        stderr.contains("swarm run requires both --source-branch and --target-branch."),
+        "expected required-branches error, got stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Example: swarm run --source-branch main --target-branch feature-1"),
+        "expected example usage in error message, got stderr:\n{}",
+        stderr
+    );
+}
+
+/// Test that providing neither branch flag fails with the required-branches message.
+#[test]
+fn test_neither_branch_flag_returns_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let mut cmd = Command::new(swarm_bin);
+    cmd.args(["--no-tui", "run"]).current_dir(repo_path);
+
+    let output = cmd.output().expect("failed to run command");
+    assert!(
+        !output.status.success(),
+        "should fail when neither --source-branch nor --target-branch is provided"
+    );
+
+    let stderr_raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&stderr_raw);
+    assert!(
+        stderr.contains("swarm run requires both --source-branch and --target-branch."),
+        "expected required-branches error, got stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Example: swarm run --source-branch main --target-branch feature-1"),
+        "expected example usage in error message, got stderr:\n{}",
+        stderr
+    );
+}
+
+/// Regression: when source/target are explicit, post-merge push should run.
+#[test]
+fn test_explicit_target_branch_pushes_to_origin() {
     let temp = TempDir::new().expect("temp dir");
     let repo_path = temp.path();
     let team_name = "alpha";
+    let remote_path = repo_path.join("origin.git");
 
     init_git_repo(repo_path);
     let swarm_bin = env!("CARGO_BIN_EXE_swarm");
@@ -3079,7 +3560,22 @@ fn test_neither_branch_flag_auto_detects() {
         .current_dir(repo_path);
     run_success(&mut rename_cmd);
 
-    // Initialize project
+    // Create a local bare remote and push baseline main.
+    let mut init_remote_cmd = Command::new("git");
+    init_remote_cmd
+        .args(["init", "--bare"])
+        .arg(&remote_path)
+        .current_dir(repo_path);
+    run_success(&mut init_remote_cmd);
+
+    let mut add_remote_cmd = Command::new("git");
+    add_remote_cmd
+        .args(["remote", "add", "origin"])
+        .arg(&remote_path)
+        .current_dir(repo_path);
+    run_success(&mut add_remote_cmd);
+
+    // Initialize project and commit tasks on main.
     let mut team_init_cmd = Command::new(swarm_bin);
     team_init_cmd
         .args(["project", "init", team_name])
@@ -3090,14 +3586,24 @@ fn test_neither_branch_flag_auto_detects() {
     write_team_tasks(&team_root);
     commit_all(repo_path, "init");
 
-    let initial_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+    let mut baseline_push_cmd = Command::new("git");
+    baseline_push_cmd
+        .args(["push", "-u", "origin", "main"])
+        .current_dir(repo_path);
+    run_success(&mut baseline_push_cmd);
 
-    // Run WITHOUT --source-branch or --target-branch
+    let remote_before = git_stdout(&remote_path, &["rev-parse", "refs/heads/main"]);
+
+    // Run with required explicit source/target branch flags.
     let mut run_cmd = Command::new(swarm_bin);
     run_cmd
         .args([
             "--project",
             team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "main",
             "--stub",
             "--max-sprints",
             "1",
@@ -3109,43 +3615,41 @@ fn test_neither_branch_flag_auto_detects() {
         .current_dir(repo_path);
     let output = run_success(&mut run_cmd);
     let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
 
-    // Verify sprint ran successfully
     assert!(
         stdout.contains("Sprint 1: assigned"),
         "Sprint should have run. Output:\n{}",
         stdout
     );
-
-    // Verify tasks completed
-    let tasks_content =
-        fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
-    let task_list = TaskList::parse(&tasks_content);
-    assert_eq!(
-        task_list.completed_count(),
-        2,
-        "Both tasks should be completed"
-    );
-
-    // Verify the sprint was merged into auto-detected "main" branch
-    let main_log = git_stdout(repo_path, &["log", "--oneline", "-10", "main"]);
     assert!(
-        main_log.contains("Alpha Sprint 1: completed"),
-        "auto-detected main branch should have sprint completion commit. Got:\n{}",
-        main_log
+        stdout.contains("Push: pushed 'main' to origin"),
+        "push status should report successful push. stdout:\n{}",
+        stdout
+    );
+    assert!(
+        !stderr.contains("failed to push 'main' to origin"),
+        "push warning should be absent when push succeeds. stderr:\n{}",
+        stderr
+    );
+    let chat_content = fs::read_to_string(team_root.join("chat.md")).expect("read chat");
+    assert!(
+        chat_content.contains("Push: pushed 'main' to origin"),
+        "chat should record successful push. chat:\n{}",
+        chat_content
     );
 
-    // Verify we're still on main and the branch has advanced past the initial commit
-    let current_branch = git_stdout(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
-    assert_eq!(
-        current_branch, "main",
-        "should still be on main branch"
-    );
-
-    let current_commit = git_stdout(repo_path, &["rev-parse", "HEAD"]);
+    // origin/main should advance because push is explicit and successful.
+    let remote_after = git_stdout(&remote_path, &["rev-parse", "refs/heads/main"]);
     assert_ne!(
-        current_commit, initial_commit,
-        "main branch should have advanced past initial commit"
+        remote_after, remote_before,
+        "origin/main should advance after push"
+    );
+
+    let local_main = git_stdout(repo_path, &["rev-parse", "main"]);
+    assert_eq!(
+        local_main, remote_after,
+        "local and remote main should match after successful push"
     );
 }
 
@@ -3259,12 +3763,343 @@ fn test_source_and_target_branch_forks_from_source_merges_into_target() {
         .current_dir(repo_path);
     run_success(&mut checkout_feature);
 
-    let tasks_content =
-        fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
+    let tasks_content = fs::read_to_string(team_root.join("tasks.md")).expect("read tasks");
     let task_list = TaskList::parse(&tasks_content);
     assert!(
         task_list.completed_count() >= 2,
         "Tasks should be completed on target branch"
+    );
+}
+
+/// Regression: with --source-branch + --target-branch, sprint 1 may need to
+/// fork from source to sync target, but sprint 2+ should fork from target once
+/// target contains source tip.
+#[test]
+fn test_second_sprint_uses_target_base_after_initial_source_sync() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+
+    init_git_repo(repo_path);
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut team_init_cmd = Command::new(swarm_bin);
+    team_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut team_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    let tasks_path = team_root.join("tasks.md");
+    fs::write(
+        &tasks_path,
+        "# Tasks\n\n- [ ] Task one\n- [ ] Task two\n- [ ] Task three\n- [ ] Task four\n",
+    )
+    .expect("write tasks");
+    commit_all(repo_path, "init project on main");
+
+    let mut create_target = Command::new("git");
+    create_target
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_target);
+
+    // Advance source so sprint 1 must fork from source to carry the delta.
+    fs::write(repo_path.join("main-only.txt"), "main content").expect("write main-only");
+    commit_all(repo_path, "main-only commit");
+
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "feature-1",
+            "--stub",
+            "--max-sprints",
+            "2",
+            "--max-agents",
+            "2",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    assert!(
+        stdout.contains("Sprint 2: assigned"),
+        "expected second sprint to run. stdout:\n{}",
+        stdout
+    );
+
+    let chat_content = fs::read_to_string(team_root.join("chat.md")).expect("read chat");
+    let sprint1_creation = chat_content
+        .lines()
+        .find(|line| line.contains("Creating worktree alpha-sprint-1-"))
+        .expect("sprint 1 creation line");
+    let sprint2_creation = chat_content
+        .lines()
+        .find(|line| line.contains("Creating worktree alpha-sprint-2-"))
+        .expect("sprint 2 creation line");
+
+    assert!(
+        sprint1_creation.contains("from main ("),
+        "sprint 1 should fork from source branch. line:\n{}",
+        sprint1_creation
+    );
+    assert!(
+        sprint2_creation.contains("from feature-1 ("),
+        "sprint 2 should fork from target branch after initial sync. line:\n{}",
+        sprint2_creation
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_post_merge_flow_calls_push_and_uses_default_pr_metadata_when_parse_fails() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    init_git_repo(repo_path);
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut project_init_cmd = Command::new(swarm_bin);
+    project_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut project_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init project");
+
+    let mut create_target_cmd = Command::new("git");
+    create_target_cmd
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_target_cmd);
+
+    assert_post_merge_flow_with_expected_pr_metadata(
+        repo_path,
+        team_name,
+        "[swarm] feature-1",
+        "Auto-generated by swarm sprint.",
+        "git log --oneline main..feature-1",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_post_merge_flow_calls_push_and_uses_engine_derived_pr_metadata() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+    let expected_title = "Engine title";
+    let expected_body = "Engine body";
+    let metadata_commit_message = r#"{"title":"Engine title","body":"Engine body"}"#;
+
+    init_git_repo(repo_path);
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut project_init_cmd = Command::new(swarm_bin);
+    project_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut project_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init project");
+
+    let mut create_target_cmd = Command::new("git");
+    create_target_cmd
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_target_cmd);
+
+    let mut checkout_target_cmd = Command::new("git");
+    checkout_target_cmd
+        .args(["checkout", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_target_cmd);
+
+    fs::write(repo_path.join("target-pr-seed.txt"), "seed").expect("write target seed");
+    commit_all(repo_path, metadata_commit_message);
+
+    let mut checkout_main_cmd = Command::new("git");
+    checkout_main_cmd
+        .args(["checkout", "main"])
+        .current_dir(repo_path);
+    run_success(&mut checkout_main_cmd);
+
+    assert_post_merge_flow_with_expected_pr_metadata(
+        repo_path,
+        team_name,
+        expected_title,
+        expected_body,
+        metadata_commit_message,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_post_merge_flow_push_failure_is_non_fatal_with_warning_and_debug_logging() {
+    let temp = TempDir::new().expect("temp dir");
+    let repo_path = temp.path();
+    let team_name = "alpha";
+    let swarm_bin = env!("CARGO_BIN_EXE_swarm");
+
+    init_git_repo(repo_path);
+
+    let mut rename_cmd = Command::new("git");
+    rename_cmd
+        .args(["branch", "-M", "main"])
+        .current_dir(repo_path);
+    run_success(&mut rename_cmd);
+
+    let mut project_init_cmd = Command::new(swarm_bin);
+    project_init_cmd
+        .args(["project", "init", team_name])
+        .current_dir(repo_path);
+    run_success(&mut project_init_cmd);
+
+    let team_root = repo_path.join(".swarm-hug").join(team_name);
+    write_team_tasks(&team_root);
+    commit_all(repo_path, "init project");
+
+    let mut create_target_cmd = Command::new("git");
+    create_target_cmd
+        .args(["branch", "feature-1"])
+        .current_dir(repo_path);
+    run_success(&mut create_target_cmd);
+
+    let (path_override, push_log_path, gh_log_path) =
+        install_fake_git_failing_push_and_gh(repo_path);
+    let mut run_cmd = Command::new(swarm_bin);
+    run_cmd
+        .args([
+            "--project",
+            team_name,
+            "--source-branch",
+            "main",
+            "--target-branch",
+            "feature-1",
+            "--stub",
+            "--max-sprints",
+            "1",
+            "--tasks-per-agent",
+            "1",
+            "--no-tui",
+            "run",
+        ])
+        .env("PATH", path_override)
+        .current_dir(repo_path);
+    let output = run_success(&mut run_cmd);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+
+    assert!(
+        stdout.contains("Sprint 1: assigned"),
+        "expected sprint success even when push fails. stdout:\n{}",
+        stdout
+    );
+    assert!(
+        stderr.contains("warning: failed to push 'feature-1' to origin (continuing)"),
+        "expected push warning on stderr. stderr:\n{}",
+        stderr
+    );
+
+    let push_log = fs::read_to_string(&push_log_path).expect("read push command log");
+    let push_calls = parse_logged_args(&push_log);
+    assert_eq!(
+        push_calls.len(),
+        1,
+        "expected exactly one git push call. log:\n{}",
+        push_log
+    );
+    let push_args = &push_calls[0];
+    assert!(
+        push_args.len() >= 3,
+        "expected git push args to include command and branches. args: {:?}",
+        push_args
+    );
+    let push_tail = &push_args[push_args.len() - 3..];
+    assert_eq!(
+        push_tail,
+        ["push", "origin", "feature-1"],
+        "expected git push origin feature-1. full args: {:?}",
+        push_args
+    );
+
+    let gh_calls = if gh_log_path.exists() {
+        let gh_log = fs::read_to_string(&gh_log_path).expect("read gh command log");
+        parse_logged_args(&gh_log)
+    } else {
+        Vec::new()
+    };
+    assert!(
+        gh_calls.is_empty(),
+        "gh should not be called when push fails. calls: {:?}",
+        gh_calls
+    );
+
+    let merge_log_path = find_file_named(&team_root, "merge-agent.log")
+        .unwrap_or_else(|| panic!("expected merge-agent.log under {}", team_root.display()));
+    let merge_log = fs::read_to_string(&merge_log_path).expect("read merge-agent log");
+    assert!(
+        merge_log.contains("Push failed for 'feature-1'"),
+        "expected debug log entry for push failure. log:\n{}",
+        merge_log
+    );
+    assert!(
+        merge_log.contains("error='git push failed with exit code 1'"),
+        "expected push error details in merge log. log:\n{}",
+        merge_log
+    );
+    assert!(
+        merge_log.contains("exit_code=Some(1)"),
+        "expected push exit code in merge log. log:\n{}",
+        merge_log
+    );
+    assert!(
+        merge_log.contains("stdout='simulated push stdout'"),
+        "expected push stdout in merge log. log:\n{}",
+        merge_log
+    );
+    assert!(
+        merge_log.contains("stderr='simulated push stderr'"),
+        "expected push stderr in merge log. log:\n{}",
+        merge_log
+    );
+
+    let chat_content = fs::read_to_string(team_root.join("chat.md")).expect("read chat");
+    assert!(
+        chat_content.contains("Push: failed to push 'feature-1' to origin (continuing)"),
+        "chat should record non-fatal push failure. chat:\n{}",
+        chat_content
     );
 }
 
@@ -3304,6 +4139,8 @@ fn test_nonexistent_source_branch_returns_clear_error() {
             team_name,
             "--source-branch",
             "does-not-exist",
+            "--target-branch",
+            "main",
             "--stub",
             "--max-sprints",
             "1",
@@ -3869,22 +4706,24 @@ fn test_two_step_followup_workflow() {
     let output2 = run_success(&mut run_cmd2);
     let stdout2 = strip_ansi(&String::from_utf8_lossy(&output2.stdout));
 
-    // The second run continues sprint numbering from the first run's history
-    // (inherited from feature-1), so this is Sprint 2
+    // Sprint numbering is scoped to target-branch runtime namespace, so the
+    // follow-up target starts at Sprint 1 even though source is feature-1.
     assert!(
-        stdout2.contains("Sprint 2: assigned"),
-        "Second run should have run (as Sprint 2, continuing from first run). Output:\n{}",
+        stdout2.contains("Sprint 1: assigned"),
+        "Second run should have run (as Sprint 1 for the follow-up target). Output:\n{}",
         stdout2
     );
 
     // === ASSERTIONS ===
 
-    // feature-1-follow-ups should have the sprint completion from the second run
-    // (Sprint 2, since sprint numbering continues from the first run's history)
-    let followups_log = git_stdout(repo_path, &["log", "--oneline", "-20", "feature-1-follow-ups"]);
+    // feature-1-follow-ups should have the sprint completion from the second run.
+    let followups_log = git_stdout(
+        repo_path,
+        &["log", "--oneline", "-20", "feature-1-follow-ups"],
+    );
     assert!(
-        followups_log.contains("Alpha Sprint 2: completed"),
-        "feature-1-follow-ups should have sprint 2 completion commit. Got:\n{}",
+        followups_log.contains("Alpha Sprint 1: completed"),
+        "feature-1-follow-ups should have sprint 1 completion commit. Got:\n{}",
         followups_log
     );
 
@@ -3903,7 +4742,12 @@ fn test_two_step_followup_workflow() {
     let is_ancestor = Command::new("git")
         .arg("-C")
         .arg(repo_path)
-        .args(["merge-base", "--is-ancestor", &feature1_head_after_run1, "feature-1-follow-ups"])
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            &feature1_head_after_run1,
+            "feature-1-follow-ups",
+        ])
         .output()
         .expect("git merge-base");
     assert!(
@@ -3977,7 +4821,10 @@ fn test_ensure_feature_merged_accepts_two_parent_merge() {
     // Verify main tip has 2 parents
     let parents = git_stdout(repo_path, &["rev-list", "--parents", "-1", "main"]);
     let parent_count = parents.trim().split_whitespace().count() - 1;
-    assert_eq!(parent_count, 2, "merge commit should have exactly 2 parents");
+    assert_eq!(
+        parent_count, 2,
+        "merge commit should have exactly 2 parents"
+    );
 }
 
 /// Test that ensure_feature_merged skips parent-count check when feature == target.
@@ -4052,7 +4899,11 @@ fn test_ensure_feature_merged_retry_succeeds_on_second_attempt() {
     let engine = NoopEngine;
     let first_err = merge_agent::ensure_feature_merged(&engine, "feat-retry", "main", repo_path)
         .expect_err("first attempt should fail");
-    assert!(first_err.contains("not merged"), "first attempt error: {}", first_err);
+    assert!(
+        first_err.contains("not merged"),
+        "first attempt error: {}",
+        first_err
+    );
 
     // Now perform the actual merge (simulating what the retry merge agent would do)
     let mut merge_cmd = Command::new("git");
@@ -4125,7 +4976,10 @@ fn test_ensure_feature_merged_fails_permanently_without_merge() {
     assert!(err2.contains("not merged"));
 
     // No extra retries needed - both errors are clear and consistent
-    assert_eq!(err1, err2, "error messages should be consistent across retries");
+    assert_eq!(
+        err1, err2,
+        "error messages should be consistent across retries"
+    );
 }
 
 /// Test that ensure_feature_merged detects a squash merge (1 parent) when branches differ.

@@ -1,8 +1,9 @@
 use std::env as std_env;
 use std::path::Path;
+#[cfg(test)]
 use std::process::Command;
 
-use super::cli::CliArgs;
+use super::cli::{CliArgs, Command as CliCommand};
 use super::{env, toml};
 
 /// Engine type for agent execution.
@@ -28,12 +29,16 @@ impl EngineType {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
             "stub" => Some(Self::Stub),
-            "openrouter" => Some(Self::OpenRouter { model: String::new() }),
+            "openrouter" => Some(Self::OpenRouter {
+                model: String::new(),
+            }),
             _ => {
                 if lower.starts_with("openrouter_") {
                     if let Some((prefix, model)) = trimmed.split_once('_') {
                         if prefix.eq_ignore_ascii_case("openrouter") {
-                            return Some(Self::OpenRouter { model: model.trim().to_string() });
+                            return Some(Self::OpenRouter {
+                                model: model.trim().to_string(),
+                            });
                         }
                     }
                 }
@@ -76,7 +81,11 @@ impl EngineType {
 
     /// Format a list of engine types as a comma-separated string.
     pub fn list_to_string(engines: &[Self]) -> String {
-        engines.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(",")
+        engines
+            .iter()
+            .map(|e| e.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -109,10 +118,12 @@ pub struct Config {
     pub sprints_max: usize,
     /// Project name for multi-project mode.
     pub project: Option<String>,
-    /// Source branch to fork/branch from (defaults to auto-detected main/master).
+    /// Source branch to fork/branch from.
     pub source_branch: Option<String>,
-    /// Target branch for base/merge operations (defaults to auto-detected main/master).
+    /// Target branch for base/merge operations.
     pub target_branch: Option<String>,
+    /// Whether `--target-branch` was explicitly provided by CLI.
+    pub target_branch_explicit: bool,
 }
 
 impl Default for Config {
@@ -131,6 +142,7 @@ impl Default for Config {
             project: None,
             source_branch: None,
             target_branch: None,
+            target_branch_explicit: false,
         }
     }
 }
@@ -143,6 +155,10 @@ impl Config {
     /// When a team is specified via `--team`, paths are resolved relative to
     /// `.swarm-hug/<team>/` unless explicitly overridden.
     pub fn load(cli_args: &CliArgs) -> Result<Self, ConfigError> {
+        if let Some(message) = cli_args.parse_error.as_ref() {
+            return Err(ConfigError::Validation(message.clone()));
+        }
+
         let mut config = Self::default();
 
         // Load from config file if present
@@ -173,8 +189,8 @@ impl Config {
             config.apply_project_paths(&project_name, cli_args);
         }
 
-        // Branch-flag resolution matrix
-        config.resolve_branches()?;
+        // Running sprints requires explicit source/target branch flags.
+        config.resolve_run_branches(cli_args)?;
 
         config.validate()?;
 
@@ -252,39 +268,47 @@ impl Config {
         if let Some(ref source) = args.source_branch {
             self.source_branch = Some(source.clone());
         }
-        if let Some(ref target) = args.target_branch {
-            self.target_branch = Some(target.clone());
+        let cli_target_branch = args
+            .target_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|target| !target.is_empty() && !target.starts_with('-'));
+        if let Some(target) = cli_target_branch {
+            self.target_branch = Some(target.to_string());
         }
+        self.target_branch_explicit = cli_target_branch.is_some();
     }
 
-    /// Resolve source_branch and target_branch according to the flag matrix:
-    /// - Neither flag: auto-detect main/master for both
-    /// - --source-branch only: set both source and target to that value
-    /// - --target-branch only: error
-    /// - Both flags: independent values
-    fn resolve_branches(&mut self) -> Result<(), ConfigError> {
-        match (&self.source_branch, &self.target_branch) {
-            (None, None) => {
-                // Neither flag: auto-detect for both
-                let detected = detect_target_branch();
-                self.source_branch = detected.clone();
-                self.target_branch = detected;
-            }
-            (Some(source), None) => {
-                // --source-branch only: set target to same value
-                self.target_branch = Some(source.clone());
-            }
-            (None, Some(_)) => {
-                // --target-branch only: error
-                return Err(ConfigError::Validation(
-                    "--target-branch requires --source-branch. Specify both flags explicitly.\n  Example: swarm run --source-branch main --target-branch feature-1".to_string(),
-                ));
-            }
-            (Some(_), Some(_)) => {
-                // Both flags: already set independently, nothing to do
-            }
+    fn resolve_run_branches(&mut self, cli_args: &CliArgs) -> Result<(), ConfigError> {
+        let command = cli_args.command.clone().unwrap_or(CliCommand::Run);
+        if command != CliCommand::Run {
+            return Ok(());
         }
-        Ok(())
+
+        let cli_source = cli_args
+            .source_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|source| !source.is_empty() && !source.starts_with('-'))
+            .map(ToString::to_string);
+        let cli_target = cli_args
+            .target_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|target| !target.is_empty() && !target.starts_with('-'))
+            .map(ToString::to_string);
+
+        match (cli_source, cli_target) {
+            (Some(source), Some(target)) => {
+                self.source_branch = Some(source);
+                self.target_branch = Some(target);
+                self.target_branch_explicit = true;
+                Ok(())
+            }
+            _ => Err(ConfigError::Validation(
+                "swarm run requires both --source-branch and --target-branch.\n  Example: swarm run --source-branch main --target-branch feature-1".to_string(),
+            )),
+        }
     }
 
     /// Merge values from another config (for file-based config).
@@ -300,6 +324,7 @@ impl Config {
         self.sprints_max = other.sprints_max;
         self.source_branch = other.source_branch.clone();
         self.target_branch = other.target_branch.clone();
+        self.target_branch_explicit = other.target_branch_explicit;
     }
 
     /// Generate default swarm.toml content.
@@ -336,7 +361,10 @@ max = 0
         if self.engine_stub_mode {
             EngineType::Stub
         } else {
-            self.engine_types.first().cloned().unwrap_or(EngineType::Claude)
+            self.engine_types
+                .first()
+                .cloned()
+                .unwrap_or(EngineType::Claude)
         }
     }
 
@@ -355,7 +383,10 @@ max = 0
         }
         // Use thread_rng for random selection
         use rand::seq::SliceRandom;
-        self.engine_types.choose(&mut rand::thread_rng()).cloned().unwrap()
+        self.engine_types
+            .choose(&mut rand::thread_rng())
+            .cloned()
+            .unwrap()
     }
 
     /// Get a display string for the configured engines.
@@ -398,10 +429,7 @@ max = 0
     }
 }
 
-pub(crate) fn detect_target_branch() -> Option<String> {
-    detect_target_branch_in(None)
-}
-
+#[cfg(test)]
 pub(crate) fn detect_target_branch_in(repo_root: Option<&Path>) -> Option<String> {
     if git_branch_exists(repo_root, "main") {
         return Some("main".to_string());
@@ -412,6 +440,7 @@ pub(crate) fn detect_target_branch_in(repo_root: Option<&Path>) -> Option<String
     git_current_branch(repo_root)
 }
 
+#[cfg(test)]
 fn git_branch_exists(repo_root: Option<&Path>, branch: &str) -> bool {
     let mut cmd = Command::new("git");
     if let Some(root) = repo_root {
@@ -425,6 +454,7 @@ fn git_branch_exists(repo_root: Option<&Path>, branch: &str) -> bool {
     }
 }
 
+#[cfg(test)]
 fn git_current_branch(repo_root: Option<&Path>) -> Option<String> {
     let mut cmd = Command::new("git");
     if let Some(root) = repo_root {

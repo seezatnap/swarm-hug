@@ -130,7 +130,12 @@ impl TuiApp {
     }
 
     /// Handle a key event.
-    pub(super) fn handle_key(&mut self, key: KeyCode, modifiers: KeyModifiers, inner_height: usize) {
+    pub(super) fn handle_key(
+        &mut self,
+        key: KeyCode,
+        modifiers: KeyModifiers,
+        inner_height: usize,
+    ) {
         // Handle quit modal first
         if self.show_quit_modal {
             match key {

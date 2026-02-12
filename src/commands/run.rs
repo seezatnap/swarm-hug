@@ -13,8 +13,8 @@ use swarm::run_hash;
 use swarm::shutdown;
 use swarm::team;
 
-use crate::tail::tail_follow;
 use crate::runner::run_sprint;
+use crate::tail::tail_follow;
 
 /// Run sprints until done or max-sprints reached.
 /// Maximum consecutive sprints where all tasks fail before stopping.
@@ -22,11 +22,17 @@ const MAX_CONSECUTIVE_FAILURES: usize = 3;
 
 pub fn cmd_run(config: &Config) -> Result<(), String> {
     team::init_root()?;
-    println!("{} {} (max_sprints={}, engine={})...",
-             emoji::ROCKET,
-             color::label("Running swarm"),
-             color::number(if config.sprints_max == 0 { "unlimited".to_string() } else { config.sprints_max.to_string() }),
-             color::info(&config.engines_display()));
+    println!(
+        "{} {} (max_sprints={}, engine={})...",
+        emoji::ROCKET,
+        color::label("Running swarm"),
+        color::number(if config.sprints_max == 0 {
+            "unlimited".to_string()
+        } else {
+            config.sprints_max.to_string()
+        }),
+        color::info(&config.engines_display())
+    );
 
     // Clear chat.md and write boot message before the first sprint
     if should_reset_chat() {
@@ -61,7 +67,10 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
 
         // Check for shutdown request before starting new sprint
         if shutdown::requested() {
-            println!("{} Shutdown requested, not starting new sprint.", emoji::STOP);
+            println!(
+                "{} Shutdown requested, not starting new sprint.",
+                emoji::STOP
+            );
             interrupted = true;
             break;
         }
@@ -98,17 +107,24 @@ pub fn cmd_run(config: &Config) -> Result<(), String> {
             consecutive_failures += 1;
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                 println!();
-                println!("{} {}: {} consecutive sprints with all tasks failing.",
-                         emoji::WARNING,
-                         color::warning("WARNING"),
-                         color::failed(&consecutive_failures.to_string()));
+                println!(
+                    "{} {}: {} consecutive sprints with all tasks failing.",
+                    emoji::WARNING,
+                    color::warning("WARNING"),
+                    color::failed(&consecutive_failures.to_string())
+                );
                 println!("   This usually indicates a configuration or authentication issue.");
                 println!("   Please check:");
-                println!("     - CLI authentication (run 'claude' or 'codex login' to authenticate)");
+                println!(
+                    "     - CLI authentication (run 'claude' or 'codex login' to authenticate)"
+                );
                 println!("     - Engine configuration (--engine flag or swarm.toml)");
                 println!("     - File permissions in worktrees directory");
                 println!();
-                println!("{} Stopping to prevent further failed sprints.", emoji::STOP);
+                println!(
+                    "{} Stopping to prevent further failed sprints.",
+                    emoji::STOP
+                );
                 break;
             }
         } else {
@@ -150,8 +166,7 @@ pub fn cmd_run_tui(config: &Config) -> Result<(), String> {
 
     let args = build_tui_subprocess_args(config);
 
-    run_tui_with_subprocess(&config.files_chat, args, true)
-        .map_err(|e| format!("TUI error: {}", e))
+    run_tui_with_subprocess(&config.files_chat, args, true).map_err(|e| format!("TUI error: {}", e))
 }
 
 /// Build command-line args to re-run swarm as a --no-tui subprocess.
@@ -204,8 +219,8 @@ fn should_skip_tail() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{build_tui_subprocess_args, should_reset_chat};
-    use swarm::config::Config;
     use std::sync::Mutex;
+    use swarm::config::Config;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -239,11 +254,18 @@ mod tests {
         let mut config = Config::default();
         config.source_branch = Some("feature-x".to_string());
         config.target_branch = Some("main".to_string());
+        config.target_branch_explicit = true;
 
         let args = build_tui_subprocess_args(&config);
 
-        assert_eq!(flag_value(&args, "--source-branch"), Some("feature-x".to_string()));
-        assert_eq!(flag_value(&args, "--target-branch"), Some("main".to_string()));
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("feature-x".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--target-branch"),
+            Some("main".to_string())
+        );
     }
 
     #[test]
@@ -266,7 +288,10 @@ mod tests {
 
         let args = build_tui_subprocess_args(&config);
 
-        assert_eq!(flag_value(&args, "--source-branch"), Some("develop".to_string()));
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("develop".to_string())
+        );
         assert!(!has_flag(&args, "--target-branch"));
     }
 
@@ -275,11 +300,18 @@ mod tests {
         let mut config = Config::default();
         config.source_branch = Some("main".to_string());
         config.target_branch = Some("feature-1".to_string());
+        config.target_branch_explicit = true;
 
         let args = build_tui_subprocess_args(&config);
 
-        assert_eq!(flag_value(&args, "--source-branch"), Some("main".to_string()));
-        assert_eq!(flag_value(&args, "--target-branch"), Some("feature-1".to_string()));
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--target-branch"),
+            Some("feature-1".to_string())
+        );
     }
 
     #[test]
@@ -287,12 +319,73 @@ mod tests {
         let mut config = Config::default();
         config.source_branch = Some("main".to_string());
         config.target_branch = Some("feature-1".to_string());
+        config.target_branch_explicit = true;
 
         let args = build_tui_subprocess_args(&config);
 
         let source_pos = args.iter().position(|a| a == "--source-branch").unwrap();
         let target_pos = args.iter().position(|a| a == "--target-branch").unwrap();
-        assert!(source_pos < target_pos, "--source-branch should appear before --target-branch");
+        assert!(
+            source_pos < target_pos,
+            "--source-branch should appear before --target-branch"
+        );
+    }
+
+    #[test]
+    fn tui_args_include_target_even_when_not_explicit() {
+        let mut config = Config::default();
+        config.source_branch = Some("main".to_string());
+        config.target_branch = Some("main".to_string());
+        config.target_branch_explicit = false;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--target-branch"),
+            Some("main".to_string())
+        );
+    }
+
+    #[test]
+    fn tui_args_include_derived_target_branch_when_not_explicit() {
+        let mut config = Config::default();
+        config.source_branch = Some("develop".to_string());
+        config.target_branch = Some("develop".to_string());
+        config.target_branch_explicit = false;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("develop".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--target-branch"),
+            Some("develop".to_string())
+        );
+    }
+
+    #[test]
+    fn tui_args_include_target_branch_when_not_explicit() {
+        let mut config = Config::default();
+        config.source_branch = Some("main".to_string());
+        config.target_branch = Some("feature-1".to_string());
+        config.target_branch_explicit = false;
+
+        let args = build_tui_subprocess_args(&config);
+
+        assert_eq!(
+            flag_value(&args, "--source-branch"),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--target-branch"),
+            Some("feature-1".to_string())
+        );
     }
 
     #[test]
@@ -319,8 +412,14 @@ mod tests {
         assert_eq!(flag_value(&args, "--project"), Some("my-proj".to_string()));
         assert_eq!(flag_value(&args, "--max-sprints"), Some("5".to_string()));
         assert_eq!(flag_value(&args, "--max-agents"), Some("4".to_string()));
-        assert_eq!(flag_value(&args, "--tasks-per-agent"), Some("3".to_string()));
-        assert_eq!(flag_value(&args, "--agent-timeout"), Some("1800".to_string()));
+        assert_eq!(
+            flag_value(&args, "--tasks-per-agent"),
+            Some("3".to_string())
+        );
+        assert_eq!(
+            flag_value(&args, "--agent-timeout"),
+            Some("1800".to_string())
+        );
         assert!(has_flag(&args, "--stub"));
     }
 }

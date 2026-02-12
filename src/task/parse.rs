@@ -35,9 +35,12 @@ impl TaskList {
         // Any remaining pending lines after the last task become footer
         let footer = pending_prefix;
 
-        Self { header, tasks, footer }
+        Self {
+            header,
+            tasks,
+            footer,
+        }
     }
-
 }
 
 impl fmt::Display for TaskList {
@@ -116,7 +119,10 @@ pub(super) fn parse_task_line(line: &str, line_number: usize) -> Option<Task> {
         // Assigned: - [A] description
         let initial = marker.chars().next()?;
         if agent::is_valid_initial(initial) {
-            (TaskStatus::Assigned(initial.to_ascii_uppercase()), rest.to_string())
+            (
+                TaskStatus::Assigned(initial.to_ascii_uppercase()),
+                rest.to_string(),
+            )
         } else {
             return None;
         }

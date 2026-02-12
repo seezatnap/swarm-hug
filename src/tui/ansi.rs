@@ -46,7 +46,9 @@ pub(super) fn truncate_and_parse_ansi_with_highlight(
     if is_current_match {
         spans.push(Span::styled(
             "\u{25b6} ",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ));
         visible_count += 2;
     } else if is_match {
@@ -175,7 +177,10 @@ mod tests {
     fn test_strip_ansi() {
         assert_eq!(strip_ansi("Hello"), "Hello");
         assert_eq!(strip_ansi("\x1b[32mGreen\x1b[0m"), "Green");
-        assert_eq!(strip_ansi("\x1b[1;32mBold Green\x1b[0m text"), "Bold Green text");
+        assert_eq!(
+            strip_ansi("\x1b[1;32mBold Green\x1b[0m text"),
+            "Bold Green text"
+        );
     }
 
     #[test]

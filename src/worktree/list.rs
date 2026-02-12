@@ -12,8 +12,8 @@ pub fn list_worktrees(worktrees_dir: &Path) -> Result<Vec<Worktree>, String> {
         return Ok(worktrees);
     }
 
-    let entries = fs::read_dir(worktrees_dir)
-        .map_err(|e| format!("failed to read worktrees dir: {}", e))?;
+    let entries =
+        fs::read_dir(worktrees_dir).map_err(|e| format!("failed to read worktrees dir: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
@@ -24,7 +24,11 @@ pub fn list_worktrees(worktrees_dir: &Path) -> Result<Vec<Worktree>, String> {
         }
 
         // Parse directory name: agent-<initial>-<name>
-        let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let dir_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         if let Some(rest) = dir_name.strip_prefix("agent-") {
             let parts: Vec<&str> = rest.splitn(2, '-').collect();
             if parts.len() == 2 {

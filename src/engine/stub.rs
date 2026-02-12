@@ -24,7 +24,10 @@ impl StubEngine {
 
     /// Get the output file path for a given turn and agent.
     fn output_path(&self, turn_number: usize, agent_initial: char) -> String {
-        format!("{}/turn{}-agent{}.md", self.output_dir, turn_number, agent_initial)
+        format!(
+            "{}/turn{}-agent{}.md",
+            self.output_dir, turn_number, agent_initial
+        )
     }
 }
 
@@ -38,8 +41,7 @@ impl Engine for StubEngine {
         _team_dir: Option<&str>,
     ) -> EngineResult {
         // Get agent initial from name
-        let initial = crate::agent::initial_from_name(agent_name)
-            .unwrap_or('?');
+        let initial = crate::agent::initial_from_name(agent_name).unwrap_or('?');
 
         // Ensure output directory exists
         if let Err(e) = fs::create_dir_all(&self.output_dir) {
@@ -83,13 +85,7 @@ mod tests {
         let output_dir = tmp_dir.path().join("loop");
         let engine = StubEngine::new(output_dir.to_str().unwrap());
 
-        let result = engine.execute(
-            "Aaron",
-            "Write tests",
-            tmp_dir.path(),
-            1,
-            None,
-        );
+        let result = engine.execute("Aaron", "Write tests", tmp_dir.path(), 1, None);
 
         assert!(result.success);
         assert!(result.output.contains("OK"));

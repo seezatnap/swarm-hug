@@ -252,29 +252,18 @@ pub(crate) fn commit_files_in_worktree_on_branch(
 /// # Arguments
 /// * `sprint_branch` - Sprint/feature branch name to commit on
 /// * `tasks_file` - Path to the team's tasks.md file
-/// * `sprint_history_file` - Path to the team's sprint-history.json file
 /// * `team_name` - Formatted team name for commit message (e.g., "Greenfield")
 /// * `sprint_number` - The historical sprint number for this team
 pub(crate) fn commit_task_assignments(
     worktree_root: &Path,
     sprint_branch: &str,
     tasks_file: &str,
-    sprint_history_file: &str,
-    team_state_file: &str,
     team_name: &str,
     sprint_number: usize,
 ) -> Result<(), String> {
     let commit_msg = format!("{} Sprint {}: task assignments", team_name, sprint_number);
-    if commit_files_in_worktree_on_branch(
-        worktree_root,
-        sprint_branch,
-        &[
-            tasks_file,
-            sprint_history_file,
-            team_state_file,
-        ],
-        &commit_msg,
-    )? {
+    if commit_files_in_worktree_on_branch(worktree_root, sprint_branch, &[tasks_file], &commit_msg)?
+    {
         println!("  Committed task assignments to git.");
     }
     Ok(())
@@ -295,12 +284,8 @@ pub(crate) fn commit_sprint_completion(
     sprint_number: usize,
 ) -> Result<(), String> {
     let commit_msg = format!("{} Sprint {}: completed", team_name, sprint_number);
-    if commit_files_in_worktree_on_branch(
-        worktree_root,
-        sprint_branch,
-        &[tasks_file],
-        &commit_msg,
-    )? {
+    if commit_files_in_worktree_on_branch(worktree_root, sprint_branch, &[tasks_file], &commit_msg)?
+    {
         println!("  Committed sprint completion to git.");
     }
     Ok(())
@@ -370,6 +355,238 @@ pub(crate) fn get_git_log_range_in(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PushBranchResult {
+    pub success: bool,
+    pub branch: String,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub error: Option<String>,
+}
+
+impl PushBranchResult {
+    fn from_output(branch: String, output: process::Output) -> Self {
+        let success = output.status.success();
+        let exit_code = output.status.code();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let error = if success {
+            None
+        } else {
+            Some(format!(
+                "git push failed with exit code {}",
+                exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            ))
+        };
+
+        Self {
+            success,
+            branch,
+            exit_code,
+            stdout,
+            stderr,
+            error,
+        }
+    }
+
+    fn failure(branch: String, error: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            branch,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            error: Some(error.into()),
+        }
+    }
+}
+
+pub(crate) fn push_branch_to_remote(repo_dir: &Path, target_branch: &str) -> PushBranchResult {
+    let branch = target_branch.trim().to_string();
+    if branch.is_empty() {
+        return PushBranchResult::failure(branch, "target branch name is empty");
+    }
+
+    match process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["push", "origin", branch.as_str()])
+        .output()
+    {
+        Ok(output) => PushBranchResult::from_output(branch, output),
+        Err(e) => PushBranchResult::failure(branch, format!("failed to run git push: {}", e)),
+    }
+}
+
+/// Get a one-line commit log between two refs (`source..target`) for PR metadata generation.
+pub(crate) fn get_commit_log_between(
+    repo_dir: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<String, String> {
+    let source = source_branch.trim();
+    let target = target_branch.trim();
+    if source.is_empty() || target.is_empty() {
+        return Err("source and target branch names must be non-empty".to_string());
+    }
+
+    let range = format!("{}..{}", source, target);
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["log", "--oneline", &range])
+        .output()
+        .map_err(|e| format!("failed to run git log --oneline: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git log --oneline failed: {}", stderr.trim()))
+    }
+}
+
+/// Result of attempting to create a pull request with GitHub CLI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum PullRequestCreateResult {
+    /// Pull request command succeeded.
+    Created {
+        /// PR URL parsed from stdout (usually first non-empty line).
+        url: Option<String>,
+        /// Raw stdout from `gh pr create`.
+        stdout: String,
+        /// Raw stderr from `gh pr create`.
+        stderr: String,
+    },
+    /// Pull request command ran but failed.
+    Failed {
+        /// Raw stdout from `gh pr create`.
+        stdout: String,
+        /// Raw stderr from `gh pr create`.
+        stderr: String,
+        /// Process exit code if available.
+        exit_code: Option<i32>,
+    },
+    /// Pull request creation was intentionally skipped.
+    Skipped {
+        /// Human-readable reason for skip.
+        reason: String,
+    },
+}
+
+#[allow(dead_code)]
+fn extract_pull_request_url(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
+fn gh_probe_command_for_platform(is_windows: bool) -> &'static str {
+    if is_windows {
+        "where"
+    } else {
+        "which"
+    }
+}
+
+fn gh_probe_command() -> &'static str {
+    gh_probe_command_for_platform(cfg!(windows))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn create_pull_request_with_commands(
+    title: &str,
+    body: &str,
+    source_branch: &str,
+    target_branch: &str,
+    probe_command: &str,
+    gh_command: &str,
+) -> PullRequestCreateResult {
+    let probe_output = process::Command::new(probe_command)
+        .arg(gh_command)
+        .output();
+
+    match probe_output {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let reason = if stderr.is_empty() {
+                format!("'{}' not found on PATH", gh_command)
+            } else {
+                format!("'{}' not found on PATH: {}", gh_command, stderr)
+            };
+            return PullRequestCreateResult::Skipped { reason };
+        }
+        Err(e) => {
+            return PullRequestCreateResult::Skipped {
+                reason: format!("failed to check for '{}': {}", gh_command, e),
+            };
+        }
+    }
+
+    let output = process::Command::new(gh_command)
+        .args([
+            "pr",
+            "create",
+            "--title",
+            title,
+            "--body",
+            body,
+            "--base",
+            source_branch,
+            "--head",
+            target_branch,
+        ])
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if output.status.success() {
+                PullRequestCreateResult::Created {
+                    url: extract_pull_request_url(&stdout),
+                    stdout,
+                    stderr,
+                }
+            } else {
+                PullRequestCreateResult::Failed {
+                    stdout,
+                    stderr,
+                    exit_code: output.status.code(),
+                }
+            }
+        }
+        Err(e) => PullRequestCreateResult::Failed {
+            stdout: String::new(),
+            stderr: format!("failed to run gh pr create: {}", e),
+            exit_code: None,
+        },
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn create_pull_request(
+    title: &str,
+    body: &str,
+    source_branch: &str,
+    target_branch: &str,
+) -> PullRequestCreateResult {
+    create_pull_request_with_commands(
+        title,
+        body,
+        source_branch,
+        target_branch,
+        gh_probe_command(),
+        "gh",
+    )
+}
 pub(crate) const MIN_GIT_VERSION: (u32, u32, u32) = (2, 48, 0);
 
 pub(crate) fn ensure_min_git_version() -> Result<(), String> {
@@ -403,9 +620,12 @@ pub(crate) fn ensure_min_git_version() -> Result<(), String> {
 }
 
 fn parse_git_version(output: &str) -> Option<(u32, u32, u32)> {
-    let token = output
-        .split_whitespace()
-        .find(|part| part.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))?;
+    let token = output.split_whitespace().find(|part| {
+        part.chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+    })?;
 
     let mut nums = Vec::new();
     for part in token.split('.') {
@@ -432,13 +652,16 @@ fn parse_git_version(output: &str) -> Option<(u32, u32, u32)> {
 
 fn version_lt(current: (u32, u32, u32), min: (u32, u32, u32)) -> bool {
     current.0 < min.0
-        || (current.0 == min.0
-            && (current.1 < min.1 || (current.1 == min.1 && current.2 < min.2)))
+        || (current.0 == min.0 && (current.1 < min.1 || (current.1 == min.1 && current.2 < min.2)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_branch_checked_out, get_short_commit_for_ref_in};
+    use super::{
+        create_pull_request_with_commands, ensure_branch_checked_out, get_commit_log_between,
+        get_short_commit_for_ref_in, gh_probe_command_for_platform, push_branch_to_remote,
+        PullRequestCreateResult,
+    };
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -468,15 +691,17 @@ mod tests {
 
         run_git(repo_dir, &["init"]);
         run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
-        run_git(repo_dir, &["config", "user.email", "swarm-test@example.com"]);
+        run_git(
+            repo_dir,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
 
         fs::write(repo_dir.join("README.md"), "hello").expect("write file");
         run_git(repo_dir, &["add", "."]);
         run_git(repo_dir, &["commit", "-m", "init"]);
         run_git(repo_dir, &["branch", "feature"]);
 
-        ensure_branch_checked_out(repo_dir, "feature")
-            .expect("should checkout feature branch");
+        ensure_branch_checked_out(repo_dir, "feature").expect("should checkout feature branch");
         let branch = run_git(repo_dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
         assert_eq!(branch.trim(), "feature");
     }
@@ -488,7 +713,10 @@ mod tests {
 
         run_git(repo_dir, &["init"]);
         run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
-        run_git(repo_dir, &["config", "user.email", "swarm-test@example.com"]);
+        run_git(
+            repo_dir,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
         fs::write(repo_dir.join("README.md"), "hello").expect("write file");
         run_git(repo_dir, &["add", "."]);
         run_git(repo_dir, &["commit", "-m", "init"]);
@@ -498,6 +726,165 @@ mod tests {
             get_short_commit_for_ref_in(repo_dir, "HEAD").expect("short commit should exist");
         assert!(!short.is_empty());
         assert!(full.starts_with(&short));
+    }
+
+    #[test]
+    fn test_push_branch_to_remote_pushes_requested_branch() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path();
+        let repo_dir = root.join("local");
+        let remote_dir = root.join("remote.git");
+
+        fs::create_dir_all(&repo_dir).expect("create local repo dir");
+        run_git(
+            root,
+            &["init", "--bare", remote_dir.to_str().expect("remote path")],
+        );
+        run_git(&repo_dir, &["init"]);
+        run_git(&repo_dir, &["config", "user.name", "Swarm Test"]);
+        run_git(
+            &repo_dir,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
+
+        fs::write(repo_dir.join("README.md"), "hello").expect("write file");
+        run_git(&repo_dir, &["add", "."]);
+        run_git(&repo_dir, &["commit", "-m", "init"]);
+
+        run_git(
+            &repo_dir,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_dir.to_str().expect("remote path"),
+            ],
+        );
+        run_git(&repo_dir, &["checkout", "-b", "release"]);
+        fs::write(repo_dir.join("release.txt"), "release").expect("write file");
+        run_git(&repo_dir, &["add", "."]);
+        run_git(&repo_dir, &["commit", "-m", "release work"]);
+
+        run_git(&repo_dir, &["checkout", "-b", "other"]);
+        fs::write(repo_dir.join("other.txt"), "other").expect("write file");
+        run_git(&repo_dir, &["add", "."]);
+        run_git(&repo_dir, &["commit", "-m", "other work"]);
+
+        let result = push_branch_to_remote(&repo_dir, "release");
+        assert!(
+            result.success,
+            "expected push success, got error: {:?}\nstderr:\n{}",
+            result.error, result.stderr
+        );
+        assert_eq!(result.branch, "release");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.error.is_none());
+
+        let release_ref = Command::new("git")
+            .arg("--git-dir")
+            .arg(&remote_dir)
+            .args(["show-ref", "--verify", "refs/heads/release"])
+            .output()
+            .expect("check release ref");
+        assert!(
+            release_ref.status.success(),
+            "release branch missing on remote\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&release_ref.stdout),
+            String::from_utf8_lossy(&release_ref.stderr)
+        );
+
+        let other_ref = Command::new("git")
+            .arg("--git-dir")
+            .arg(&remote_dir)
+            .args(["show-ref", "--verify", "refs/heads/other"])
+            .output()
+            .expect("check other ref");
+        assert!(
+            !other_ref.status.success(),
+            "unexpectedly pushed 'other' branch\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&other_ref.stdout),
+            String::from_utf8_lossy(&other_ref.stderr)
+        );
+    }
+
+    #[test]
+    fn test_push_branch_to_remote_captures_failure_details() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo_dir = temp.path();
+
+        run_git(repo_dir, &["init"]);
+        run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
+        run_git(
+            repo_dir,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
+        fs::write(repo_dir.join("README.md"), "hello").expect("write file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "init"]);
+
+        let result = push_branch_to_remote(repo_dir, "main");
+        assert!(!result.success, "push should fail without origin remote");
+        assert_eq!(result.branch, "main");
+        assert!(result.exit_code.is_some());
+        assert!(
+            !result.stderr.trim().is_empty(),
+            "stderr should be captured"
+        );
+        assert!(
+            result.error.is_some(),
+            "failure should include structured error"
+        );
+    }
+
+    #[test]
+    fn test_push_branch_to_remote_rejects_empty_branch_name() {
+        let temp = TempDir::new().expect("temp dir");
+        let result = push_branch_to_remote(temp.path(), "   ");
+        assert!(!result.success);
+        assert_eq!(result.exit_code, None);
+        assert_eq!(result.branch, "");
+        assert_eq!(result.error.as_deref(), Some("target branch name is empty"));
+    }
+
+    #[test]
+    fn test_get_commit_log_between_returns_oneline_log() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo_dir = temp.path();
+
+        run_git(repo_dir, &["init"]);
+        run_git(repo_dir, &["config", "user.name", "Swarm Test"]);
+        run_git(
+            repo_dir,
+            &["config", "user.email", "swarm-test@example.com"],
+        );
+
+        fs::write(repo_dir.join("README.md"), "init").expect("write file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "init"]);
+        run_git(repo_dir, &["branch", "-M", "main"]);
+
+        run_git(repo_dir, &["checkout", "-b", "source-branch"]);
+        fs::write(repo_dir.join("source.txt"), "source").expect("write source file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "source commit"]);
+
+        run_git(repo_dir, &["checkout", "-b", "target-branch"]);
+        fs::write(repo_dir.join("target.txt"), "target").expect("write target file");
+        run_git(repo_dir, &["add", "."]);
+        run_git(repo_dir, &["commit", "-m", "target commit"]);
+
+        let log = get_commit_log_between(repo_dir, "source-branch", "target-branch")
+            .expect("get commit log");
+        assert!(
+            log.contains("target commit"),
+            "expected target commit in oneline log, got: {}",
+            log
+        );
+        assert!(
+            !log.contains("source commit"),
+            "range source..target should not include source-only commit, got: {}",
+            log
+        );
     }
 
     #[test]
@@ -511,5 +898,198 @@ mod tests {
         let parsed =
             super::parse_git_version("git version 2.48.0.windows.1").expect("parse version");
         assert_eq!(parsed, (2, 48, 0));
+    }
+
+    #[test]
+    fn test_gh_probe_command_for_platform_uses_windows_where() {
+        assert_eq!(gh_probe_command_for_platform(true), "where");
+        assert_eq!(gh_probe_command_for_platform(false), "which");
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, content: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, content).expect("write script");
+        let mut perms = fs::metadata(path).expect("script metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).expect("set script permissions");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_pull_request_builds_expected_command() {
+        let temp = TempDir::new().expect("temp dir");
+        let which_path = temp.path().join("which-gh");
+        let gh_path = temp.path().join("gh");
+        let args_path = temp.path().join("gh-args.txt");
+
+        write_executable_script(&which_path, "#!/bin/sh\necho \"$1\"\n");
+        write_executable_script(
+            &gh_path,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\necho \"https://github.com/example/repo/pull/42\"\n",
+                args_path.display()
+            ),
+        );
+
+        let result = create_pull_request_with_commands(
+            "Add sprint automation",
+            "Generated body",
+            "source-branch",
+            "target-branch",
+            which_path.to_str().expect("which path"),
+            gh_path.to_str().expect("gh path"),
+        );
+
+        match result {
+            PullRequestCreateResult::Created {
+                url,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(
+                    url,
+                    Some("https://github.com/example/repo/pull/42".to_string())
+                );
+                assert!(stdout.contains("https://github.com/example/repo/pull/42"));
+                assert!(stderr.is_empty(), "unexpected stderr: {}", stderr);
+            }
+            other => panic!("expected Created, got {:?}", other),
+        }
+
+        let args_file = fs::read_to_string(&args_path).expect("read gh args");
+        let args: Vec<&str> = args_file.lines().collect();
+        assert_eq!(
+            args,
+            vec![
+                "pr",
+                "create",
+                "--title",
+                "Add sprint automation",
+                "--body",
+                "Generated body",
+                "--base",
+                "source-branch",
+                "--head",
+                "target-branch",
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_pull_request_supports_windows_probe_command() {
+        let temp = TempDir::new().expect("temp dir");
+        let where_path = temp.path().join("where-gh");
+        let where_args_path = temp.path().join("where-args.txt");
+        let gh_path = temp.path().join("gh");
+
+        write_executable_script(
+            &where_path,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                where_args_path.display()
+            ),
+        );
+        write_executable_script(
+            &gh_path,
+            "#!/bin/sh\necho \"https://github.com/example/repo/pull/99\"\n",
+        );
+
+        let result = create_pull_request_with_commands(
+            "title",
+            "body",
+            "source",
+            "target",
+            where_path.to_str().expect("where path"),
+            gh_path.to_str().expect("gh path"),
+        );
+
+        match result {
+            PullRequestCreateResult::Created { url, .. } => {
+                assert_eq!(
+                    url,
+                    Some("https://github.com/example/repo/pull/99".to_string())
+                );
+            }
+            other => panic!("expected Created, got {:?}", other),
+        }
+
+        let probe_args_file = fs::read_to_string(&where_args_path).expect("read where args");
+        let probe_args: Vec<&str> = probe_args_file.lines().collect();
+        assert_eq!(probe_args, vec![gh_path.to_str().expect("gh path")]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_pull_request_skips_when_gh_missing() {
+        let temp = TempDir::new().expect("temp dir");
+        let which_path = temp.path().join("which-missing-gh");
+        let gh_path = temp.path().join("gh");
+        let marker_path = temp.path().join("gh-called.txt");
+
+        write_executable_script(&which_path, "#!/bin/sh\nexit 1\n");
+        write_executable_script(
+            &gh_path,
+            &format!("#!/bin/sh\necho called > \"{}\"\n", marker_path.display()),
+        );
+
+        let result = create_pull_request_with_commands(
+            "title",
+            "body",
+            "source",
+            "target",
+            which_path.to_str().expect("which path"),
+            gh_path.to_str().expect("gh path"),
+        );
+
+        match result {
+            PullRequestCreateResult::Skipped { reason } => {
+                assert!(
+                    reason.contains("not found on PATH"),
+                    "unexpected skip reason: {}",
+                    reason
+                );
+            }
+            other => panic!("expected Skipped, got {:?}", other),
+        }
+        assert!(!marker_path.exists(), "gh should not have been executed");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_create_pull_request_returns_failure_data() {
+        let temp = TempDir::new().expect("temp dir");
+        let which_path = temp.path().join("which-gh");
+        let gh_path = temp.path().join("gh-fail");
+
+        write_executable_script(&which_path, "#!/bin/sh\necho \"$1\"\n");
+        write_executable_script(
+            &gh_path,
+            "#!/bin/sh\necho \"validation failed\" 1>&2\nexit 1\n",
+        );
+
+        let result = create_pull_request_with_commands(
+            "title",
+            "body",
+            "source",
+            "target",
+            which_path.to_str().expect("which path"),
+            gh_path.to_str().expect("gh path"),
+        );
+
+        match result {
+            PullRequestCreateResult::Failed {
+                stdout,
+                stderr,
+                exit_code,
+            } => {
+                assert!(stdout.is_empty(), "unexpected stdout: {}", stdout);
+                assert!(stderr.contains("validation failed"));
+                assert_eq!(exit_code, Some(1));
+            }
+            other => panic!("expected Failed, got {:?}", other),
+        }
     }
 }

@@ -24,10 +24,7 @@ pub(super) fn git_repo_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
-pub(super) fn repair_worktree_links(
-    repo_root: &Path,
-    worktree_path: &Path,
-) -> Result<(), String> {
+pub(super) fn repair_worktree_links(repo_root: &Path, worktree_path: &Path) -> Result<(), String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(repo_root)
@@ -57,8 +54,10 @@ pub(super) fn ensure_head(repo_root: &Path) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        Err("git repo has no commits; create an initial commit before creating worktrees"
-            .to_string())
+        Err(
+            "git repo has no commits; create an initial commit before creating worktrees"
+                .to_string(),
+        )
     }
 }
 
@@ -615,9 +614,8 @@ fn checkout_branch_with_merge_recovery(repo_root: &Path, target: &str) -> Result
             }
 
             abort_merge_if_in_progress(repo_root)?;
-            checkout_branch(repo_root, target).map_err(|retry| {
-                format!("{} (after attempting git merge --abort)", retry)
-            })
+            checkout_branch(repo_root, target)
+                .map_err(|retry| format!("{} (after attempting git merge --abort)", retry))
         }
     }
 }
@@ -673,11 +671,20 @@ pub fn merge_agent_branch_in(
     let merge = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["merge", "--no-ff", "-m", &format!("Merge {}", branch), &branch])
+        .args([
+            "merge",
+            "--no-ff",
+            "-m",
+            &format!("Merge {}", branch),
+            &branch,
+        ])
         .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
         .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
         .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
-        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("agent-{}@swarm.local", initial),
+        )
         .output();
 
     match merge {
@@ -740,11 +747,20 @@ pub fn merge_agent_branch_in_with_ctx(
     let merge = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["merge", "--no-ff", "-m", &format!("Merge {}", branch), &branch])
+        .args([
+            "merge",
+            "--no-ff",
+            "-m",
+            &format!("Merge {}", branch),
+            &branch,
+        ])
         .env("GIT_AUTHOR_NAME", format!("Agent {}", agent_name))
         .env("GIT_AUTHOR_EMAIL", format!("agent-{}@swarm.local", initial))
         .env("GIT_COMMITTER_NAME", format!("Agent {}", agent_name))
-        .env("GIT_COMMITTER_EMAIL", format!("agent-{}@swarm.local", initial))
+        .env(
+            "GIT_COMMITTER_EMAIL",
+            format!("agent-{}@swarm.local", initial),
+        )
         .output();
 
     match merge {
@@ -925,7 +941,13 @@ fn cleanup_untracked_swarm_hug_files(repo_root: &Path) -> Result<(), String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["ls-files", "--others", "--exclude-standard", "--", ".swarm-hug"])
+        .args([
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            ".swarm-hug",
+        ])
         .output()
         .map_err(|e| format!("failed to list untracked files: {}", e))?;
 
@@ -1043,16 +1065,12 @@ mod tests {
     use std::path::Path;
     use std::process::{Command, Output};
 
-    use tempfile::TempDir;
     use crate::run_context::RunContext;
+    use tempfile::TempDir;
 
     use super::{
-        branch_is_merged_in,
-        create_feature_branch_in,
-        merge_agent_branch_in,
-        merge_agent_branch_in_with_ctx,
-        merge_feature_branch_in,
-        parse_worktrees_with_branch,
+        branch_is_merged_in, create_feature_branch_in, merge_agent_branch_in,
+        merge_agent_branch_in_with_ctx, merge_feature_branch_in, parse_worktrees_with_branch,
         MergeResult,
     };
 
@@ -1123,7 +1141,10 @@ branch refs/heads/agent-aaron
 ";
         let result = parse_worktrees_with_branch(porcelain, "agent-diana");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "/repo/.swarm-hug/greenfield/worktrees/agent-D-Diana");
+        assert_eq!(
+            result[0],
+            "/repo/.swarm-hug/greenfield/worktrees/agent-D-Diana"
+        );
     }
 
     #[test]
@@ -1278,8 +1299,7 @@ branch refs/heads/agent-aaron
         assert_ne!(source_rev, target_rev);
 
         // Create feature branch from source (not target)
-        let created =
-            create_feature_branch_in(repo, "sprint-1", "source-branch").unwrap();
+        let created = create_feature_branch_in(repo, "sprint-1", "source-branch").unwrap();
         assert!(created);
 
         let feature_rev = rev_parse(repo, "sprint-1");
@@ -1383,15 +1403,15 @@ branch refs/heads/agent-aaron
         commit_file(repo, "feature.txt", "feature commit");
         run_git(repo, &["checkout", "main"]);
 
-        let merged_before = branch_is_merged_in(repo, "feature-branch", "main")
-            .expect("merge check before");
+        let merged_before =
+            branch_is_merged_in(repo, "feature-branch", "main").expect("merge check before");
         assert!(!merged_before);
 
         let merge_result = merge_feature_branch_in(repo, "feature-branch", "main");
         assert!(matches!(merge_result, MergeResult::Success));
 
-        let merged_after = branch_is_merged_in(repo, "feature-branch", "main")
-            .expect("merge check after");
+        let merged_after =
+            branch_is_merged_in(repo, "feature-branch", "main").expect("merge check after");
         assert!(merged_after);
 
         let output = run_git(repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);

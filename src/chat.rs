@@ -36,11 +36,7 @@ pub fn write_message<P: AsRef<Path>>(path: P, agent_name: &str, message: &str) -
 }
 
 /// Append a heartbeat message to CHAT.md.
-pub fn write_heartbeat<P: AsRef<Path>>(
-    path: P,
-    agent_name: &str,
-    message: &str,
-) -> io::Result<()> {
+pub fn write_heartbeat<P: AsRef<Path>>(path: P, agent_name: &str, message: &str) -> io::Result<()> {
     let msg = format!("{} {}", HEARTBEAT_PREFIX, message);
     write_message(path, agent_name, &msg)
 }
@@ -54,10 +50,7 @@ pub fn is_heartbeat_line(line: &str) -> bool {
 
 /// Append a raw line to a file.
 fn append_line<P: AsRef<Path>>(path: P, line: &str) -> io::Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(file, "{}", line)
 }
 
@@ -249,11 +242,7 @@ mod tests {
 
     #[test]
     fn test_is_heartbeat_line_false_for_normal_message() {
-        let line = format_message_with_timestamp(
-            "2024-01-15 10:30:00",
-            "Aaron",
-            "Starting task",
-        );
+        let line = format_message_with_timestamp("2024-01-15 10:30:00", "Aaron", "Starting task");
         assert!(!is_heartbeat_line(&line));
     }
 
@@ -320,10 +309,7 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path();
 
-        let assignments = vec![
-            ('A', "Task 1"),
-            ('B', "Task 2"),
-        ];
+        let assignments = vec![('A', "Task 1"), ('B', "Task 2")];
 
         write_sprint_plan(path, 1, &assignments).unwrap();
 

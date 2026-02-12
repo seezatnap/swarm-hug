@@ -360,7 +360,8 @@ fn test_tasklist_unassign_all() {
 #[test]
 fn test_tasklist_preserves_section_headings() {
     // Test that section headings between tasks are preserved
-    let content = "# Tasks\n\n### Section 1\n- [ ] Task 1\n- [ ] Task 2\n\n### Section 2\n- [ ] Task 3\n";
+    let content =
+        "# Tasks\n\n### Section 1\n- [ ] Task 1\n- [ ] Task 2\n\n### Section 2\n- [ ] Task 3\n";
     let list = TaskList::parse(content);
 
     // Header includes everything before the first task
@@ -404,12 +405,24 @@ fn test_tasklist_section_roundtrip() {
     let pos_database = output.find("## M0.2 — Database").unwrap();
     let pos_task5 = output.find("Task 5").unwrap();
 
-    assert!(pos_setup < pos_dir, "Setup should come before Directory Structure");
-    assert!(pos_dir < pos_task1, "Directory Structure should come before Task 1");
+    assert!(
+        pos_setup < pos_dir,
+        "Setup should come before Directory Structure"
+    );
+    assert!(
+        pos_dir < pos_task1,
+        "Directory Structure should come before Task 1"
+    );
     assert!(pos_task1 < pos_tooling, "Task 1 should come before Tooling");
     assert!(pos_tooling < pos_task3, "Tooling should come before Task 3");
-    assert!(pos_task3 < pos_database, "Task 3 should come before Database");
-    assert!(pos_database < pos_task5, "Database should come before Task 5");
+    assert!(
+        pos_task3 < pos_database,
+        "Task 3 should come before Database"
+    );
+    assert!(
+        pos_database < pos_task5,
+        "Database should come before Task 5"
+    );
 }
 
 #[test]
@@ -466,7 +479,10 @@ fn test_tasklist_complex_structure_roundtrip() {
     // Find key lines and verify order
     let phase_idx = lines.iter().position(|l| l.contains("# Phase 0")).unwrap();
     let m01_idx = lines.iter().position(|l| l.contains("## M0.1")).unwrap();
-    let dir_idx = lines.iter().position(|l| l.contains("### Directory")).unwrap();
+    let dir_idx = lines
+        .iter()
+        .position(|l| l.contains("### Directory"))
+        .unwrap();
     let build_idx = lines.iter().position(|l| l.contains("### Build")).unwrap();
     let m02_idx = lines.iter().position(|l| l.contains("## M0.2")).unwrap();
     let schema_idx = lines.iter().position(|l| l.contains("### Schema")).unwrap();
@@ -486,10 +502,7 @@ fn test_tasklist_complex_structure_roundtrip() {
         .iter()
         .position(|l| l.contains("Configure ESLint"))
         .unwrap();
-    let build_script_idx = lines
-        .iter()
-        .position(|l| l.contains("pnpm build"))
-        .unwrap();
+    let build_script_idx = lines.iter().position(|l| l.contains("pnpm build")).unwrap();
     let jobs_table_idx = lines.iter().position(|l| l.contains("jobs table")).unwrap();
 
     assert!(
@@ -504,5 +517,8 @@ fn test_tasklist_complex_structure_roundtrip() {
         build_idx < build_script_idx && build_script_idx < m02_idx,
         "pnpm build should be under Build Scripts"
     );
-    assert!(schema_idx < jobs_table_idx, "jobs table should be under Schema");
+    assert!(
+        schema_idx < jobs_table_idx,
+        "jobs table should be under Schema"
+    );
 }

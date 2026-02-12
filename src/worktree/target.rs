@@ -4,8 +4,8 @@ use std::process::Command;
 
 use super::create::worktree_is_registered;
 use super::git::{
-    ensure_head, git_repo_root, prune_stale_worktree_registrations, reconcile_worktree_registration,
-    repair_worktree_links,
+    ensure_head, git_repo_root, prune_stale_worktree_registrations,
+    reconcile_worktree_registration, repair_worktree_links,
 };
 
 /// Returns the shared worktrees root for target branch operations.
@@ -712,7 +712,10 @@ branch refs/heads/main
         let created = create_target_branch_worktree_in(repo, "target-branch")
             .expect("should reconcile mismatched registered path");
         assert_eq!(canonical_path(&created), canonical_path(&worktree_path));
-        assert!(worktree_path.exists(), "worktree should exist after reconcile");
+        assert!(
+            worktree_path.exists(),
+            "worktree should exist after reconcile"
+        );
 
         let resolved = find_target_branch_worktree_in(repo, "target-branch")
             .expect("find target worktree")

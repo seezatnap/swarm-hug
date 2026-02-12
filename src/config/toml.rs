@@ -34,24 +34,19 @@ pub(super) fn parse_toml(content: &str) -> Result<Config, ConfigError> {
 
             match full_key.as_str() {
                 "agents.max_count" => {
-                    config.agents_max_count = value
-                        .parse()
-                        .map_err(|_| ConfigError::Parse(format!("invalid agents.max_count: {}", value)))?;
+                    config.agents_max_count = value.parse().map_err(|_| {
+                        ConfigError::Parse(format!("invalid agents.max_count: {}", value))
+                    })?;
                 }
                 "agents.tasks_per_agent" => {
-                    config.agents_tasks_per_agent = value
-                        .parse()
-                        .map_err(|_| {
-                            ConfigError::Parse(format!(
-                                "invalid agents.tasks_per_agent: {}",
-                                value
-                            ))
-                        })?;
+                    config.agents_tasks_per_agent = value.parse().map_err(|_| {
+                        ConfigError::Parse(format!("invalid agents.tasks_per_agent: {}", value))
+                    })?;
                 }
                 "agents.timeout" => {
-                    config.agent_timeout_secs = value
-                        .parse()
-                        .map_err(|_| ConfigError::Parse(format!("invalid agents.timeout: {}", value)))?;
+                    config.agent_timeout_secs = value.parse().map_err(|_| {
+                        ConfigError::Parse(format!("invalid agents.timeout: {}", value))
+                    })?;
                 }
                 "files.tasks" => {
                     config.files_tasks = value.trim_matches('"').to_string();
@@ -64,16 +59,17 @@ pub(super) fn parse_toml(content: &str) -> Result<Config, ConfigError> {
                 }
                 "engine.type" => {
                     let engine_str = value.trim_matches('"');
-                    config.engine_types = EngineType::parse_list(engine_str)
-                        .ok_or_else(|| ConfigError::Parse(format!("invalid engine.type: {}", engine_str)))?;
+                    config.engine_types = EngineType::parse_list(engine_str).ok_or_else(|| {
+                        ConfigError::Parse(format!("invalid engine.type: {}", engine_str))
+                    })?;
                 }
                 "engine.stub_mode" => {
                     config.engine_stub_mode = value == "true";
                 }
                 "sprints.max" => {
-                    config.sprints_max = value
-                        .parse()
-                        .map_err(|_| ConfigError::Parse(format!("invalid sprints.max: {}", value)))?;
+                    config.sprints_max = value.parse().map_err(|_| {
+                        ConfigError::Parse(format!("invalid sprints.max: {}", value))
+                    })?;
                 }
                 _ => {} // Ignore unknown keys
             }

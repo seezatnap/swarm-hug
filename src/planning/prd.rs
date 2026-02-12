@@ -152,7 +152,10 @@ fn stub_prd_conversion(prd_content: &str) -> PrdConversionResult {
     tasks.push_str(" Write unit tests for new features (blocked by #1)\n");
     task_num += 1;
     tasks.push_str(&format!("- [ ] (#{})", task_num));
-    tasks.push_str(&format!(" Write integration tests (blocked by #{})\n", task_num - 1));
+    tasks.push_str(&format!(
+        " Write integration tests (blocked by #{})\n",
+        task_num - 1
+    ));
 
     // Include first non-empty line from PRD as context in response
     let first_line = lines

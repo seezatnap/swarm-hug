@@ -4,16 +4,15 @@
 
 /// All agent initials in order (A-Z).
 pub const INITIALS: [char; 26] = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+    'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ];
 
 /// All agent names in order (Aaron through Zane).
 pub const NAMES: [&str; 26] = [
-    "Aaron", "Betty", "Carlos", "Diana", "Ethan", "Fiona", "George", "Hannah",
-    "Ian", "Julia", "Kevin", "Laura", "Miguel", "Nadia", "Omar", "Priya",
-    "Quinn", "Rosa", "Sam", "Tina", "Uma", "Victor", "Wendy", "Xavier",
-    "Yara", "Zane",
+    "Aaron", "Betty", "Carlos", "Diana", "Ethan", "Fiona", "George", "Hannah", "Ian", "Julia",
+    "Kevin", "Laura", "Miguel", "Nadia", "Omar", "Priya", "Quinn", "Rosa", "Sam", "Tina", "Uma",
+    "Victor", "Wendy", "Xavier", "Yara", "Zane",
 ];
 
 /// Get agent name from initial.

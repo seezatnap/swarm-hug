@@ -1,5 +1,5 @@
-use super::*;
 use super::types::detect_target_branch_in;
+use super::*;
 use crate::testutil::{EnvVarGuard, ENV_LOCK};
 use std::fs;
 use std::path::Path;
@@ -62,7 +62,7 @@ fn git_current_branch(repo: &Path) -> Option<String> {
 
 fn ensure_branch(repo: &Path, branch: &str) {
     if !git_branch_exists(repo, branch) {
-        run_git(repo, &[ "branch", branch ]);
+        run_git(repo, &["branch", branch]);
     }
 }
 
@@ -83,15 +83,21 @@ fn test_engine_type_parse() {
     assert_eq!(EngineType::parse("codex"), Some(EngineType::Codex));
     assert_eq!(
         EngineType::parse("openrouter_moonshotai/kimi-k2.5"),
-        Some(EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() })
+        Some(EngineType::OpenRouter {
+            model: "moonshotai/kimi-k2.5".to_string()
+        })
     );
     assert_eq!(
         EngineType::parse("OPENROUTER_MOONSHOTAI/KIMI-K2.5"),
-        Some(EngineType::OpenRouter { model: "MOONSHOTAI/KIMI-K2.5".to_string() })
+        Some(EngineType::OpenRouter {
+            model: "MOONSHOTAI/KIMI-K2.5".to_string()
+        })
     );
     assert_eq!(
         EngineType::parse("openrouter"),
-        Some(EngineType::OpenRouter { model: String::new() })
+        Some(EngineType::OpenRouter {
+            model: String::new()
+        })
     );
     assert_eq!(EngineType::parse("stub"), Some(EngineType::Stub));
     assert_eq!(EngineType::parse("unknown"), None);
@@ -103,19 +109,30 @@ fn test_engine_type_as_str() {
     assert_eq!(EngineType::Codex.as_str(), "codex");
     assert_eq!(EngineType::Stub.as_str(), "stub");
     assert_eq!(
-        EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }.as_str(),
+        EngineType::OpenRouter {
+            model: "moonshotai/kimi-k2.5".to_string()
+        }
+        .as_str(),
         "openrouter_moonshotai/kimi-k2.5"
     );
 }
 
 #[test]
 fn test_engine_type_parse_list_single() {
-    assert_eq!(EngineType::parse_list("claude"), Some(vec![EngineType::Claude]));
-    assert_eq!(EngineType::parse_list("codex"), Some(vec![EngineType::Codex]));
+    assert_eq!(
+        EngineType::parse_list("claude"),
+        Some(vec![EngineType::Claude])
+    );
+    assert_eq!(
+        EngineType::parse_list("codex"),
+        Some(vec![EngineType::Codex])
+    );
     assert_eq!(EngineType::parse_list("stub"), Some(vec![EngineType::Stub]));
     assert_eq!(
         EngineType::parse_list("openrouter_moonshotai/kimi-k2.5"),
-        Some(vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }])
+        Some(vec![EngineType::OpenRouter {
+            model: "moonshotai/kimi-k2.5".to_string()
+        }])
     );
 }
 
@@ -127,12 +144,18 @@ fn test_engine_type_parse_list_multiple() {
     );
     assert_eq!(
         EngineType::parse_list("codex,claude,stub"),
-        Some(vec![EngineType::Codex, EngineType::Claude, EngineType::Stub])
+        Some(vec![
+            EngineType::Codex,
+            EngineType::Claude,
+            EngineType::Stub
+        ])
     );
     assert_eq!(
         EngineType::parse_list("openrouter_moonshotai/kimi-k2.5,claude"),
         Some(vec![
-            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            EngineType::OpenRouter {
+                model: "moonshotai/kimi-k2.5".to_string()
+            },
             EngineType::Claude,
         ])
     );
@@ -143,7 +166,11 @@ fn test_engine_type_parse_list_weighted() {
     // Test weighted selection format (codex,codex,claude = 2/3 codex, 1/3 claude)
     assert_eq!(
         EngineType::parse_list("codex,codex,claude"),
-        Some(vec![EngineType::Codex, EngineType::Codex, EngineType::Claude])
+        Some(vec![
+            EngineType::Codex,
+            EngineType::Codex,
+            EngineType::Claude
+        ])
     );
 }
 
@@ -167,7 +194,9 @@ fn test_engine_type_parse_list_case_insensitive() {
     );
     assert_eq!(
         EngineType::parse_list("OPENROUTER_MOONSHOTAI/KIMI-K2.5"),
-        Some(vec![EngineType::OpenRouter { model: "MOONSHOTAI/KIMI-K2.5".to_string() }])
+        Some(vec![EngineType::OpenRouter {
+            model: "MOONSHOTAI/KIMI-K2.5".to_string()
+        }])
     );
 }
 
@@ -191,7 +220,9 @@ fn test_engine_type_list_to_string() {
     );
     assert_eq!(
         EngineType::list_to_string(&[
-            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            EngineType::OpenRouter {
+                model: "moonshotai/kimi-k2.5".to_string()
+            },
             EngineType::Claude,
         ]),
         "openrouter_moonshotai/kimi-k2.5,claude"
@@ -276,7 +307,9 @@ fn test_config_engines_display() {
     assert_eq!(config.engines_display(), "codex,codex,claude");
 
     let config = Config {
-        engine_types: vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }],
+        engine_types: vec![EngineType::OpenRouter {
+            model: "moonshotai/kimi-k2.5".to_string(),
+        }],
         ..Default::default()
     };
     assert_eq!(config.engines_display(), "openrouter_moonshotai/kimi-k2.5");
@@ -328,6 +361,7 @@ fn test_config_default() {
     assert_eq!(config.sprints_max, 0);
     assert_eq!(config.source_branch, None);
     assert_eq!(config.target_branch, None);
+    assert!(!config.target_branch_explicit);
 }
 
 #[test]
@@ -430,6 +464,95 @@ fn test_parse_args_target_branch() {
 }
 
 #[test]
+fn test_parse_args_source_branch_missing_value_before_flag() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "--no-tui".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, None);
+    assert!(cli.no_tui, "--no-tui should still be parsed as a flag");
+    assert_eq!(cli.command, Some(Command::Run));
+
+    let message = cli
+        .parse_error
+        .as_deref()
+        .expect("missing value should record parse error");
+    assert!(
+        message.contains("--source-branch requires a value"),
+        "unexpected parse error: {}",
+        message
+    );
+    assert!(
+        message.contains("'--no-tui'"),
+        "parse error should include the unexpected flag: {}",
+        message
+    );
+}
+
+#[test]
+fn test_parse_args_source_branch_missing_value_at_end() {
+    let args = vec!["swarm".to_string(), "--source-branch".to_string()];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, None);
+    assert!(
+        cli.parse_error
+            .as_deref()
+            .map(|m| m.contains("--source-branch requires a value"))
+            .unwrap_or(false),
+        "expected parse error for missing --source-branch value"
+    );
+}
+
+#[test]
+fn test_parse_args_target_branch_missing_value_before_flag() {
+    let args = vec![
+        "swarm".to_string(),
+        "--source-branch".to_string(),
+        "main".to_string(),
+        "--target-branch".to_string(),
+        "--no-tui".to_string(),
+        "run".to_string(),
+    ];
+    let cli = parse_args(args);
+    assert_eq!(cli.source_branch, Some("main".to_string()));
+    assert_eq!(cli.target_branch, None);
+    assert!(cli.no_tui, "--no-tui should still be parsed as a flag");
+    assert_eq!(cli.command, Some(Command::Run));
+
+    let message = cli
+        .parse_error
+        .as_deref()
+        .expect("missing value should record parse error");
+    assert!(
+        message.contains("--target-branch requires a value"),
+        "unexpected parse error: {}",
+        message
+    );
+    assert!(
+        message.contains("'--no-tui'"),
+        "parse error should include the unexpected flag: {}",
+        message
+    );
+}
+
+#[test]
+fn test_parse_args_target_branch_missing_value_at_end() {
+    let args = vec!["swarm".to_string(), "--target-branch".to_string()];
+    let cli = parse_args(args);
+    assert_eq!(cli.target_branch, None);
+    assert!(
+        cli.parse_error
+            .as_deref()
+            .map(|m| m.contains("--target-branch requires a value"))
+            .unwrap_or(false),
+        "expected parse error for missing --target-branch value"
+    );
+}
+
+#[test]
 fn test_config_apply_cli_engine_list() {
     let mut config = Config::default();
     let cli = CliArgs {
@@ -437,7 +560,10 @@ fn test_config_apply_cli_engine_list() {
         ..Default::default()
     };
     config.apply_cli(&cli);
-    assert_eq!(config.engine_types, vec![EngineType::Codex, EngineType::Claude]);
+    assert_eq!(
+        config.engine_types,
+        vec![EngineType::Codex, EngineType::Claude]
+    );
 }
 
 #[test]
@@ -449,6 +575,18 @@ fn test_config_apply_cli_target_branch() {
     };
     config.apply_cli(&cli);
     assert_eq!(config.target_branch, Some("mainline".to_string()));
+}
+
+#[test]
+fn test_config_apply_cli_ignores_flag_like_target_branch_value() {
+    let mut config = Config::default();
+    let cli = CliArgs {
+        target_branch: Some("--no-tui".to_string()),
+        ..Default::default()
+    };
+    config.apply_cli(&cli);
+    assert_eq!(config.target_branch, None);
+    assert!(!config.target_branch_explicit);
 }
 
 #[test]
@@ -484,8 +622,14 @@ fn test_command_parse() {
     assert_eq!(Command::parse("cleanup"), None); // cleanup command removed
     assert_eq!(Command::parse("projects"), Some(Command::Projects));
     assert_eq!(Command::parse("project"), Some(Command::ProjectInit));
-    assert_eq!(Command::parse("customize-prompts"), Some(Command::CustomizePrompts));
-    assert_eq!(Command::parse("cleanup-worktrees"), Some(Command::CleanupWorktrees));
+    assert_eq!(
+        Command::parse("customize-prompts"),
+        Some(Command::CustomizePrompts)
+    );
+    assert_eq!(
+        Command::parse("cleanup-worktrees"),
+        Some(Command::CleanupWorktrees)
+    );
     assert_eq!(Command::parse("set-email"), Some(Command::SetEmail));
     assert_eq!(Command::parse("unknown"), None);
 }
@@ -575,6 +719,7 @@ fn test_parse_args_project_init() {
 fn test_project_path_resolution() {
     let cli = CliArgs {
         project: Some("authentication".to_string()),
+        command: Some(Command::Init),
         ..Default::default()
     };
     let config = Config::load(&cli).expect("config load");
@@ -582,7 +727,10 @@ fn test_project_path_resolution() {
     assert_eq!(config.files_tasks, ".swarm-hug/authentication/tasks.md");
     assert_eq!(config.files_chat, ".swarm-hug/authentication/chat.md");
     assert_eq!(config.files_log_dir, ".swarm-hug/authentication/loop");
-    assert_eq!(config.files_worktrees_dir, ".swarm-hug/authentication/worktrees");
+    assert_eq!(
+        config.files_worktrees_dir,
+        ".swarm-hug/authentication/worktrees"
+    );
 }
 
 #[test]
@@ -600,6 +748,7 @@ fn test_config_load_with_cli_precedence() {
     let cli = CliArgs {
         max_sprints: Some(10),
         stub: true,
+        command: Some(Command::Init),
         ..Default::default()
     };
 
@@ -615,6 +764,7 @@ fn test_config_load_openrouter_requires_api_key() {
     let _unset = EnvVarGuard::unset("OPENROUTER_API_KEY");
     let cli = CliArgs {
         engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
+        command: Some(Command::Init),
         ..Default::default()
     };
 
@@ -628,6 +778,7 @@ fn test_config_load_openrouter_requires_model() {
     let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
     let cli = CliArgs {
         engine: Some("openrouter".to_string()),
+        command: Some(Command::Init),
         ..Default::default()
     };
 
@@ -641,28 +792,63 @@ fn test_config_load_openrouter_with_api_key() {
     let _set = EnvVarGuard::set("OPENROUTER_API_KEY", "test-key");
     let cli = CliArgs {
         engine: Some("openrouter_moonshotai/kimi-k2.5".to_string()),
+        command: Some(Command::Init),
         ..Default::default()
     };
 
     let config = Config::load(&cli).expect("config load");
     assert_eq!(
         config.engine_types,
-        vec![EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }]
+        vec![EngineType::OpenRouter {
+            model: "moonshotai/kimi-k2.5".to_string()
+        }]
     );
 }
 
 #[test]
 fn test_config_load_target_branch_alone_errors() {
     let cli = CliArgs {
+        command: Some(Command::Run),
         target_branch: Some("override-branch".to_string()),
         ..Default::default()
     };
 
-    let err = Config::load(&cli).expect_err("expected error for --target-branch without --source-branch");
+    let err =
+        Config::load(&cli).expect_err("expected error for --target-branch without --source-branch");
     let msg = err.to_string();
-    assert!(msg.contains("--target-branch requires --source-branch"), "error should mention requirement: {}", msg);
-    assert!(msg.contains("Specify both flags explicitly"), "error should include instruction: {}", msg);
-    assert!(msg.contains("Example: swarm run --source-branch main --target-branch feature-1"), "error should include example: {}", msg);
+    assert!(
+        msg.contains("requires both --source-branch and --target-branch"),
+        "error should include instruction: {}",
+        msg
+    );
+    assert!(
+        msg.contains("Example: swarm run --source-branch main --target-branch feature-1"),
+        "error should include example: {}",
+        msg
+    );
+}
+
+#[test]
+fn test_config_load_target_branch_missing_value_returns_validation_error() {
+    let cli = parse_args(vec![
+        "swarm".to_string(),
+        "--target-branch".to_string(),
+        "--no-tui".to_string(),
+        "run".to_string(),
+    ]);
+
+    let err = Config::load(&cli).expect_err("expected parse-time validation error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("--target-branch requires a value"),
+        "validation error should mention missing --target-branch value: {}",
+        msg
+    );
+    assert!(
+        msg.contains("'--no-tui'"),
+        "validation error should include the unexpected next flag: {}",
+        msg
+    );
 }
 
 #[test]
@@ -731,6 +917,7 @@ fn test_parse_args_agent_timeout() {
 fn test_config_with_agent_timeout_cli() {
     let cli = CliArgs {
         agent_timeout: Some(900),
+        command: Some(Command::Init),
         ..Default::default()
     };
 
@@ -792,6 +979,7 @@ fn test_config_apply_cli_source_branch() {
     };
     config.apply_cli(&cli);
     assert_eq!(config.source_branch, Some("develop".to_string()));
+    assert!(!config.target_branch_explicit);
 }
 
 #[test]
@@ -805,37 +993,47 @@ fn test_config_apply_cli_source_and_target_branch() {
     config.apply_cli(&cli);
     assert_eq!(config.source_branch, Some("main".to_string()));
     assert_eq!(config.target_branch, Some("feature-1".to_string()));
+    assert!(config.target_branch_explicit);
 }
 
 // === Branch-flag resolution matrix tests (via Config::load) ===
 
 #[test]
-fn test_resolve_branches_neither_flag_auto_detects() {
-    // Neither flag: auto-detect main/master for both source and target
-    let cli = CliArgs::default();
-    let config = Config::load(&cli).expect("config load");
-    // Both should be auto-detected (main, master, or current branch)
-    assert!(config.source_branch.is_some(), "source_branch should be auto-detected");
-    assert!(config.target_branch.is_some(), "target_branch should be auto-detected");
-    assert_eq!(config.source_branch, config.target_branch, "source and target should match when neither is specified");
+fn test_resolve_branches_neither_flag_errors() {
+    let cli = CliArgs {
+        command: Some(Command::Run),
+        ..Default::default()
+    };
+    let err = Config::load(&cli).expect_err("expected missing-branches error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("requires both --source-branch and --target-branch"),
+        "msg: {}",
+        msg
+    );
 }
 
 #[test]
-fn test_resolve_branches_source_only_sets_both() {
-    // --source-branch alone: sets both source and target to that value
+fn test_resolve_branches_source_only_errors() {
     let cli = CliArgs {
+        command: Some(Command::Run),
         source_branch: Some("feature-x".to_string()),
         ..Default::default()
     };
-    let config = Config::load(&cli).expect("config load");
-    assert_eq!(config.source_branch.as_deref(), Some("feature-x"));
-    assert_eq!(config.target_branch.as_deref(), Some("feature-x"));
+    let err = Config::load(&cli).expect_err("expected missing-branches error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("requires both --source-branch and --target-branch"),
+        "msg: {}",
+        msg
+    );
 }
 
 #[test]
 fn test_resolve_branches_both_flags_independent() {
     // Both flags: set independent source/target
     let cli = CliArgs {
+        command: Some(Command::Run),
         source_branch: Some("main".to_string()),
         target_branch: Some("feature-1".to_string()),
         ..Default::default()
@@ -843,18 +1041,47 @@ fn test_resolve_branches_both_flags_independent() {
     let config = Config::load(&cli).expect("config load");
     assert_eq!(config.source_branch.as_deref(), Some("main"));
     assert_eq!(config.target_branch.as_deref(), Some("feature-1"));
+    assert!(
+        config.target_branch_explicit,
+        "target should be marked explicit when flag is provided"
+    );
+}
+
+#[test]
+fn test_resolve_branches_malformed_target_flag_input_does_not_mark_explicit() {
+    let cli = CliArgs {
+        command: Some(Command::Run),
+        source_branch: Some("main".to_string()),
+        target_branch: Some("--no-tui".to_string()),
+        ..Default::default()
+    };
+    let err = Config::load(&cli).expect_err("expected missing-branches error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("requires both --source-branch and --target-branch"),
+        "msg: {}",
+        msg
+    );
 }
 
 #[test]
 fn test_resolve_branches_target_only_errors() {
     // --target-branch alone: returns error
     let cli = CliArgs {
+        command: Some(Command::Run),
         target_branch: Some("feature-1".to_string()),
         ..Default::default()
     };
     let err = Config::load(&cli).expect_err("expected error");
     let msg = err.to_string();
-    assert!(msg.contains("--target-branch requires --source-branch"), "msg: {}", msg);
-    assert!(msg.contains("Specify both flags explicitly"), "msg: {}", msg);
-    assert!(msg.contains("Example: swarm run --source-branch main --target-branch feature-1"), "msg: {}", msg);
+    assert!(
+        msg.contains("requires both --source-branch and --target-branch"),
+        "msg: {}",
+        msg
+    );
+    assert!(
+        msg.contains("Example: swarm run --source-branch main --target-branch feature-1"),
+        "msg: {}",
+        msg
+    );
 }

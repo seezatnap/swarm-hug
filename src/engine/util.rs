@@ -23,10 +23,7 @@ pub(super) fn read_coauthor_email() -> Option<String> {
 /// Resolve the full path to a CLI binary using `which`.
 /// Returns None if the binary is not found.
 pub(super) fn resolve_cli_path(name: &str) -> Option<String> {
-    let output = Command::new("which")
-        .arg(name)
-        .output()
-        .ok()?;
+    let output = Command::new("which").arg(name).output().ok()?;
 
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -73,7 +70,10 @@ pub(super) fn build_agent_prompt(
     };
 
     let task_short = if task_description.chars().count() > 50 {
-        format!("{}...", task_description.chars().take(47).collect::<String>())
+        format!(
+            "{}...",
+            task_description.chars().take(47).collect::<String>()
+        )
     } else {
         task_description.to_string()
     };
@@ -211,8 +211,11 @@ mod tests {
             assert!(result.is_ok());
             let prompt = result.unwrap().unwrap();
             // Check that the co-author line is in the prompt (in commit messages)
-            assert!(prompt.contains("Co-Authored-By: dev <dev@example.com>"),
-                "Prompt should contain co-author line. Prompt content:\n{}", prompt);
+            assert!(
+                prompt.contains("Co-Authored-By: dev <dev@example.com>"),
+                "Prompt should contain co-author line. Prompt content:\n{}",
+                prompt
+            );
         });
     }
 }

@@ -24,7 +24,8 @@ impl RuntimeStatePaths {
 
         let namespaced = !target.is_empty();
         let root = if namespaced {
-            base.join("runs").join(sanitize_target_branch_component(target))
+            base.join("runs")
+                .join(sanitize_target_branch_component(target))
         } else {
             base
         };
@@ -134,8 +135,7 @@ mod tests {
 
     #[test]
     fn same_source_and_target_feature_branch_is_namespaced_by_target() {
-        let paths =
-            RuntimeStatePaths::for_branches("alpha", "feature/try-1", "feature/try-1");
+        let paths = RuntimeStatePaths::for_branches("alpha", "feature/try-1", "feature/try-1");
         assert!(paths.is_namespaced());
         assert_eq!(
             paths.root(),
@@ -170,8 +170,7 @@ mod tests {
 
     #[test]
     fn split_variation_encodes_special_branch_characters() {
-        let paths =
-            RuntimeStatePaths::for_branches("alpha", "main", "release/v1.0@staging");
+        let paths = RuntimeStatePaths::for_branches("alpha", "main", "release/v1.0@staging");
         assert_eq!(
             paths.root(),
             Path::new(".swarm-hug/alpha/runs/release%2Fv1.0%40staging")

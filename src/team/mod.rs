@@ -4,18 +4,18 @@
 //! - Its own specs.md, prompt.md, tasks.md
 //! - Its own loop/, worktrees/ directories
 //! - Its own chat.md
-//! - Its own sprint-history.json for tracking sprint counts
-//! - Its own team-state.json for tracking sprint feature branch
+//! - Optional legacy sprint-history.json / team-state.json files
+//! - Runtime-local state under `.swarm-hug/<team>/runs/<target>/`
 
-mod state;
 mod runtime_state;
 mod sprint_history;
+mod state;
 #[allow(clippy::module_inception)]
 mod team;
 
 pub use runtime_state::RuntimeStatePaths;
-pub use state::TeamState;
 pub use sprint_history::SprintHistory;
+pub use state::TeamState;
 pub use team::Team;
 
 use std::fs;
@@ -37,8 +37,8 @@ pub fn list_teams() -> Result<Vec<Team>, String> {
     }
 
     let mut teams = Vec::new();
-    let entries = fs::read_dir(&root)
-        .map_err(|e| format!("failed to read {}: {}", root.display(), e))?;
+    let entries =
+        fs::read_dir(&root).map_err(|e| format!("failed to read {}: {}", root.display(), e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
@@ -62,8 +62,7 @@ pub fn list_teams() -> Result<Vec<Team>, String> {
 /// Initialize the .swarm-hug root directory.
 pub fn init_root() -> Result<(), String> {
     let root = PathBuf::from(SWARM_HUG_DIR);
-    fs::create_dir_all(&root)
-        .map_err(|e| format!("failed to create {}: {}", root.display(), e))?;
+    fs::create_dir_all(&root).map_err(|e| format!("failed to create {}: {}", root.display(), e))?;
 
     // Migration: delete assignments.toml if it exists (obsolete since project-namespaced worktrees)
     let assignments_path = root.join("assignments.toml");
@@ -128,11 +127,26 @@ mod tests {
             assert!(gitignore_path.exists(), ".gitignore should be created");
 
             let content = fs::read_to_string(&gitignore_path).unwrap();
-            assert!(content.contains("*/worktrees/"), ".gitignore should ignore worktrees");
-            assert!(content.contains("*/runs/"), ".gitignore should ignore runtime state");
-            assert!(content.contains("*/loop/"), ".gitignore should ignore loop logs");
-            assert!(content.contains("*/chat.md"), ".gitignore should ignore chat.md");
-            assert!(content.contains("Do not edit"), ".gitignore should warn against edits");
+            assert!(
+                content.contains("*/worktrees/"),
+                ".gitignore should ignore worktrees"
+            );
+            assert!(
+                content.contains("*/runs/"),
+                ".gitignore should ignore runtime state"
+            );
+            assert!(
+                content.contains("*/loop/"),
+                ".gitignore should ignore loop logs"
+            );
+            assert!(
+                content.contains("*/chat.md"),
+                ".gitignore should ignore chat.md"
+            );
+            assert!(
+                content.contains("Do not edit"),
+                ".gitignore should warn against edits"
+            );
         });
     }
 
@@ -149,9 +163,18 @@ mod tests {
             init_root().unwrap();
 
             let content = fs::read_to_string(&gitignore_path).unwrap();
-            assert_ne!(content, custom_content, "existing .gitignore should be overwritten");
-            assert!(content.contains("*/worktrees/"), ".gitignore should contain swarm-hug defaults");
-            assert!(content.contains("*/runs/"), ".gitignore should contain runtime-state ignore");
+            assert_ne!(
+                content, custom_content,
+                "existing .gitignore should be overwritten"
+            );
+            assert!(
+                content.contains("*/worktrees/"),
+                ".gitignore should contain swarm-hug defaults"
+            );
+            assert!(
+                content.contains("*/runs/"),
+                ".gitignore should contain runtime-state ignore"
+            );
         });
     }
 
@@ -162,12 +185,18 @@ mod tests {
             fs::create_dir_all(SWARM_HUG_DIR).unwrap();
             let assignments_path = PathBuf::from(SWARM_HUG_DIR).join("assignments.toml");
             fs::write(&assignments_path, "[agents]\nA = \"test\"\n").unwrap();
-            assert!(assignments_path.exists(), "assignments.toml should exist before init");
+            assert!(
+                assignments_path.exists(),
+                "assignments.toml should exist before init"
+            );
 
             // init_root should delete assignments.toml (migration)
             init_root().unwrap();
 
-            assert!(!assignments_path.exists(), "assignments.toml should be deleted by init_root");
+            assert!(
+                !assignments_path.exists(),
+                "assignments.toml should be deleted by init_root"
+            );
         });
     }
 }

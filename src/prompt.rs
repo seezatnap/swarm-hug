@@ -132,8 +132,8 @@ pub fn copy_prompts_to(target_dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut created = Vec::new();
 
     for &name in PROMPT_NAMES {
-        let content = get_embedded(name)
-            .ok_or_else(|| format!("Missing embedded prompt: {}", name))?;
+        let content =
+            get_embedded(name).ok_or_else(|| format!("Missing embedded prompt: {}", name))?;
 
         let path = target_dir.join(format!("{}.md", name));
         fs::write(&path, content)

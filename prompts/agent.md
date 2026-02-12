@@ -100,8 +100,14 @@ git commit -m "type(scope): {{task_short}}{{co_author}}" --author="Agent {{agent
 ### Step 3: Find the main repository and sprint branch
 ```bash
 MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
-# Read the sprint/feature branch from team state
-SPRINT_BRANCH=$(grep -o '"feature_branch": *"[^"]*"' "$MAIN_REPO/{{team_dir}}/team-state.json" | sed 's/.*: *"//;s/"$//')
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+RUN_HASH="${CURRENT_BRANCH##*-}"
+PROJECT_PREFIX="${CURRENT_BRANCH%%-agent-*}"
+SPRINT_BRANCH=$(git -C "$MAIN_REPO" for-each-ref --format='%(refname:short)' "refs/heads/${PROJECT_PREFIX}-sprint-*-${RUN_HASH}" | head -1)
+if [ -z "$SPRINT_BRANCH" ]; then
+  echo "Could not infer sprint branch from $CURRENT_BRANCH" >&2
+  exit 1
+fi
 SPRINT_WORKTREE="$MAIN_REPO/{{team_dir}}/worktrees/$SPRINT_BRANCH"
 ```
 

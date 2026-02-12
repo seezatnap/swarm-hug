@@ -6,11 +6,13 @@ use swarm::config;
 /// Print a banner for starting a sprint.
 pub(crate) fn print_sprint_start_banner(team_name: &str, sprint_number: usize) {
     println!();
-    println!("=== {} {}: {} Sprint {} ===",
-             emoji::ROCKET,
-             color::label("STARTING SPRINT"),
-             color::info(team_name),
-             color::number(sprint_number));
+    println!(
+        "=== {} {}: {} Sprint {} ===",
+        emoji::ROCKET,
+        color::label("STARTING SPRINT"),
+        color::info(team_name),
+        color::number(sprint_number)
+    );
     println!();
 }
 
@@ -28,15 +30,41 @@ pub(crate) fn print_team_status_banner(
     agent_count: usize,
 ) {
     println!();
-    println!("=== {} {} ===", emoji::SPARKLES, color::label("TEAM STATUS"));
+    println!(
+        "=== {} {} ===",
+        emoji::SPARKLES,
+        color::label("TEAM STATUS")
+    );
     println!();
     println!("  {} Team: {}", emoji::TEAM, color::info(team_name));
-    println!("  {} Sprint: {}", emoji::NUMBER, color::number(sprint_number));
+    println!(
+        "  {} Sprint: {}",
+        emoji::NUMBER,
+        color::number(sprint_number)
+    );
     println!();
-    println!("  {} {}: {}", emoji::CHECK, color::completed("Completed this sprint"), color::number(completed_this_sprint));
-    println!("  {} {}: {}", emoji::CROSS, color::failed("Failed this sprint"), color::number(failed_this_sprint));
-    println!("  {} Remaining tasks: {}", emoji::TASK, color::number(remaining_tasks));
-    println!("  {} Total tasks: {}", emoji::PACKAGE, color::number(total_tasks));
+    println!(
+        "  {} {}: {}",
+        emoji::CHECK,
+        color::completed("Completed this sprint"),
+        color::number(completed_this_sprint)
+    );
+    println!(
+        "  {} {}: {}",
+        emoji::CROSS,
+        color::failed("Failed this sprint"),
+        color::number(failed_this_sprint)
+    );
+    println!(
+        "  {} Remaining tasks: {}",
+        emoji::TASK,
+        color::number(remaining_tasks)
+    );
+    println!(
+        "  {} Total tasks: {}",
+        emoji::PACKAGE,
+        color::number(total_tasks)
+    );
     println!();
 
     // Calculate timing stats
@@ -46,8 +74,14 @@ pub(crate) fn print_team_status_banner(
         let avg_duration = Duration::from_secs_f64(avg_secs);
 
         println!("  {} {}:", emoji::CLOCK, color::label("Agent Performance"));
-        println!("     Tasks completed: {}", color::number(task_durations.len()));
-        println!("     Avg task duration: {}", color::info(&format_duration(avg_duration)));
+        println!(
+            "     Tasks completed: {}",
+            color::number(task_durations.len())
+        );
+        println!(
+            "     Avg task duration: {}",
+            color::info(&format_duration(avg_duration))
+        );
 
         // Estimate time remaining (accounting for parallel agents)
         if remaining_tasks > 0 && agent_count > 0 {
@@ -65,11 +99,13 @@ pub(crate) fn print_team_status_banner(
             // Divide by agent count since agents work in parallel
             let estimated_secs = (avg_secs * implied_remaining as f64) / agent_count as f64;
             let estimated_duration = Duration::from_secs_f64(estimated_secs);
-            println!("     {} Est. time remaining: {} ({} tasks, {} agents)",
-                     emoji::HOURGLASS,
-                     color::info(&format_duration(estimated_duration)),
-                     color::number(implied_remaining),
-                     color::number(agent_count));
+            println!(
+                "     {} Est. time remaining: {} ({} tasks, {} agents)",
+                emoji::HOURGLASS,
+                color::info(&format_duration(estimated_duration)),
+                color::number(implied_remaining),
+                color::number(agent_count)
+            );
         }
     }
     println!();
@@ -100,9 +136,8 @@ OPTIONS:
     -V, --version             Show version
     -c, --config <PATH>       Path to config file [default: swarm.toml]
     -p, --project <NAME>      Project to operate on
-    --source-branch <NAME>    Branch to fork/branch from. If --target-branch is omitted,
-                              this branch is also the merge target.
-    --target-branch <NAME>    Branch to merge results into. Requires --source-branch.
+    --source-branch <NAME>    Branch to fork/branch from. Required for `run`.
+    --target-branch <NAME>    Branch to merge results into. Required for `run`.
     --max-agents <N>          Maximum number of agents to spawn [default: {max_agents}]
     --tasks-per-agent <N>     Tasks to assign per agent per sprint [default: {tasks_per_agent}]
     --agent-timeout <SECS>    Agent execution timeout in seconds [default: {timeout}]
@@ -119,7 +154,8 @@ EXAMPLES:
     swarm init                        Initialize .swarm-hug/ structure
     swarm project init myproject      Create a new project
     swarm projects                    List all projects
-    swarm -p myproject run            Run sprints for a project"#,
+    swarm -p myproject run --source-branch main --target-branch feature/myproject
+                                   Run sprints for a project"#,
         max_agents = 3,
         tasks_per_agent = 2,
         timeout = config::DEFAULT_AGENT_TIMEOUT_SECS,

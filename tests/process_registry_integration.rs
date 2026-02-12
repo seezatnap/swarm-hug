@@ -25,7 +25,10 @@ fn test_process_registry_cleared_after_engine_exit() {
     assert!(result.success, "codex engine failed: {:?}", result);
 
     let after = sorted_pids();
-    assert_eq!(before, after, "process registry should be unchanged after engine execution");
+    assert_eq!(
+        before, after,
+        "process registry should be unchanged after engine execution"
+    );
 }
 
 #[cfg(not(unix))]

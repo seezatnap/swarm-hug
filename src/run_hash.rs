@@ -61,11 +61,7 @@ mod tests {
         let mut hashes = HashSet::new();
         for _ in 0..1000 {
             let hash = generate_run_hash();
-            assert!(
-                hashes.insert(hash.clone()),
-                "Collision detected: {}",
-                hash
-            );
+            assert!(hashes.insert(hash.clone()), "Collision detected: {}", hash);
         }
         assert_eq!(hashes.len(), 1000);
     }
@@ -73,7 +69,9 @@ mod tests {
     #[test]
     fn test_hash_is_alphanumeric_lowercase() {
         let hash = generate_run_hash();
-        assert!(hash.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(hash
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 
     #[test]

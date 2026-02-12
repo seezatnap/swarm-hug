@@ -66,14 +66,16 @@ fn init_default_files(config: &Config) -> Result<(), String> {
         return Err("worktrees dir path is empty".to_string());
     }
 
-    fs::create_dir_all(&config.files_worktrees_dir)
-        .map_err(|e| {
-            format!(
-                "failed to create worktrees dir {}: {}",
-                config.files_worktrees_dir, e
-            )
-        })?;
-    println!("  Created worktrees directory: {}", config.files_worktrees_dir);
+    fs::create_dir_all(&config.files_worktrees_dir).map_err(|e| {
+        format!(
+            "failed to create worktrees dir {}: {}",
+            config.files_worktrees_dir, e
+        )
+    })?;
+    println!(
+        "  Created worktrees directory: {}",
+        config.files_worktrees_dir
+    );
 
     Ok(())
 }

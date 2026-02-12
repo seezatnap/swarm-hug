@@ -117,9 +117,7 @@ pub fn run_sprint_review(
     );
 
     if !result.success {
-        return Err(result
-            .error
-            .unwrap_or_else(|| "Review failed".to_string()));
+        return Err(result.error.unwrap_or_else(|| "Review failed".to_string()));
     }
 
     Ok(parse_review_response(&result.output))
@@ -138,7 +136,8 @@ mod tests {
 
     #[test]
     fn test_parse_review_response_with_tasks() {
-        let response = "Found some issues:\n- [ ] Fix the bug\n- [ ] (#9) Add tests (blocked by #2)\nDone.";
+        let response =
+            "Found some issues:\n- [ ] Fix the bug\n- [ ] (#9) Add tests (blocked by #2)\nDone.";
         let tasks = parse_review_response(response);
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0], "Fix the bug");

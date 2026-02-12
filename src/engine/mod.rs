@@ -85,7 +85,11 @@ pub trait Engine: Send + Sync {
 
 /// Create an engine from config.
 /// Returns Arc for thread-safe sharing across parallel agent execution.
-pub fn create_engine(engine_type: EngineType, output_dir: &str, timeout_secs: u64) -> Arc<dyn Engine> {
+pub fn create_engine(
+    engine_type: EngineType,
+    output_dir: &str,
+    timeout_secs: u64,
+) -> Arc<dyn Engine> {
     match engine_type {
         EngineType::Claude => Arc::new(ClaudeEngine::with_timeout(timeout_secs)),
         EngineType::Codex => Arc::new(CodexEngine::with_timeout(timeout_secs)),
@@ -155,7 +159,10 @@ pub fn select_engine_type(engine_types: &[EngineType], stub_mode: bool) -> Engin
         engine_types[0].clone()
     } else {
         use rand::seq::SliceRandom;
-        engine_types.choose(&mut rand::thread_rng()).cloned().unwrap()
+        engine_types
+            .choose(&mut rand::thread_rng())
+            .cloned()
+            .unwrap()
     }
 }
 
@@ -202,13 +209,17 @@ mod tests {
     #[test]
     fn test_create_engine_openrouter() {
         let engine = create_engine(
-            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() },
+            EngineType::OpenRouter {
+                model: "moonshotai/kimi-k2.5".to_string(),
+            },
             "loop",
             3600,
         );
         assert_eq!(
             engine.engine_type(),
-            EngineType::OpenRouter { model: "moonshotai/kimi-k2.5".to_string() }
+            EngineType::OpenRouter {
+                model: "moonshotai/kimi-k2.5".to_string()
+            }
         );
     }
 
@@ -228,8 +239,14 @@ mod tests {
     #[test]
     fn test_select_engine_type_single_entry() {
         // Single entry returns that entry
-        assert_eq!(select_engine_type(&[EngineType::Codex], false), EngineType::Codex);
-        assert_eq!(select_engine_type(&[EngineType::Claude], false), EngineType::Claude);
+        assert_eq!(
+            select_engine_type(&[EngineType::Codex], false),
+            EngineType::Codex
+        );
+        assert_eq!(
+            select_engine_type(&[EngineType::Claude], false),
+            EngineType::Claude
+        );
     }
 
     #[test]
@@ -259,7 +276,8 @@ mod tests {
 
     #[test]
     fn test_create_random_engine_single_entry() {
-        let (engine, selected_type) = create_random_engine(&[EngineType::Codex], false, "loop", 3600);
+        let (engine, selected_type) =
+            create_random_engine(&[EngineType::Codex], false, "loop", 3600);
         assert_eq!(engine.engine_type(), EngineType::Codex);
         assert_eq!(selected_type, EngineType::Codex);
     }

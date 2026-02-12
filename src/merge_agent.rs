@@ -49,13 +49,7 @@ pub fn run_merge_agent(
         worktree::create_target_branch_worktree_in(&main_repo, target_branch)?;
     let prompt = generate_merge_agent_prompt(feature_branch, target_branch, &target_worktree_path)?;
 
-    Ok(engine.execute(
-        "MergeAgent",
-        &prompt,
-        &target_worktree_path,
-        0,
-        None,
-    ))
+    Ok(engine.execute("MergeAgent", &prompt, &target_worktree_path, 0, None))
 }
 
 /// Run the merge agent inside an existing target worktree.
@@ -78,13 +72,7 @@ pub fn run_merge_agent_in_worktree(
     }
 
     let prompt = generate_merge_agent_prompt(feature_branch, target_branch, target_worktree_path)?;
-    Ok(engine.execute(
-        "MergeAgent",
-        &prompt,
-        target_worktree_path,
-        0,
-        None,
-    ))
+    Ok(engine.execute("MergeAgent", &prompt, target_worktree_path, 0, None))
 }
 
 /// Ensure the feature branch is merged into the target branch after merge agent runs.
@@ -431,12 +419,9 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let prompt = generate_merge_agent_prompt(
-                "feature-1",
-                "main",
-                Path::new("/tmp/target-worktree"),
-            )
-            .unwrap();
+            let prompt =
+                generate_merge_agent_prompt("feature-1", "main", Path::new("/tmp/target-worktree"))
+                    .unwrap();
             assert!(prompt.contains("feature-1"));
             assert!(prompt.contains("main"));
             assert!(prompt.contains("/tmp/target-worktree"));
@@ -627,7 +612,9 @@ mod tests {
     fn test_prompt_bans_diff_apply() {
         let prompt = prompt::embedded::MERGE_AGENT;
         assert!(
-            prompt.contains("git diff") && prompt.contains("git apply") && prompt.contains("Banned"),
+            prompt.contains("git diff")
+                && prompt.contains("git apply")
+                && prompt.contains("Banned"),
             "prompt must explicitly ban git diff | git apply"
         );
     }
@@ -660,12 +647,9 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let rendered = generate_merge_agent_prompt(
-                "feature-1",
-                "main",
-                Path::new("/tmp/target-worktree"),
-            )
-            .unwrap();
+            let rendered =
+                generate_merge_agent_prompt("feature-1", "main", Path::new("/tmp/target-worktree"))
+                    .unwrap();
             assert!(
                 rendered.contains("## Critical Rules"),
                 "Critical Rules section must survive template rendering"
@@ -699,8 +683,7 @@ mod tests {
                 .expect("write team state");
             fs::write(".swarm-hug/alpha/sprint-history.json", "{\"sprint\":1}")
                 .expect("write sprint history");
-            fs::write(".swarm-hug/alpha/tasks.md", "task one\nchanged\n")
-                .expect("modify tasks");
+            fs::write(".swarm-hug/alpha/tasks.md", "task one\nchanged\n").expect("modify tasks");
 
             let paths = vec![
                 PathBuf::from(".swarm-hug/alpha/tasks.md"),
@@ -765,7 +748,10 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert!(retry_called.get(), "retry should be called after first verification failure");
+        assert!(
+            retry_called.get(),
+            "retry should be called after first verification failure"
+        );
         assert_eq!(call_count.get(), 2, "verify should be called exactly twice");
     }
 
@@ -805,7 +791,11 @@ mod tests {
             "error should contain retry failure detail, got: {}",
             err
         );
-        assert_eq!(verify_count.get(), 2, "verify should be called exactly twice");
+        assert_eq!(
+            verify_count.get(),
+            2,
+            "verify should be called exactly twice"
+        );
         assert_eq!(retry_count.get(), 1, "retry should be called exactly once");
     }
 
@@ -944,13 +934,8 @@ mod tests {
             commit_on_branch("feature-stub-retry", "stub-retry.txt");
 
             let engine = StubEngine::new("loop");
-            run_merge_agent_with_retry(
-                &engine,
-                "feature-stub-retry",
-                "master",
-                Path::new("."),
-            )
-            .expect("stub should merge and verify on first attempt");
+            run_merge_agent_with_retry(&engine, "feature-stub-retry", "master", Path::new("."))
+                .expect("stub should merge and verify on first attempt");
 
             assert!(is_merged("feature-stub-retry", "master"));
         });
@@ -1118,20 +1103,29 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let prompt = generate_merge_agent_prompt(
-                "feature-1",
-                "main",
-                Path::new("/tmp/target-worktree"),
-            )
-            .unwrap();
+            let prompt =
+                generate_merge_agent_prompt("feature-1", "main", Path::new("/tmp/target-worktree"))
+                    .unwrap();
 
             // Verify Critical Rules section exists with banned commands
-            assert!(prompt.contains("Critical Rules"), "prompt should have Critical Rules section");
+            assert!(
+                prompt.contains("Critical Rules"),
+                "prompt should have Critical Rules section"
+            );
             assert!(prompt.contains("--squash"), "prompt should ban --squash");
-            assert!(prompt.contains("cherry-pick"), "prompt should ban cherry-pick");
+            assert!(
+                prompt.contains("cherry-pick"),
+                "prompt should ban cherry-pick"
+            );
             assert!(prompt.contains("git rebase"), "prompt should ban rebase");
-            assert!(prompt.contains("MERGE_HEAD"), "prompt should mention MERGE_HEAD guard");
-            assert!(prompt.contains("rev-parse HEAD^2"), "prompt should require post-commit verification");
+            assert!(
+                prompt.contains("MERGE_HEAD"),
+                "prompt should mention MERGE_HEAD guard"
+            );
+            assert!(
+                prompt.contains("rev-parse HEAD^2"),
+                "prompt should require post-commit verification"
+            );
         });
     }
 
@@ -1141,15 +1135,18 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let prompt = generate_merge_agent_prompt(
-                "feature-1",
-                "main",
-                Path::new("/tmp/target-worktree"),
-            )
-            .unwrap();
+            let prompt =
+                generate_merge_agent_prompt("feature-1", "main", Path::new("/tmp/target-worktree"))
+                    .unwrap();
 
-            assert!(prompt.contains("MERGE_HEAD Recovery"), "prompt should have recovery section");
-            assert!(prompt.contains("Re-initiate the merge"), "prompt should describe recovery steps");
+            assert!(
+                prompt.contains("MERGE_HEAD Recovery"),
+                "prompt should have recovery section"
+            );
+            assert!(
+                prompt.contains("Re-initiate the merge"),
+                "prompt should describe recovery steps"
+            );
         });
     }
 
@@ -1159,15 +1156,18 @@ mod tests {
             fs::create_dir_all(".swarm-hug").unwrap();
             fs::write(".swarm-hug/email.txt", "dev@example.com").unwrap();
 
-            let prompt = generate_merge_agent_prompt(
-                "feature-1",
-                "main",
-                Path::new("/tmp/target-worktree"),
-            )
-            .unwrap();
+            let prompt =
+                generate_merge_agent_prompt("feature-1", "main", Path::new("/tmp/target-worktree"))
+                    .unwrap();
 
-            assert!(prompt.contains("PRE-EXISTING stale merges"), "preflight should clarify stale-only abort");
-            assert!(prompt.contains("do NOT loop back here and abort your own merge"), "preflight should warn against self-abort");
+            assert!(
+                prompt.contains("PRE-EXISTING stale merges"),
+                "preflight should clarify stale-only abort"
+            );
+            assert!(
+                prompt.contains("do NOT loop back here and abort your own merge"),
+                "preflight should warn against self-abort"
+            );
         });
     }
 }
